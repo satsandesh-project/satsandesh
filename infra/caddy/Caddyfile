@@ -1,0 +1,15 @@
+:80 {
+	# AI services first — a more specific path match must come before the
+	# catch-all below, or everything would be routed to the gateway.
+	handle_path /ai/* {
+		reverse_proxy ai-services:8001
+	}
+
+	handle {
+		reverse_proxy gateway:8000
+	}
+}
+
+# Local dev only — plain HTTP on port 80, proxying by Docker Compose's
+# internal service-name DNS. Real HTTPS via Let's Encrypt gets configured
+# later once the pilot has an actual domain name to issue a certificate for.
