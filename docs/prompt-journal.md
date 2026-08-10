@@ -47,8 +47,28 @@ from the first draft):**
   `handle` block in the Caddyfile, or Caddy would route every request to
   the gateway regardless of path.
 
-**Verification:** see "Run & Verify" in the root `README.md`. Ran
-`docker compose config` to validate the compose file/env interpolation,
-`docker compose up --build`, and `curl` against `/health`, `/ai/health`,
-and `/db-check` through Caddy, plus a `down`/`up` cycle to confirm the
-named `pgdata` volume persists data.
+**Verification:** see "Run & Verify" in the root `README.md`. What was
+actually verified in this session:
+
+- `docker compose config` — validates the compose file parses and
+  `${VAR}` interpolation resolves correctly from `.env`.
+- `python -m py_compile` on every new/edited `.py` file.
+- `pytest` for both `gateway` and `ai-services` — both `/health` tests
+  pass, run directly against the FastAPI apps (no containers needed).
+- `git check-ignore -v .env .env.example` — confirms `.env` stays
+  ignored while `.env.example` is tracked.
+
+**Not verified end-to-end in this session:** an actual
+`docker compose up --build` plus the `/health`, `/ai/health`, and
+`/db-check` curls through Caddy, and the `down`/`up` volume-persistence
+check. Docker Desktop on this machine hit a genuine upstream bug
+(crash-looping on AF_UNIX socket creation for its Inference/Secrets
+Engine components — see
+[docker/desktop-feedback#460](https://github.com/docker/desktop-feedback/issues/460))
+that persisted across a stale-file cleanup, a reboot, a factory reset,
+and an upgrade to the latest Docker Desktop release (4.86.0, shipped
+the same day). It traces to the Windows AF_UNIX socket stack itself,
+not this project's config. Whoever runs this next should follow
+"Run & Verify" in the README once Docker Desktop starts cleanly on
+their machine — everything up to that point (config, code, tests) is
+confirmed working.
