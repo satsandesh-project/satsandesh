@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # NOTE: this is a placeholder. Point --requirement at each
+      # component's requirements.txt as they're added (gateway/,
+      # backbone/, ai-services/, etc.), or switch to a matrix build.
+      - name: Install dependencies (placeholder)
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+
+      - name: Lint (placeholder)
+        run: |
+          echo "No source files yet — lint step is a no-op until gateway/ has code."
+          # ruff check .
+
+      - name: Test (placeholder)
+        run: |
+          echo "No tests yet — test step is a no-op until gateway/ has code."
+          # pytest
