@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+*.env
+.env.*
+!.env.example
+
+# Reflex
+.web/
+*.db
+
+# Node (if any JS tooling creeps in)
+node_modules/
+
+# Docker
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Secrets
+secrets/
+*.pem
+*.key
+
+# Backups / media (never commit real data)
+infra/backups/*.dump
+infra/backups/*.sql
+media/
