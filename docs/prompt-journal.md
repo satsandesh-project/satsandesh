@@ -47,28 +47,31 @@ from the first draft):**
   `handle` block in the Caddyfile, or Caddy would route every request to
   the gateway regardless of path.
 
-**Verification:** see "Run & Verify" in the root `README.md`. What was
-actually verified in this session:
+**Verification:** see "Run & Verify" in the root `README.md`. Full
+end-to-end verification completed:
 
 - `docker compose config` — validates the compose file parses and
   `${VAR}` interpolation resolves correctly from `.env`.
 - `python -m py_compile` on every new/edited `.py` file.
 - `pytest` for both `gateway` and `ai-services` — both `/health` tests
-  pass, run directly against the FastAPI apps (no containers needed).
+  pass.
 - `git check-ignore -v .env .env.example` — confirms `.env` stays
   ignored while `.env.example` is tracked.
+- `docker compose up --build` — all four containers (postgres, gateway,
+  ai-services, caddy) come up and report `healthy`.
+- `curl http://localhost/health`, `/ai/health`, `/db-check` — all three
+  return the expected JSON through Caddy.
+- Volume persistence: inserted an extra `schema_check` row, ran
+  `docker compose down` + `up`, and confirmed via `psql` that both the
+  original seed row and the extra marker row were still present —
+  proves the named `pgdata` volume persists data across a full
+  container teardown/recreate, not just that init re-ran.
 
-**Not verified end-to-end in this session:** an actual
-`docker compose up --build` plus the `/health`, `/ai/health`, and
-`/db-check` curls through Caddy, and the `down`/`up` volume-persistence
-check. Docker Desktop on this machine hit a genuine upstream bug
-(crash-looping on AF_UNIX socket creation for its Inference/Secrets
-Engine components — see
-[docker/desktop-feedback#460](https://github.com/docker/desktop-feedback/issues/460))
-that persisted across a stale-file cleanup, a reboot, a factory reset,
-and an upgrade to the latest Docker Desktop release (4.86.0, shipped
-the same day). It traces to the Windows AF_UNIX socket stack itself,
-not this project's config. Whoever runs this next should follow
-"Run & Verify" in the README once Docker Desktop starts cleanly on
-their machine — everything up to that point (config, code, tests) is
-confirmed working.
+**Environment note (resolved):** Docker Desktop on this dev machine
+initially hit an upstream bug (crash-looping on AF_UNIX socket creation
+for its Inference/Secrets Engine components — see
+[docker/desktop-feedback#460](https://github.com/docker/desktop-feedback/issues/460)),
+unrelated to this project's config. It persisted across a stale-file
+cleanup, a reboot, a factory reset, and an upgrade to Docker Desktop
+4.86.0. Root cause turned out to be a corrupted Windows Winsock catalog;
+running `netsh winsock reset` (admin) + a restart fixed it permanently.
