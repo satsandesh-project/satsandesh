@@ -23,6 +23,9 @@ See the full project proposal for details on scope, architecture, and rationale.
 | Student 4 | Stewardship, quality & pilot    | Moderation prompts/classifier, moderator console, tests/CI, red-teaming, pilot logistics |
 | Supervisor | Prof. Korra Sathya Babu        | Weekly reviews, architecture PRs, org-liaison escalation, ethics approval |
 
+This table is the standing/long-term split. For what ships each sprint and
+who's blocked on whom, see `docs/work-breakdown.md`.
+
 ## Repo layout
 
 ```
