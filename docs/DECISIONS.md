@@ -46,3 +46,44 @@ converge on the same exact-pin + `requirements.txt` approach once it's also
 containerized, for consistency across services? Not changed as part of this
 work — `services/ai/`'s `pyproject.toml` and lack of `requirements.txt` are
 untouched.
+
+## `/ws` rejects a missing/invalid token by accept()-then-close(1008), not a pre-accept close
+
+`app/ws.py`'s `/ws` route authenticates via a `?token=` query param (browsers
+can't set custom headers on a WS handshake). The natural-looking implementation
+— reject by calling `close(1008)` before `accept()` — turned out to be
+observably broken in a real browser, not just inelegant: uvicorn never
+completes the WS opening handshake in that case, so it can't send a real close
+frame at all. It collapses the rejection to a flat HTTP 403 and discards
+whatever close code the app asked for. A real browser then reports that
+handshake failure as close code **1006** (abnormal closure) — indistinguishable
+from a dead network. `TestClient`, which reads the raw ASGI message stream
+in-process rather than going over the wire, faithfully echoed back the `1008`
+we asked for, so the test suite passed while disagreeing with what a browser
+actually observed. Caught by manual browser verification, not by pytest.
+
+**Decision:** `accept()` the handshake first, then immediately `close(code=1008,
+reason="missing_or_invalid_token")`, before `manager.connect()` and before the
+receive loop — so no connection is ever registered and no data is ever read
+from the socket. This sends a genuine WS close frame with the real code and
+reason intact, which a browser can observe in `onclose`.
+
+**Security trade-off, made deliberately:** this means the gateway briefly
+completes a handshake with an unauthenticated peer before closing on it. The
+peer never reaches `ConnectionManager` and the server never reads a byte from
+it, so the exposure is a completed-then-immediately-terminated handshake, not
+an open connection. Rate limiting the `/ws` route is the real defense against
+someone flooding handshakes to burn server resources, and is explicitly **not**
+in scope for Week 1 — noted here so it isn't forgotten, not solved here.
+
+**Why this matters beyond code cleanliness:** Week 3's task is offline queue
+and reconnect logic for elders on unreliable rural mobile networks. Reconnect
+logic needs to be able to tell these two failure modes apart:
+
+- **1008** (this decision) — the token was missing or invalid. Stop retrying;
+  go re-authenticate.
+- **1006** — the network dropped the connection before/during handshake.
+  Keep retrying with backoff.
+
+Collapsing both to 1006 (the pre-accept-close behavior) would make a client
+with a bad token retry forever against a server that will never accept it.
