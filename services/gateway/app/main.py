@@ -2,6 +2,7 @@ from fastapi import Depends, FastAPI, Response
 
 from app.auth import get_current_user, require_role
 from app.models import User
+from app.ws import router as ws_router
 
 app = FastAPI(
     title="SatSandesh Gateway",
@@ -11,6 +12,8 @@ app = FastAPI(
         "routes, no proxying to services/ai/ or the chat backbone yet."
     ),
 )
+
+app.include_router(ws_router)
 
 
 @app.get("/health")
