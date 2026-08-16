@@ -1,8 +1,19 @@
+import logging
+
 from fastapi import Depends, FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth import get_current_user, require_role
+from app.config import get_settings
 from app.models import User
 from app.ws import router as ws_router
+
+# Called at import time, not inside a request handler: a missing DATABASE_URL
+# or JWT_SECRET must crash the process on startup with a readable error, not
+# wait silently until the first request that happens to need it.
+settings = get_settings()
+
+logging.basicConfig(level=settings.LOG_LEVEL)
 
 app = FastAPI(
     title="SatSandesh Gateway",
@@ -11,6 +22,14 @@ app = FastAPI(
         "Single front door for SatSandesh clients. Week 1 skeleton only — no "
         "routes, no proxying to services/ai/ or the chat backbone yet."
     ),
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(ws_router)
