@@ -1,4 +1,7 @@
-from fastapi import FastAPI, Response
+from fastapi import Depends, FastAPI, Response
+
+from app.auth import get_current_user, require_role
+from app.models import User
 
 app = FastAPI(
     title="SatSandesh Gateway",
@@ -38,3 +41,14 @@ def ready(response: Response) -> dict:
     # (hostnames, DSNs, stack traces) to this unauthenticated endpoint.
 
     return {"status": "ok", "checks": checks}
+
+
+@app.get("/me")
+def me(user: User = Depends(get_current_user)) -> User:
+    return user
+
+
+@app.get("/moderator-only")
+def moderator_only(user: User = Depends(require_role("moderator"))) -> User:
+    # Demo route only, to exercise the 403 (wrong-role) path. Not a real feature.
+    return user
