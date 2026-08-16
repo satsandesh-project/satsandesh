@@ -27,3 +27,10 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's own DI idiom is `= Depends(...)` / `= Security(...)` as a parameter
+# default (see app/auth.py, app/main.py) — bugbear's B008 otherwise flags this
+# as a mutable-default footgun. These calls are safe: FastAPI calls them once
+# per request via its dependency-injection system, not once at import time.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "app.auth.require_role"]
