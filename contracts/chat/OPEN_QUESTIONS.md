@@ -40,12 +40,13 @@ shape once settled. Mirrors `services/ai/OPEN_QUESTIONS.md`.
    underneath) is worth adding.
 
 4. **Is a `GET /circles/{id}/members` route needed?** The task's route
-   table doesn't include one, so it isn't implemented. `UserRef`
-   (`contracts/chat/common.py`) exists but currently has no consumer in
-   this contract — see `DECISIONS.md` #4. If a member-listing endpoint is
-   added, should it return bare `user_id`s (consistent with `Membership`
-   today) or embedded `UserRef`s (saving the client a round trip per
-   member)?
+   table doesn't include one, so it isn't implemented — and no
+   user-display type exists in this contract right now (see `DECISIONS.md`
+   #4; a prior `UserRef` draft was removed for having no caller). If a
+   member-listing endpoint is added, should it return bare `user_id`s
+   (consistent with `Membership` today, cheap to add) or embedded
+   display-name/language projections (saving the client a round trip per
+   member, at the cost of a new type)?
 
 5. **Should `source_lang` be validated against a closed set?**
    `DECISIONS.md` #5 explains why `MessageIn.source_lang` is a free string
@@ -69,3 +70,15 @@ shape once settled. Mirrors `services/ai/OPEN_QUESTIONS.md`.
    implementation) can use?** Not blocking today since only this mock
    currently needs a mock identity concept, but worth deciding before a
    third mock reinvents its own header name.
+
+8. **What is the exact `ModerationAction` → `MessageStatus` mapping?**
+   `DECISIONS.md` #6 explains *why* the two enums are kept separate, but
+   only sketches the mapping informally (a `BLOCK` decision is "expected
+   to drive" `blocked`). It doesn't specify what `NUDGE` or `HOLD` map to,
+   whether `ALLOW` alone is sufficient to reach `delivered` or other
+   pipeline stages must also complete first, or how a mid-pipeline failure
+   unrelated to moderation interacts with a moderation decision that
+   hasn't run yet. Left open deliberately: this is M4's (moderation)
+   semantics meeting the client's rendering needs (spinner vs. checkmark
+   vs. "awaiting review" banner), not something to settle unilaterally
+   from the contracts side.

@@ -17,8 +17,8 @@ number would force one package's churn onto the other for no shared benefit.
 class VersionedModel(BaseModel):
     """Base for every chat payload that travels over the wire on its own —
     HTTP request/response bodies and WS frame `data` payloads. Nested value
-    objects (UserRef, MediaRef) don't get their own stamp; see DECISIONS.md,
-    same reasoning as contracts/ai/common.py's VersionedModel."""
+    objects (MediaRef) don't get their own stamp; see DECISIONS.md, same
+    reasoning as contracts/ai/common.py's VersionedModel."""
 
     contract_version: str = CONTRACTS_VERSION
 
@@ -57,14 +57,3 @@ class MediaRef(BaseModel):
 
     uri: str
     duration_ms: int | None = None
-
-
-class UserRef(BaseModel):
-    """Minimal user projection for chat display purposes (author info,
-    membership listings) — not the gateway's own account model. See
-    DECISIONS.md #4 for why services/gateway/app/models.py's User is not
-    reused directly here."""
-
-    id: str
-    name: str
-    preferred_language: str

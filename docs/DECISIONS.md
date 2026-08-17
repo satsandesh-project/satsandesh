@@ -87,3 +87,39 @@ logic needs to be able to tell these two failure modes apart:
 
 Collapsing both to 1006 (the pre-accept-close behavior) would make a client
 with a bad token retry forever against a server that will never accept it.
+
+## Chat message `id` is UUIDv7, not random UUIDv4 — settled ahead of the Week 2 schema
+
+`contracts/chat/`'s wire contract left the server-assigned message `id`
+typed as an opaque `str` (`contracts/chat/DECISIONS.md` #3), deliberately
+not constraining *which* id scheme a real implementation would use. That
+part is now settled, ahead of Week 2's data model and Week 3's sync work,
+by M3 (who owns Week 2): the scheme is a time-sortable id (UUIDv7), not a
+random UUIDv4.
+
+**Why this belongs in the repo-wide notes, not just `contracts/chat/`:**
+the choice isn't cosmetic — it determines the *shape* of the Week 3 sync
+cursor. A random UUIDv4 carries no ordering information, so sync has to
+page on `(created_at, id)` (a composite cursor, a three-column index, and
+a real correctness hazard from clock skew and identical timestamps across
+processes). A time-sortable id lets sync page on `id` alone (a scalar
+cursor, a two-column index, no separate tiebreaker field). Full comparison
+and reasoning: `contracts/chat/DECISIONS.md` #3.
+
+**Decision:** Week 2's `id` column is UUIDv7, generated server-side at
+insert time. Week 3's sync cursor (`since=`) is the message `id` itself —
+no `created_at` field gets added to the sync contract to cover ordering
+gaps, because a UUIDv7-keyed schema doesn't have any.
+
+**Consequence for both workstreams:** Week 2's schema and Week 3's sync
+logic need to be built against the same assumption from the start —
+`created_at` is a display field, not a sort key. Recorded here so a
+teammate picking up either piece of work doesn't have to reconstruct the
+coupling between "which id scheme" and "what a cursor can be" from first
+principles, and doesn't accidentally design Week 2's schema and Week 3's
+sync against two different assumptions about how ordering works.
+
+**Reversal cost:** High once real data exists — see
+`contracts/chat/DECISIONS.md` #3 for why. That's the reason this was
+decided now, before Week 2's schema and before any client holds a sync
+cursor, rather than left open.

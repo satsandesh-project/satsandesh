@@ -1,5 +1,5 @@
 import pytest
-from contracts.chat.common import MediaRef, MessageKind, MessageStatus, TargetType, UserRef
+from contracts.chat.common import MediaRef, MessageKind, MessageStatus, TargetType
 from pydantic import ValidationError
 
 
@@ -27,10 +27,3 @@ def test_media_ref_requires_uri() -> None:
         MediaRef.model_validate({})
     ref = MediaRef(uri="mock://audio/a.wav", duration_ms=1200)
     assert ref.duration_ms == 1200
-
-
-def test_user_ref_is_a_minimal_display_projection() -> None:
-    # Not the gateway's own account model — see contracts/chat/DECISIONS.md
-    # for why app.models.User isn't reused directly.
-    ref = UserRef(id="u1", name="Test Elder", preferred_language="te")
-    assert ref.name == "Test Elder"
