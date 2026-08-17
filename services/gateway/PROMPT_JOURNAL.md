@@ -171,6 +171,18 @@ Bash's own job control, a later boot check could silently validate a
 leftover process from an earlier turn (running old code) rather than the
 process just started.
 
+**This isn't hypothetical — it already happened once, in the earlier
+skeleton-phase session.** A boot check there reported success, but it was
+reaching a stray uvicorn process left running from a previous run, not the
+freshly rebuilt venv the check was meant to verify. It was only caught the
+following turn, when a port check found the leftover listener still on port
+8000. The check had gone green; the thing it was actually talking to was
+stale. This session had no repeat of that, specifically because the port
+check was made mandatory before every boot check as a direct result. The
+general point, stated plainly: a passing check proves the thing you
+measured, not the thing you wanted — the discipline is to ask what a check
+actually exercised, not just whether it went green.
+
 **Decided differently:** none required a decision from the user — this is a
 process-hygiene fact recorded here because the user asked for it explicitly
 as a named finding, not because it changed any code.
