@@ -56,9 +56,13 @@ services:
       - "80:80"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile
+    # Wait for both upstreams to be *healthy*, not merely started — otherwise
+    # Caddy can accept traffic and 502 while uvicorn is still booting.
     depends_on:
-      - gateway
-      - ai-services
+      gateway:
+        condition: service_healthy
+      ai-services:
+        condition: service_healthy
 
 volumes:
   pgdata:
