@@ -61,13 +61,29 @@ header) and `app/ws.py`'s `/ws` route (WebSocket, reads a `?token=` query
 param) call through this one function — editing its body is enough to wire up
 real auth for both transports at once, no route or call site needs to change.
 
-**Do not rebind the name.** FastAPI captures the function object itself at
-route-registration time (`Depends(get_current_user)` in `app/main.py`, and the
-direct call in `app/ws.py`), not a lazy lookup by name. Reassigning
-`user_from_token = something_else` after the module is imported and routes
-are registered silently does nothing — the routes keep calling the original
-function object. Replace the body of `user_from_token` in place; don't
-introduce a second name and point to it.
+**Do not rebind the name — the two call sites resolve it through different
+mechanisms, and a rebind at runtime makes them silently disagree instead of
+both going stale together:**
+
+- `get_current_user`, defined in `app/auth.py` itself, calls
+  `user_from_token(...)` as a plain global lookup. Python resolves that name
+  against `app/auth.py`'s own module namespace **every time the function
+  runs** — rebind `app.auth.user_from_token` at runtime and `get_current_user`
+  picks up the new implementation on its very next call.
+- `app/ws.py` instead does `from app.auth import user_from_token` at the top
+  of the file. That statement copies the function *object* into `app/ws.py`'s
+  own namespace once, at import time. A later rebind of
+  `app.auth.user_from_token` has no effect on that copy — `/ws` keeps calling
+  whatever `user_from_token` was when `app/ws.py` was first imported, for the
+  life of the process.
+
+So rebinding the name somewhere instead of editing `user_from_token`'s body
+in place would make HTTP auth (`/me`, `/moderator-only`) switch over
+immediately while WebSocket auth (`/ws`) silently keeps accepting the old
+stub — worse than either path breaking outright, since the HTTP tests would
+pass and give false confidence that the swap worked everywhere. Replace the
+body of `user_from_token` in place; don't introduce a second name and point
+to it.
 
 ## Testing
 
