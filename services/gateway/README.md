@@ -28,11 +28,13 @@ py -m venv .venv
 ```
 
 Interactive docs at `http://localhost:8000/docs` once it's running. Routes so
-far: `/health` and `/health/ready` (no auth), `/me` and `/moderator-only`
-(require a `Bearer` token — any non-empty token satisfies the Week 1 auth
-stub), and `/ws` (WebSocket echo, token via a `?token=` query param). See
-"What is stubbed and who replaces it" below before treating any of these as
-real auth.
+far: `/health` and `/health/ready` (no auth), `/me` (requires a `Bearer`
+token — any non-empty token satisfies the Week 1 auth stub), and `/ws`
+(WebSocket echo, token via a `?token=` query param). See "What is stubbed and
+who replaces it" below before treating any of these as real auth.
+`require_role`, the role-check seam `/me` doesn't exercise, has no route of
+its own — it's covered directly in `tests/test_auth.py` instead of shipping a
+demo endpoint just to prove it works.
 
 ## Configuration
 
@@ -98,8 +100,12 @@ cd services/gateway
   returns the expected `{"status", "checks"}` shape; `/health` is proven
   dependency-free (a monkeypatched socket connect must not fire).
 - `tests/test_auth.py` — `/me` rejects a missing token (401) and returns the
-  stub user given one; `/moderator-only` rejects the wrong role (403); a
-  dependency override swaps the current user for tests.
+  stub user given one; `require_role` rejects the wrong role (403) and a
+  dependency override swaps the current user, both proven against a
+  throwaway route built inside the test file rather than a demo endpoint in
+  `app/main.py`; a same-object check that `app/auth.py` and `app/ws.py`
+  resolve `user_from_token` to the identical function (see "What is stubbed"
+  above).
 - `tests/test_config.py` — missing `DATABASE_URL`/`JWT_SECRET` fails loudly at
   construction; settings load correctly from env.
 - `tests/test_ws.py` — `/ws` echoes a message, rejects a missing token with

@@ -9,6 +9,13 @@ class ConnectionManager:
     # In-memory only — no Redis, no database. Fine for a single gateway
     # process; won't survive a restart or scale past one instance, which is
     # exactly what real message delivery will need to fix later.
+    #
+    # send_to_user/broadcast were deliberately removed (Week 1 review): no
+    # caller, no coverage, and both iterated _connections with no lock around
+    # it — a concurrency bug nobody had reasoned about. Week 3's real fan-out
+    # will come with real requirements (ordering, backpressure, locking) and
+    # a real caller to test against; this is an intentional omission, not
+    # something forgotten.
     def __init__(self) -> None:
         self._connections: dict[str, set[WebSocket]] = {}
 
@@ -23,15 +30,6 @@ class ConnectionManager:
         connections.discard(websocket)
         if not connections:
             del self._connections[user_id]
-
-    async def send_to_user(self, user_id: str, message: str) -> None:
-        for websocket in self._connections.get(user_id, set()):
-            await websocket.send_text(message)
-
-    async def broadcast(self, message: str) -> None:
-        for connections in self._connections.values():
-            for websocket in connections:
-                await websocket.send_text(message)
 
 
 manager = ConnectionManager()
@@ -49,23 +47,12 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     try:
         user = user_from_token(token)
     except HTTPException:
-        # We accept() before closing, even though the peer isn't authenticated
-        # yet. That looks backwards, but it's forced by how uvicorn handles a
-        # close sent before accept: it never completes the WS opening
-        # handshake, so it can't send a real close frame, and it collapses
-        # the rejection to a flat HTTP 403 — discarding whatever close code
-        # we asked for entirely. A real browser then reports that as close
-        # code 1006 (abnormal closure), identical to what it reports for a
-        # dead network. That's unacceptable for reconnect logic: a client
-        # with a bad token needs to be able to tell "stop retrying, go
-        # re-authenticate" (1008) apart from "network blip, keep retrying
-        # with backoff" (1006) — see docs/DECISIONS.md.
-        #
-        # accept()-then-close() sends a real WS close frame with our code and
-        # reason intact. We close immediately, before manager.connect() and
-        # before the receive loop, so no connection is ever registered and no
-        # data is ever read from this socket — the "acceptance" is nominal,
-        # not an open door.
+        # Deliberately accept() before close(): uvicorn can only send a real
+        # WS close frame after the handshake completes, so closing before
+        # accept() collapses to a bare HTTP 403 and browsers report ambiguous
+        # code 1006 instead of 1008 — see docs/DECISIONS.md for the full
+        # mechanism and why the distinction matters for Week 3's reconnect
+        # logic.
         await websocket.accept()
         await websocket.close(code=1008, reason="missing_or_invalid_token")
         return
@@ -75,9 +62,10 @@ async def ws_endpoint(websocket: WebSocket) -> None:
         while True:
             data = await websocket.receive_text()
             # ECHO STUB: this line is what becomes real message delivery
-            # (persist, then manager.send_to_user/broadcast to recipients)
-            # once the chat backbone exists. Not built yet — see README/PR
-            # notes for why persistence must happen before the push.
+            # (persist, then fan out to recipients) once the chat backbone
+            # exists. Not built yet — the fan-out methods this will need
+            # were deliberately not pre-built either, see ConnectionManager
+            # above.
             await websocket.send_text(data)
     except WebSocketDisconnect:
         # Normal control flow, not an error: phones sleep, lifts lose signal,

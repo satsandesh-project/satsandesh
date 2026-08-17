@@ -3,7 +3,7 @@ import logging
 from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.auth import get_current_user, require_role
+from app.auth import get_current_user
 from app.config import get_settings
 from app.models import User
 from app.ws import router as ws_router
@@ -67,10 +67,4 @@ def ready(response: Response) -> dict:
 
 @app.get("/me")
 def me(user: User = Depends(get_current_user)) -> User:
-    return user
-
-
-@app.get("/moderator-only")
-def moderator_only(user: User = Depends(require_role("moderator"))) -> User:
-    # Demo route only, to exercise the 403 (wrong-role) path. Not a real feature.
     return user
