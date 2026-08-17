@@ -4,6 +4,11 @@ Team practice: log the key prompts behind AI-assisted work, plus notable
 corrections, so a human reviewer can trace how code was produced. See
 `README.md` → Process.
 
+> **Note:** this file was created ad hoc during the Week-1 gateway fixup,
+> before the team agreed a journal format. **It will likely need
+> consolidating with M4's later prompt-journal template** — treat the
+> structure here as provisional, not as the standard.
+
 ## Week 1 — gateway, docker-compose, Caddy, Postgres init, env config
 
 **Date:** 2026-08-10
@@ -75,3 +80,42 @@ unrelated to this project's config. It persisted across a stale-file
 cleanup, a reboot, a factory reset, and an upgrade to Docker Desktop
 4.86.0. Root cause turned out to be a corrupted Windows Winsock catalog;
 running `netsh winsock reset` (admin) + a restart fixed it permanently.
+
+## Week 1 — close-out pass
+
+**Date:** 2026-08-17
+
+**Prompt (summarized):** Re-ran the Week-1 scope as a checklist to catch
+anything missed, with two requirements stated more precisely than in the
+first pass: Caddy must `depend_on` gateway **and** ai-services as
+*healthy* (not merely started), and pytest must cover `/db-check` as well
+as `/health`. Also asked for a "Run & Verify" section in
+`gateway/README.md` specifically (the first pass put one in the root
+`README.md`), and for this journal to carry a note that it may need
+consolidating with M4's later template.
+
+**Changes made in this pass:**
+
+- `docker-compose.yml`: Caddy's `depends_on` upgraded from the shorthand
+  list form (which only waits for *started*) to `condition:
+  service_healthy` on both gateway and ai-services. Without this, Caddy
+  can start accepting traffic and return 502s while uvicorn is still
+  booting.
+- `gateway/tests/test_health.py`: added three `/db-check` tests — happy
+  path, empty-table (500), and DB-unreachable (503). They fake psycopg's
+  connection/cursor via `monkeypatch` rather than requiring a live
+  Postgres, so `pytest` still runs without `docker compose up`. Faking
+  was necessary because psycopg's connection *and* cursor are both
+  context managers, so the stand-ins need `__enter__`/`__exit__`.
+- `gateway/README.md`: added an endpoints table, a "Run & Verify"
+  section, and a troubleshooting note that init scripts only run against
+  an empty data dir (so a stale `pgdata` volume needs
+  `docker compose down -v`).
+
+**Deliberate deviation from the prompt:** the prompt asked for the AI
+stub at `services/ai-services/`, but also asked to match the existing
+`gateway/` layout for consistency. The repo already had a top-level
+`ai-services/` directory (with a teammate-authored `README.md`), and
+ADR 0001 specifies top-level folders matching the architecture. Nesting
+it under a new `services/` directory would have contradicted both, so it
+stayed at `ai-services/`. Flagging rather than silently choosing.
