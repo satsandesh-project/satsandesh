@@ -210,6 +210,13 @@ cursor state, would need a migration path. Infrastructural, same class as
 decision #3 — which is why the bulk-endpoint question stays in
 `OPEN_QUESTIONS.md` rather than getting settled here.
 
+**Storage-layer footnote:** "per-conversation" here was written before it
+was checked against a two-party DM specifically — `target_id` alone names
+a circle fine but not a DM (see the storage note on `README.md`'s decision
+#3 and `docs/SCHEMA_DRAFT.md` design question #1a). Resolved storage-side
+with a server-derived `conversation_id`; nothing above changes as a
+result.
+
 ## 8. Enum, not a bare string, for every closed set
 
 `TargetType`, `MessageKind`, `MessageStatus`, `FrameType`, `ErrorCode`, and

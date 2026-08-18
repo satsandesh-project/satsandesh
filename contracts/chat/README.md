@@ -114,6 +114,20 @@ after being offline) issues N sync calls, not one. This is deliberate —
 see `OPEN_QUESTIONS.md` for whether a "sync everything since I went
 offline" convenience endpoint is worth adding later.
 
+**Storage note (added during `docs/SCHEMA_DRAFT.md` review):** `target_id`
+alone can name a circle (every member's messages share the one circle id)
+but not a two-party DM — which party is "the other one" flips depending on
+who's asking, so keying storage on the sender's own `(target_type,
+target_id)` verbatim (as `contracts/chat/mock/app.py` does today) silently
+splits a DM into two one-directional streams instead of one conversation.
+`docs/SCHEMA_DRAFT.md` design question #1a works this through with
+concrete rows and resolves it with a server-side `conversation_id`,
+derived from `(target_type, target_id)` plus the authenticated caller
+(who's always known from auth, never from the body). This is a storage-
+and service-layer resolution only — `SyncRequest`/`SyncBatch`'s shape
+above is unchanged, and a client keeps sending exactly the same
+`(target_type, target_id)` pair it sends today.
+
 ## HTTP routes
 
 All routes require a Bearer token (real auth is `services/gateway/`'s Week

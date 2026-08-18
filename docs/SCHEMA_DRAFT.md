@@ -105,7 +105,7 @@ by hand. Use `uuid`.
 | `preferred_language` | `text` | NOT NULL | Free string, not constrained to `contracts.ai.language.LanguageCode`'s closed 3-language enum — see design question #6 below for whether that's right |
 | `tts_on` | `boolean` | NOT NULL DEFAULT `true` | Proposal field; also not in the gateway's stub `User` model |
 | `role` | `text` | NOT NULL DEFAULT `'elder'` | `CHECK role IN ('elder','moderator','admin')`. This is the **global/site** role, matching `services/gateway/app/models.py::User.role`. Deliberately called out: `memberships.role` below reuses the words `'moderator'`/`'admin'` for a **per-circle** role — same vocabulary, different scope. Worth a naming comment when this becomes code, so nobody reads one as implying the other. |
-| `timezone` | `text` | NULL | **Not in the proposal's sketch.** Recommended addition — see design question #4 |
+| `timezone` | `text` | NULL | **Not in the proposal's sketch.** IANA zone name (e.g. `"Asia/Kolkata"`), **not** a UTC offset (e.g. `"+05:30"`) — see design question #4 for why |
 | `created_at` | `timestamptz` | NOT NULL DEFAULT `now()` | Not in the proposal's sketch either; standard audit column, negligible cost to add |
 
 **Disagreement flagged:** the proposal's `role` and the gateway's existing
@@ -183,17 +183,20 @@ RESTRICT`.
 | `id` | `uuid` | NOT NULL, **PK** | UUIDv7, app-generated at insert time — see `docs/DECISIONS.md` |
 | `client_msg_id` | `uuid` | NOT NULL | Client-generated idempotency key, matches `MessageIn.client_msg_id` |
 | `author_id` | `uuid` | NOT NULL, **FK** → `users.id`, `ON DELETE RESTRICT` | |
-| `target_type` | `text` | NOT NULL | `CHECK target_type IN ('user','circle')` |
-| `target_id` | `uuid` | NOT NULL* | *Storage shape pending — see design question #1 |
+| `target_type` | `text` | NOT NULL | `CHECK target_type IN ('user','circle')`. Kept as its own column under either option in design question #1 — every read path building `MessageOut.target_type` needs it cheaply available, not re-derived with a `CASE` on which FK is non-null |
+| `target_user_id` | `uuid` | NULL, **FK** → `users.id` | Populated iff `target_type='user'`. Design question #1, option (b) |
+| `target_circle_id` | `uuid` | NULL, **FK** → `circles.id` | Populated iff `target_type='circle'`. Design question #1, option (b) |
+| `conversation_id` | `uuid` | NOT NULL | The sync/storage grouping key — **not** the same thing as `target_id`. For `target_type='circle'`, equals `target_circle_id`. For `target_type='user'` (a DM), identifies the two-party pair, the same value regardless of which of the two sent a given message — see design question #1a for why `target_id` alone can't do this and how this column is derived |
 | `kind` | `text` | NOT NULL | `CHECK kind IN ('text','voice')` |
 | `text` | `text` | NULL | Source-language text: authored directly for `kind='text'`, or the ASR transcript for `kind='voice'` — populated once transcription resolves. Matches `contracts/chat/README.md`'s documented behavior ("`text` is `null` on a `voice` message until transcription resolves it") |
 | `pivot_text_en` | `text` | NULL | English MT intermediate — `contracts/ai/pivot.py::PivotResponse.pivot_text`. **Proposal field with no current wire exposure**; `MessageOut` doesn't carry it and isn't expected to (a client renders its own recipient-language text, not the English pivot) — kept here for pipeline reuse (re-render without re-translating from source) and so moderation can run once against a stable English pivot instead of once per recipient language |
 | `original_media_ref` | `text` | NULL, required when `kind='voice'` | URI to the stored source audio |
 | `media_duration_ms` | `integer` | NULL | Flattened out of the wire's nested `MediaRef.duration_ms` |
 | `source_lang` | `text` | NULL | Free string, matches `MessageIn.source_lang` |
-| `status` | `text` | NOT NULL DEFAULT `'pending'` | `CHECK status IN ('pending','delivered','held','blocked','failed')` — matches `contracts/chat/common.py::MessageStatus` exactly |
+| `status` | `text` | NOT NULL DEFAULT `'pending'` | `CHECK status IN ('pending','delivered','held','blocked','failed')` — matches `contracts/chat/common.py::MessageStatus` exactly. `pending` alone can't also carry "inside the send-undo window" — see design question #7 |
+| `undo_expires_at` | `timestamptz` | NULL | Set at insert to `created_at` + the platform's send-undo window; `NULL` once the window has passed, or for message types/paths that don't support undo. See design question #7 |
 | `deleted_at` | `timestamptz` | NULL | **Not in the proposal's sketch.** Recommended addition — see design question #2 |
-| `created_at` | `timestamptz` | NOT NULL DEFAULT `now()` | |
+| `created_at` | `timestamptz` | NOT NULL DEFAULT `now()` | Carries the **database's** clock (`now()`), a different clock source than `id` (the **app server's** clock at generation time — see the `id`-as-`uuid` section above). The two can disagree by milliseconds under clock skew, so `ORDER BY id` and `ORDER BY created_at` aren't guaranteed to agree on close/tied rows. Harmless today because `created_at` is display-only — the sync cursor is defined entirely in terms of `id` (`contracts/chat/DECISIONS.md` #3) — noted here so a future reader doesn't reach for `created_at` as a secondary sort key or tiebreaker |
 
 **Disagreement flagged — media column naming:** the proposal's sketch
 names this column `original_media_ref`; the wire contract's field
@@ -220,8 +223,15 @@ language, fanned out from a single `pivot_text`). Neither this table nor
 the proposal's sketch has a slot for that. Not resolved here — see design
 question #5.
 
-**Primary key:** `id`. **Foreign keys:** `author_id → users.id`; `target_id`'s
-FK (if any) depends on design question #1.
+**Primary key:** `id`. **Foreign keys:** `author_id → users.id`;
+`target_user_id → users.id`; `target_circle_id → circles.id` (design
+question #1, option (b)). `conversation_id` carries **no** FK: a single
+column can't `REFERENCES` two different tables conditionally on
+`target_type` in plain Postgres, so its correctness for a DM comes from the
+service-layer write path (resolve-or-create happening in the same
+transaction as the message insert), not a declarative constraint — see
+design question #1a. The circle case is covered by the `CHECK` below
+instead, since `target_circle_id`'s own FK already guarantees that half.
 
 **Constraints:**
 - **`UNIQUE (author_id, client_msg_id)`** — the idempotency guarantee
@@ -242,7 +252,14 @@ FK (if any) depends on design question #1.
   Pydantic boundary entirely (a migration backfill, an admin script, a
   future batch job) can't silently create the "voice message with no
   audio" state that validator exists specifically to keep out.
-- `target_id`'s constraint (FK vs. no FK) — pending design question #1.
+- **`CHECK (num_nonnulls(target_user_id, target_circle_id) = 1)`** —
+  enforces design question #1's option (b): exactly one of the two target
+  FKs is populated, matching `target_type`.
+- **`CHECK (target_type <> 'circle' OR conversation_id = target_circle_id)`**
+  — ties `conversation_id` to `target_circle_id` for circle messages, the
+  one case where a direct DB-level comparison is possible, so the two
+  can't silently diverge for a circle. No equivalent constraint exists for
+  the DM case — see design question #1a for why.
 
 **Indexes:**
 1. Primary key `(id)` — `uuid`, UUIDv7. Chronological by construction; see
@@ -250,22 +267,36 @@ FK (if any) depends on design question #1.
 2. `UNIQUE (author_id, client_msg_id)` — same index that backs the
    constraint above; also what a `POST /messages` handler queries (or
    `ON CONFLICT`s against) before insert to decide "is this a retry."
-3. **`(target_type, target_id, id)`** — the sync query, and the reason
-   `id` had to be settled before this schema could be written:
+3. **`(conversation_id, id) WHERE deleted_at IS NULL`** — partial, and the
+   sync query, and the reason `id` had to be settled before this schema
+   could be written:
    ```sql
    SELECT * FROM messages
-   WHERE target_type = :target_type AND target_id = :target_id
-     AND id > :since_id
+   WHERE conversation_id = :cid AND id > :since_id
    ORDER BY id
    LIMIT :limit
    ```
-   This is `GET /messages?target_type=&target_id=&since=&limit=` and the
+   (`deleted_at IS NULL` is baked into the index itself rather than
+   re-checked as a `WHERE` clause on every scan — design question #2
+   already puts `AND deleted_at IS NULL` on every list/sync query, and a
+   soft-deleted row is excluded from this query *permanently*, so there's
+   no reason to keep its index entry around for a filter to discard on
+   every future scan.)
+
+   This replaces an earlier draft of this index, `(target_type, target_id,
+   id)` — see design question #1a for why `target_id` alone can't name a
+   two-party DM (it names "the other party from one side," which flips
+   depending on who's sending, so it silently split every DM into two
+   one-directional streams). The *wire* shape is unchanged: this backs
+   `GET /messages?target_type=&target_id=&since=&limit=` and the
    `sync.request`/`sync.batch` WS pair (`contracts/chat/envelope.py`'s
-   `SyncRequest.since_id`) — the single most load-bearing query in this
-   schema. `id` trailing in the index means the same index serves both the
-   `WHERE id > :since_id` range filter and the `ORDER BY id`, with no
-   separate sort step, precisely because UUIDv7 makes `id` order equal
-   chronological order (`contracts/chat/DECISIONS.md` #3).
+   `SyncRequest.since_id`) exactly as before — the server resolves the
+   wire's `(target_type, target_id)` to `conversation_id` before this index
+   is touched, so no route or frame shape changes. `id` trailing in the
+   index means the same index serves both the `WHERE id > :since_id` range
+   filter and the `ORDER BY id`, with no separate sort step, precisely
+   because UUIDv7 makes `id` order equal chronological order
+   (`contracts/chat/DECISIONS.md` #3) — unaffected by the column swap.
 
 No standalone index on `author_id` — no route today lists "all messages by
 author X" independent of a target.
@@ -305,6 +336,114 @@ which argues for closing it at the DB, not leaving it open there too. The
 extra column is a small, one-time cost; a message silently addressed to a
 circle that no longer exists is a real failure mode this product will hit
 once circles can be deleted or renamed, not a hypothetical.
+
+**Reconciling with the sync index:** an earlier draft of this document
+recommended (b) here while the `messages` table and the sync index
+(originally `(target_type, target_id, id)`) were still written against
+(a)'s single `target_id` column — option (b) has no `target_id` column, so
+that index couldn't actually have been built as specified, and a migration
+author would have had to silently pick one or the other. Resolved: the
+`messages` table above now carries `target_user_id`/`target_circle_id`
+(option (b)'s FK columns, for real referential integrity) *and* a separate
+`conversation_id` column (design question #1a below, for the sync index).
+The two columns do different jobs and neither substitutes for the other —
+`target_user_id`/`target_circle_id` answer "does this target actually
+exist," `conversation_id` answers "which rows does one sync call return."
+
+### 1a. DM (two-party) conversation identity — the sync index needs it, and `target_id` alone can't name it
+
+Confirmed with concrete rows, not just in the abstract. A DM between Alice
+and Bob, traced through the mock's own storage logic
+(`contracts/chat/mock/app.py::_store_message`, which keys strictly on the
+*sender's own* `(target_type, target_id)`):
+
+- Alice sends "hi Bob": `MessageIn(target_type='user', target_id=<Bob>)`,
+  `author_id=<Alice>`. Stored under key `('user', <Bob>)`.
+- Bob replies "hi Alice": `MessageIn(target_type='user', target_id=<Alice>)`,
+  `author_id=<Bob>`. Stored under key `('user', <Alice>)`.
+
+Those are two different keys. Alice syncing "my conversation with Bob"
+calls `GET /messages?target_type=user&target_id=<Bob>`, which returns only
+messages stored under `('user', <Bob>)` — i.e. only messages *Alice*
+sent. Bob's reply lives under `('user', <Alice>)` and never appears, no
+matter how Alice's client calls sync. This isn't a mock shortcut: it's the
+same per-sender keying the schema's originally-specified
+`(target_type, target_id, id)` index would produce in real Postgres too. A
+circle doesn't have this problem because every message to a circle, from
+any member, shares the one `target_id` (the circle's own id); a DM has no
+equivalent shared identifier, because `target_id` always names "the other
+party from the sender's point of view" — a value that flips depending on
+who's sending.
+
+**Fix:** add `conversation_id uuid NOT NULL` to `messages` (table above).
+For `target_type='circle'` it's `target_circle_id`. For `target_type='user'`
+it identifies the *pair*, not either party — the same value regardless of
+which of the two sent a given message. The sync index becomes
+`(conversation_id, id)`.
+
+**Does the wire contract need to change? No.** `SyncRequest`/`MessageIn`
+keep sending exactly what they send today — `target_type='user'`,
+`target_id=<the other party>`. The caller's own identity already travels
+on every request via auth (the real gateway's Bearer token; the mock's
+`X-Mock-User-Id`/`?user_id=`), not as a body field, so the server already
+has both halves it needs (`caller_id` from auth, `target_id` from the
+payload) to resolve a `conversation_id` before touching storage. This is a
+storage- and service-layer fix to an already-shipped contract, not a
+contract revision. `contracts/chat/envelope.py::SyncRequest(target_type,
+target_id, since_id)` does inherit the gap as written (it can express "the
+other party from one side," not "the pair"), and `contracts/chat/README.md`
+design decision #3's "per-conversation cursor" language presumed a
+conversation identity the storage layer couldn't actually name — both are
+addressed by resolving `conversation_id` server-side, with no change to
+either file's shipped shape (see the pointer note added to `README.md`).
+
+**Two ways to derive a DM's `conversation_id`, compared:**
+
+- **(i) Deterministic UUIDv5** over the sorted pair (`uuid5(NAMESPACE,
+  min(a,b) || max(a,b))`, sorted by the raw 16-byte `uuid` value, not by
+  string). No extra table, no join, no get-or-create — resolving
+  `conversation_id` from `(caller_id, target_id)` is a pure function, the
+  simplest possible thing for Week 3's sync work specifically. The
+  weakness mirrors the exact one design question #1 raises against option
+  (a) for `target_id` itself: correctness depends on every call site
+  sorting the pair identically forever, an app-layer discipline the
+  database does nothing to enforce. A future service that sorts by string
+  instead of raw bytes, or by insertion order, silently computes a
+  *different* `conversation_id` for the same two people — two disjoint
+  conversations, the exact bug this fix exists to close, just moved up a
+  level.
+- **(ii) A `conversations` table** — `id uuid PK`, `user_a uuid NOT NULL
+  REFERENCES users(id)`, `user_b uuid NOT NULL REFERENCES users(id)`,
+  `CHECK (user_a < user_b)`, `UNIQUE (user_a, user_b)`. Resolving a DM's
+  `conversation_id` is a get-or-create against this table instead of a
+  pure function — a small amount of extra machinery to write once. In
+  exchange, canonicalization becomes a DB-enforced invariant (the `CHECK`
+  plus `UNIQUE` make "two different ids for the same pair" structurally
+  impossible) and it gives DM-level metadata (muted, archived, last-read)
+  a real row to live on the moment the product wants one, the same way
+  `circles` is already that row for circle-level state. Choosing (i) now
+  doesn't foreclose (ii) later — retrofitting is a pure-additive backfill
+  (`SELECT DISTINCT` over `conversation_id` values already sitting on
+  `messages`), not a hard migration — so (i) only *defers* the cost of
+  (ii), it doesn't avoid it if metadata ends up needed.
+
+**Recommendation: (ii), the `conversations` table.** Same reasoning design
+question #1 already used to pick FK columns over a bare polymorphic id:
+it converts a "the app must always agree on how to hash this" correctness
+requirement into something Postgres enforces, rather than trusting every
+future writer to sort consistently forever. One caveat worth stating
+plainly: this doesn't give `conversation_id` itself a declarative FK
+either way — a single column can't `REFERENCES` two different tables
+conditionally on `target_type` in plain Postgres, so `conversation_id`
+stays FK-less regardless of (i) or (ii); a DM's correctness comes from the
+single service-layer write path (resolve-or-create happening in the same
+transaction as the message insert), not a constraint — see the FK note
+under the `messages` table above. If the team is confident about keeping
+derivation logic in exactly one place and doesn't expect DM-level settings
+soon, (i) is a legitimate, simpler choice for Week 3 alone; call that out
+explicitly in review rather than letting it default silently, since the
+migration difference between the two is small now and larger once real
+conversation rows and stored cursors exist.
 
 ### 2. Should messages be soft- or hard-deleted?
 
@@ -367,6 +506,21 @@ just having the column ready to populate whenever Phase 7's collection
 mechanism (signup prompt, explicit setting, inferred — a product question
 outside this doc's scope) is decided.
 
+**Format: IANA zone name, not a UTC offset.** `"Asia/Kolkata"`, not
+`"+05:30"`. Quiet hours is inherently a recurring, local-time rule ("don't
+send between 9pm and 7am, every day"), and a fixed offset breaks that the
+moment a stored user crosses a DST transition their offset was captured
+before or after — the column would silently compute the wrong quiet-hours
+window for exactly the users affected, with no error at write or read
+time. An IANA zone name carries the DST *rule*, not one instant's offset,
+so "9pm local" stays correct across the transition without the column ever
+needing to change. Postgres has no built-in domain that validates a string
+is a real IANA zone name, so this is an application-layer check (e.g.
+against Python's stdlib `zoneinfo.available_timezones()`), not a `CHECK`
+constraint — worth writing down as a convention here so a migration or
+admin script doesn't reach for an offset because nothing in the schema
+said otherwise.
+
 ### 5. Where do per-recipient-language renders live, and what does `MessageOut.text` actually represent?
 
 Not one of the four minimum questions, but surfaced directly by
@@ -419,3 +573,46 @@ motivated it. Leaning toward *not* hard-constraining the column to the
 validating it at the application layer against whatever languages
 `services/ai/` currently supports, so the failure is a rejected signup/
 settings-change, not a silently-unrenderable user discovered later.
+
+### 7. Is a distinct undo-window signal needed on top of `status`, ahead of Week 4?
+
+Flagged in review as a Week 4/Phase 8 concern (a ~30-second window after
+send during which a message hasn't fanned out yet and can still be
+cancelled) — not confirmable against anything currently in this repo; a
+search of `docs/`, `contracts/chat/`, and `services/` turns up no mention
+of an undo feature, a "Phase 8," or a specific window length. If that's
+from the team's external roadmap rather than something already written
+down here, worth saying so explicitly in review. Evaluated on its own
+merits regardless, because the underlying shape of the problem is real and
+cheap to preempt now.
+
+`status='pending'` already covers "still moving through the AI pipeline"
+(transcription, translation, moderation — `contracts/chat/README.md`'s
+status table, `contracts/chat/DECISIONS.md` #6). A send-undo window is a
+different, orthogonal fact — "the sender can still retract this before it
+fans out" — a property of elapsed time since send, not of pipeline stage.
+A message can be simultaneously mid-pipeline *and* past its undo window,
+or fully processed *and* still within it, depending on how fast the
+pipeline runs relative to the window. Cramming "cancellable" into `status`
+means either inventing a value that has to interact with every other
+transition (does moderation still run on it? does it un-pend itself back
+to `pending` when the window closes, or move straight to whatever the
+pipeline had already decided?), or leaving `status='pending'` to silently
+mean two different things and forcing every caller to re-derive
+"cancellable" from `now() - created_at < 30s`, a constant that lives
+nowhere in this schema and whose meaning changes retroactively if the
+window length is ever tuned.
+
+**Recommendation: `undo_expires_at timestamptz NULL`** (added to the
+`messages` table above), not a new `status` value. Set once at insert
+(`created_at` + whatever the current undo-window policy is at that
+moment) and never mutated afterward. "Is this cancellable right now"
+becomes `deleted_at IS NULL AND undo_expires_at IS NOT NULL AND now() <
+undo_expires_at` — a plain comparison against a column, answerable
+without inferring anything from `status` or recomputing a policy constant
+per request, and still correct if the window's length changes later
+(existing rows keep the deadline they were given at send time instead of
+being retroactively re-evaluated against a new constant). Same "cheap now,
+expensive to retrofit" argument this document already applies to
+`timezone` (design question #4): nullable, unused until Week 4 actually
+needs it, negligible cost to add today.
