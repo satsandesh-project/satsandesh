@@ -99,3 +99,122 @@ Two properties this design must preserve:
 2. **Over-blocking is a first-class defect.** An elder's message about a sick spouse vanishing without
    explanation is worse than a dispute getting through. False-hold rate is a tracked metric, not an
    afterthought.
+
+   ---
+
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| `services/gateway/` | FastAPI gateway — auth, routing, WebSocket fan-out |
+| `services/ai/` | AI contract schemas and mock server (active from Month 2 — **do not archive**) |
+| `contracts/ai/` | Shared request/response schemas between gateway and AI services |
+| `docs/DECISIONS.md` | Architecture Decision Records — append only |
+| `docs/CONVENTIONS.md` | Branching, PR and review rules |
+| `docs/journal/` | Per-member prompt journals (one file each, to avoid merge conflicts) |
+| `.github/workflows/` | CI: lint, format, test |
+
+---
+
+## Technology stack
+
+All components carry an OSI-approved licence. Total software cost: ₹0.
+
+| Layer | Choice | Licence |
+|---|---|---|
+| Client + admin console | Reflex (installable PWA) | Apache-2.0 |
+| Gateway & AI services | FastAPI + Uvicorn | MIT / BSD |
+| Chat backbone | **Undecided** — Matrix/Conduit vs custom-lite (FastAPI WS + Postgres outbox) | Apache-2.0 / — |
+| Database | PostgreSQL | PostgreSQL Licence |
+| Speech recognition | faster-whisper small (int8), CPU | MIT |
+| Translation | IndicTrans2 distilled | MIT |
+| Speech synthesis | AI4Bharat Indic-TTS (VITS); Piper for English | MIT |
+| Moderation LLM | Qwen2.5 3B or 1.5B Instruct, 4-bit | Apache-2.0 |
+| LLM serving | llama.cpp | MIT |
+| Live rooms | LiveKit (self-hosted SFU) | Apache-2.0 |
+| Broadcast | Nginx + HLS | BSD / MIT |
+| Deployment | Docker Compose + Caddy + Let's Encrypt | Apache-2.0 |
+
+Llama-family models are deliberately excluded — their community licence is not OSI open source.
+
+---
+
+## Getting started
+
+Requires Python 3.11+, Docker Desktop, and git.
+
+```bash
+git clone <repo-url> SatSandesh
+cd SatSandesh
+```
+
+Per-service setup and run instructions live in each service's own README:
+
+- `services/gateway/README.md` — install, run, test, endpoint list, environment variables
+
+A repo-wide `docker compose up` is a Month 1 deliverable and is not ready yet.
+
+---
+
+## Working agreement
+
+Every member follows these, every week:
+
+- **Tests first.** Write the test, watch it fail *for the right reason*, then implement.
+- **AI writes code; humans own it.** Nothing merges unread. At review, the author explains their PR
+  line by line. This is the pedagogy, not a formality.
+- **Small, single-concern PRs.** Config changes commit separately from features.
+- **Scope-lock your work** to your own service folder. Never touch a teammate's folder or `.git/`.
+- **Verify in a real browser**, not only in `TestClient`. An in-process test client can pass while the
+  real behaviour is broken.
+- **Prompt journal entry per feature**, in your own file under `docs/journal/`.
+- **Security checklist every sprint:** authorization on every route, no secrets in code, parameterized
+  SQL, upload size limits, dependency audit.
+
+Full conventions: `docs/CONVENTIONS.md`.
+
+---
+
+## Ethics and privacy
+
+- **Informed consent at signup**, plainly worded, in the user's language, as text and audio: messages
+  here are screened by a computer program and may be reviewed by a human, to keep this space for
+  satsang.
+- **No end-to-end encryption, stated openly.** Server-side stewardship and E2EE are mathematically
+  incompatible. The promise is a gardened community space, not a private vault. Genuinely private
+  conversations belong on other apps, and users are told so.
+- **Data minimization.** Original voice recordings purge after 30 days (configurable). Analytics are
+  aggregate-only. No advertising technology, no third-party trackers.
+- **Moderation with dignity.** Never a silent deletion. Every action explained in the sender's
+  language. Appeal available. Full audit trail.
+- **Elder dignity.** No dark patterns, no streaks, no red-badge anxiety, no infinite feeds. Quiet
+  hours on by default.
+- **DPDP Act 2023 alignment.** Notice and consent, purpose limitation, named grievance contact,
+  erasure on request.
+
+---
+
+## Open decisions
+
+Tracked here until resolved in `docs/DECISIONS.md`:
+
+- **Chat backbone: Matrix/Conduit (A) vs custom-lite (B).** Two spikes in Month 1 Week 2 decide it.
+- **v1 shape.** Whether v1 is full chat, or the broadcast-first *Satsang Companion* scope
+  (announcements, Thought for the Day, satsang broadcast, listen-together, Pranam Wall) with chat
+  deferred to v2. The constraint stack above argues for the latter.
+- **Compute for staging.** Department shared GPU access is being explored.
+- **Dependency pinning.** `services/gateway/` uses exact pins + `requirements.txt`;
+  `services/ai/` uses floating ranges + pyproject only. Should they converge?
+- **Rate limiting on `/ws`** — required before any real deployment.
+
+---
+
+## Licence
+
+Apache-2.0. Any community — ashram, temple, gurudwara, church, mosque — should be able to self-host
+its own instance.
+
+## Acknowledgements
+
+Built on open work from AI4Bharat (IIT Madras), OpenAI Whisper, SYSTRAN faster-whisper, the Qwen
+team, Matrix.org, LiveKit and Reflex.
