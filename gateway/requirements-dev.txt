@@ -1,0 +1,5 @@
+# Test-only deps. Not installed in the Docker image (see Dockerfile —
+# it only installs requirements.txt) or shipped to production.
+# Local dev: pip install -r requirements.txt -r requirements-dev.txt
+pytest
+httpx

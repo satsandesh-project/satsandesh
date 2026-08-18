@@ -54,10 +54,12 @@ on first boot.
 
 ### Tests
 
-The suite fakes the DB connection, so it needs no running containers:
+The suite fakes the DB connection, so it needs no running containers.
+Test deps (`pytest`, `httpx`) live in `requirements-dev.txt`, separate from
+`requirements.txt` so they don't ship inside the Docker image:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt
 pytest
 ```
 
