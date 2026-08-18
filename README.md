@@ -103,9 +103,11 @@ docker compose down -v  # removes the named volume too
 
 ### Running tests
 
-Each service has its own `pytest` suite (run inside a venv or the container):
+Each service has its own `pytest` suite. Run these locally (in a venv or
+just directly) — not inside the container: `.dockerignore` excludes
+`tests/` from the image, so the tests aren't there to run.
 
 ```bash
-cd gateway && pip install -r requirements.txt && pytest
-cd ai-services && pip install -r requirements.txt && pytest
+cd gateway && pip install -r requirements.txt -r requirements-dev.txt && pytest
+cd ai-services && pip install -r requirements.txt -r requirements-dev.txt && pytest
 ```
