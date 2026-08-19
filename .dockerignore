@@ -1,0 +1,33 @@
+# Root build context, used by services that need backbone/interfaces.py
+# copied into their image (gateway, spike-backbone). Docker only reads a
+# .dockerignore from the *context root*, so this file is what applies to
+# those builds -- the per-service ones they used to have are gone, since
+# they'd have looked active while being silently ignored.
+#
+# ai-services still builds from its own directory as its context, so
+# ai-services/.dockerignore is still the live file for that one.
+
+.git/
+.env
+
+# Virtualenvs -- gateway/venv alone is ~36MB of build context
+**/venv/
+**/.venv/
+
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+
+# Test-only material: images ship runtime code, tests run on the host
+# (see README.md -- .dockerignore excluding tests/ is exactly why the
+# "run tests in the container" instruction was wrong).
+**/tests/
+**/conftest.py
+**/requirements-dev.txt
+
+# Not part of any service image
+docs/
+clients/
+infra/
+db/
+*.zip

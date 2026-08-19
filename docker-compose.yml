@@ -20,12 +20,20 @@ services:
 
   gateway:
     build:
-      context: ./gateway
+      # Repo root, so the image can include backbone/interfaces.py — the
+      # contract the gateway's backbone client implements. See
+      # .dockerignore for what's kept out of the context.
+      context: .
+      dockerfile: gateway/Dockerfile
     restart: unless-stopped
     environment:
-      # Not used for real routing yet — schema/backbone decision still
-      # pending. Wired up once the Matrix-vs-custom spike concludes.
       DATABASE_URL: ${DATABASE_URL}
+      # Where the gateway reaches the backbone. Points at the custom-lite
+      # spike because it's the only implementation that exists — NOT
+      # because ADR 0002 has been decided (it hasn't). Swapping backbones
+      # should be a change to this URL plus a client implementation, not a
+      # change to gateway/circles.py.
+      BACKBONE_URL: ${BACKBONE_URL:-http://spike-backbone:8000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,7 +67,11 @@ services:
   spike-backbone:
     profiles: ["spike"]
     build:
-      context: ./backbone/spike-custom-lite
+      # Repo root, so the image can include backbone/interfaces.py (the
+      # contract this service implements), which lives outside this
+      # service's own directory.
+      context: .
+      dockerfile: backbone/spike-custom-lite/Dockerfile
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
