@@ -1,0 +1,16 @@
+{
+  "action": "NUDGE",
+  "confidence": 0.81,
+  "contract_version": "0.1.0",
+  "degraded": {
+    "active": false,
+    "detail": null,
+    "reason": "none"
+  },
+  "label": "D_DISPUTATIONAL",
+  "model_version": "qwen2.5-7b-instruct-q4@1",
+  "nudge_language": "te",
+  "nudge_text": "దయచేసి మృదువుగా చెప్పండి.",
+  "policy_version": "policy@2026-08-13",
+  "rationale": "Message reads as argumentative in tone; nudging sender toward gentler phrasing before it reaches the circle."
+}
