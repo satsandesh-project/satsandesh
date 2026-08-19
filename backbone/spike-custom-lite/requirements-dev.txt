@@ -1,0 +1,8 @@
+# Test-only deps. Not installed in the Docker image.
+# websockets is the async client library the crash-safety test uses to
+# talk to a real subprocess -- unrelated to uvicorn's own (server-side)
+# websocket support, which comes bundled via uvicorn[standard].
+pytest
+pytest-asyncio
+httpx
+websockets

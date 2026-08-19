@@ -1,0 +1,91 @@
+"""Spike B: custom-lite chat backbone (FastAPI WebSockets + Postgres outbox).
+
+SPIKE CODE -- not production. No auth (user_id is a trusted query param),
+no reconnection backoff, no connection pooling. The point is to answer
+one question honestly: can this pattern deliver messages reliably and in
+order, survive a crash, and handle two dispatchers without double-
+delivery? See docs/adr/0002-chat-backbone.md for the findings.
+"""
+
+import asyncio
+from contextlib import asynccontextmanager
+from typing import List
+
+import psycopg
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
+
+from db import DATABASE_URL, ensure_schema
+from dispatcher import run_forever
+from registry import ConnectionRegistry
+
+registry = ConnectionRegistry()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await ensure_schema()
+    task = asyncio.create_task(run_forever(lambda: registry))
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="SatSandesh Spike B — custom-lite backbone", lifespan=lifespan)
+
+
+class SendRequest(BaseModel):
+    conversation_id: str
+    sender_id: str
+    recipient_ids: List[str]
+    body: str
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "spike-custom-lite"}
+
+
+@app.post("/send")
+async def send(req: SendRequest):
+    """Writes the message and one outbox row per recipient in a single
+    transaction. This is the whole point of the outbox pattern: if the
+    process dies right after this commits, the delivery *obligation* is
+    already durable on disk -- the dispatcher picks it up on its own,
+    with no dependency on this request having survived."""
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO spike_messages (conversation_id, sender_id, body) "
+                "VALUES (%s, %s, %s) RETURNING id",
+                (req.conversation_id, req.sender_id, req.body),
+            )
+            row = await cur.fetchone()
+            message_id = row[0]
+            for recipient_id in req.recipient_ids:
+                await cur.execute(
+                    "INSERT INTO spike_outbox (message_id, recipient_id) VALUES (%s, %s)",
+                    (message_id, recipient_id),
+                )
+        await conn.commit()
+    return {"message_id": message_id}
+
+
+@app.websocket("/ws")
+async def ws_endpoint(websocket: WebSocket, user_id: str):
+    """No auth this week -- user_id is just a query param the caller
+    asserts. Real identity is a later task, not a Spike B concern."""
+    await websocket.accept()
+    registry.add(user_id, websocket)
+    try:
+        while True:
+            # The spike only pushes server->client; block here until the
+            # client disconnects (or sends something we simply ignore).
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        registry.remove(user_id, websocket)
