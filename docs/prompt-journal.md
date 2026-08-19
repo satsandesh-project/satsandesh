@@ -119,3 +119,147 @@ stub at `services/ai-services/`, but also asked to match the existing
 ADR 0001 specifies top-level folders matching the architecture. Nesting
 it under a new `services/` directory would have contradicted both, so it
 stayed at `ai-services/`. Flagging rather than silently choosing.
+
+## Week 2 — Spike B: custom-lite backbone (FastAPI WebSockets + Postgres outbox)
+
+**Date:** 2026-08-18
+
+**Prompt (summarized):** Spike-then-decide, not build-then-decide: prove
+or disprove a custom-lite chat backbone (FastAPI WebSockets + Postgres
+outbox) as Option B in ADR 0002, in parallel with a teammate's Spike A
+(Matrix/Tuwunel). Scope: `backbone/` only, plus a short Step 0
+housekeeping list (move the stray ADR draft into `docs/adr/`, split
+test-only deps out of each service's `requirements.txt`, fix a wrong
+README claim about running tests inside the container). Explicit
+constraint: must not break the already-verified Week 1 stack. Five
+required, individually-tested behaviours: online delivery, offline
+queueing with ordered backlog drain, ordering under a burst, crash
+safety (kill mid-dispatch, confirm nothing lost), and two-dispatcher
+concurrency (no double-delivery). Deliverable: real measurements, not
+impressions — a finished-feeling spike that skipped honest measurement
+would have missed the actual point of the exercise.
+
+**Scope note flagged rather than silently resolved:** the prompt's scope
+line said "do NOT touch ... ai-services/", but Step 0b explicitly named
+`ai-services/requirements.txt` for the dev-deps split. Did the narrow,
+explicit instruction (split deps in both services) rather than the
+general exclusion rule, and said so in the commit message rather than
+picking one silently.
+
+**What was actually built** (`backbone/spike-custom-lite/`): the outbox
+pattern in its simplest honest form. `POST /send` writes a message and
+one outbox row per recipient in one transaction (durability starts the
+moment that commits). A background dispatcher polls with `SELECT ...
+WHERE status='pending' ORDER BY id FOR UPDATE SKIP LOCKED`, pushes to
+whoever's connected via an in-memory registry, marks delivered or leaves
+pending. All five behaviours pass; real numbers (duplicate counts,
+resource usage, timing) are in `docs/adr/0002-chat-backbone.md`'s "Spike
+B findings" section, not repeated here.
+
+**Design decision, stated rather than hidden:** the dispatcher runs as a
+background `asyncio` task inside the same process as the WebSocket
+server, not as a genuinely separate OS process. The connection registry
+is in-process memory, so a truly separate dispatcher process couldn't
+reach a live socket without a pub/sub bridge (e.g. Redis) that doesn't
+exist in this spike. This means "two dispatcher instances" (behaviour 5)
+is tested as two concurrent Postgres transactions racing to claim rows —
+which is what actually exercises `SKIP LOCKED` — rather than as two
+literal `docker run` processes. Documented in `dispatcher.py`'s
+docstring, not left implicit.
+
+**What broke, and what each fix actually took** (the honest version, not
+the tidy one):
+
+1. **psycopg async + Windows' default event loop.** First real run
+   against Postgres failed immediately: `psycopg.InterfaceError:
+   Psycopg cannot use the 'ProactorEventLoop' to run in async mode`.
+   Fixed for the pytest path by setting
+   `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())`
+   at the top of `db.py` (imported before any loop exists, in that path)
+   — worked immediately for all four pytest-based behaviours.
+
+2. **The same fix silently did not work for the actual server process.**
+   Running `python -m uvicorn app:app` hit the identical error, despite
+   the policy fix already being in place. Root cause (found by reading
+   uvicorn's source, not by guessing): uvicorn 0.52 resolves its own
+   event loop via `Config.get_loop_factory()` and passes it straight to
+   `asyncio.run(..., loop_factory=...)` — a Python 3.12+ mechanism that
+   bypasses the global event loop *policy* entirely. `asyncio_loop_factory`
+   hardcodes `ProactorEventLoop` on `win32` unconditionally. No amount of
+   setting the policy earlier fixes this, because uvicorn never looks at
+   the policy. Real fix: a custom loop factory (`loop_factory.py`) passed
+   directly to `uvicorn.run(..., loop="loop_factory:factory")` via a
+   dedicated entrypoint (`run.py`) instead of the bare `uvicorn` CLI. This
+   was the single most time-consuming problem this session — not because
+   the eventual fix is complex (it's five lines), but because the first,
+   plausible-looking fix (event loop policy) silently didn't apply to
+   this specific entrypoint, and nothing failed loudly about *why* until
+   traced through uvicorn's actual source.
+
+3. **First crash-safety test design proved nothing.** 15 messages, killed
+   after an 800ms window — all 15 had already been delivered before the
+   kill landed. Passed, but didn't test what it claimed to. Fix: scaled
+   to 300 messages pre-seeded via confirmed writes, recipient connects
+   only afterward, tightened kill window. Second attempt overcorrected
+   (killed before the dispatcher's first poll cycle even fired: 0
+   delivered). Third attempt landed exactly on a batch boundary (50/300,
+   0 duplicates) — informative (proves multi-cycle recovery works) but
+   still didn't exercise the actual duplicate-risk window, because
+   Postgres transactions are all-or-nothing: an interrupted batch either
+   fully commits or fully rolls back, no partial state to catch by luck.
+   Final fix: a test-only fault-injection knob
+   (`SPIKE_DELIVERY_DELAY_MS`, zero effect unless explicitly set) that
+   slows delivery enough for an external kill to reliably land *inside*
+   an open transaction. That run finally produced real duplicates (9-10,
+   varies run to run) with zero message loss — the actual claim in
+   `dispatcher.py`'s docstring, now demonstrated rather than asserted.
+
+4. **`docker compose down` (no profile) doesn't stop profile-scoped
+   containers.** Left `spike-backbone` orphaned and running after a
+   supposedly-clean teardown; the next `docker compose down` reported
+   "Network ... Resource is still in use." Not a bug in this repo's
+   config — a Compose profiles behavior worth knowing: tearing down
+   profile-scoped services needs the same `--profile` flag as bringing
+   them up.
+
+**Claude Code reliability, honestly:** schema design, the outbox pattern
+itself, and the `SKIP LOCKED` concurrency query were correct on the first
+pass — no bugs surfaced in testing on any of that. `db.ensure_schema()`'s
+statement-splitting had a near-bug caught by re-reading the code before
+running it (a naive filter would have silently dropped the 2nd/3rd
+migration statements) rather than by a failing test — worth noting
+because it means at least one mistake didn't get caught by the "run it
+and see" safety net this session leaned on for everything else. The
+event-loop-policy-vs-loop_factory issue (#2 above) was a genuine,
+non-hallucinated platform-compatibility gap: real APIs, used correctly,
+that still didn't compose the way a first read of psycopg's error
+message suggested. No hallucinated methods or invented APIs observed
+anywhere this session.
+
+**Time:** ~44 minutes wall-clock this session end to end, of which
+roughly half (~20-25 min) was unrelated local Docker Desktop
+environment trouble (an auto-update silently hung waiting on a UAC
+prompt nothing was there to click) rather than spike work. Actual
+spike development — schema through all 5 behaviours passing — was
+roughly 20 minutes. Caveat worth stating plainly: "wall-clock minutes in
+an AI-assisted session" is not the same unit as "a developer's focused
+hours," and the ADR's "Time to first working mechanism" criterion says
+so explicitly rather than implying the numbers are directly comparable
+to however long Spike A's teammate reports.
+
+**Lines of code:** 769 across the spike's `.py` files — 368 application
+code (`app.py`, `db.py`, `dispatcher.py`, `registry.py`, `run.py`,
+`loop_factory.py`), 401 test code (five behaviours plus one extra
+fan-out check, plus `conftest.py`). Test code exceeding app code is
+itself worth noting: proving crash-safety and concurrency claims
+honestly took more code than the mechanism being proven.
+
+**Verification:** `docker compose up --build` (no profile) reconfirmed
+healthy after every change that touched shared files (Step 0's
+requirements/dockerignore edits). `docker compose --profile spike up
+--build` starts all 5 containers healthy, `spike-backbone` included.
+`pytest` (6 tests: 4 delivery + concurrency + crash-safety) passes
+against real Postgres without needing the `spike` profile running at
+all — only the base `docker compose up` for Postgres itself. `docker
+stats` measured the spike container's real idle footprint (~42MB RAM,
+~3% CPU) rather than guessing.
