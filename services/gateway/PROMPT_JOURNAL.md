@@ -221,3 +221,81 @@ needs config." Verified directly: booted the real app with `.env` present
 command, which crashed on import with a `pydantic_core.ValidationError`
 listing both missing fields by name, exit code 1 — not a silent partial
 start.
+
+## Phase: database layer — models, first migration, resumed session
+
+**Asked for:** this phase spanned two sessions. An earlier, restarted
+session had already produced `app/id.py` (a hand-rolled UUIDv7 generator,
+since this repo pins Python 3.11 and `uuid.uuid7()` doesn't land until
+3.14), `app/db/base.py`, `app/db/models.py` (SQLAlchemy models for `users`,
+`circles`, `memberships`, `conversations`, `messages` matching
+`docs/SCHEMA_DRAFT.md`), and `tests/test_models.py` written test-first
+against that schema — but was blocked on Docker not being installed, so
+none of the DB-dependent tests had ever actually run. This session's brief
+was: confirm that state matches expectations before touching anything
+(STEP 0), then — since Docker Desktop was now installed — start Postgres,
+generate and verify the first Alembic migration, create a test database,
+migrate both, run the full suite, and document the workflow in the README
+(STEP 1), without committing anything.
+
+**Produced:** STEP 0 was read-only verification — `git status`, reading
+every named file in full, and running both test commands the user
+specified — before any docker or alembic command ran. That confirmed the
+57 pre-existing tests still passed, `test_models.py`'s one DB-independent
+test (`test_uuid7_helper_is_time_ordered`) passed, and its other 7 tests
+failed with `OperationalError: connection to server ... Connection
+refused`, exactly the expected blocked state. Only after reporting that
+back did STEP 1 begin.
+
+**What was wrong — Docker was assumed running but wasn't, caught before
+acting on the assumption:** the instructions stated Docker Desktop was
+"confirmed via `docker version` showing both a Client and Server section."
+Running that command first, rather than trusting the description, showed a
+`Client` section only, then an error: `failed to connect to the docker API
+at npipe:////./pipe/dockerDesktopLinuxEngine ... The system cannot find the
+path specified`. Checking further (`Get-Process 'Docker Desktop'`,
+`Get-Service com.docker.service`, a process list filtered on `docker`) found
+no Docker Desktop process and no service running at all — the engine wasn't
+starting slowly, it wasn't running. Rather than guessing at a fix (or
+silently running `docker run` against a context that might not resolve),
+this was surfaced directly and the user was asked how to proceed: start it
+themselves, have it launched on their behalf, or stop the docker-dependent
+work entirely. The user chose to have it launched. `Start-Process` on
+`Docker Desktop.exe`, followed by polling `docker version` every 5 seconds,
+got the engine responding (`Server: Docker Desktop 4.87.0`) in about 10
+seconds, and STEP 1 proceeded from there as instructed — the container, the
+migration, both databases, and the full suite all completed cleanly on the
+first attempt.
+
+**Also caught before calling the phase done — a stale `.env`:** `.env`'s
+existing `DATABASE_URL`
+(`postgresql://satsandesh:satsandesh@localhost:5432/satsandesh_dev`) was a
+Week 1 placeholder — its own trailing comment said "not yet used" — and
+didn't match the credentials the instructed `docker run` command actually
+creates (`POSTGRES_DB=satsandesh`, the default `postgres` superuser,
+password `devpass`; no `satsandesh` user or `satsandesh_dev` database exists
+in that container). Left alone, `alembic revision --autogenerate` and every
+later `alembic upgrade head` would have failed connecting to a database that
+doesn't exist. Fixed by pointing `.env` at the container's real credentials
+(`postgresql://postgres:devpass@localhost:5432/satsandesh`) before
+generating the migration — `.env` is gitignored, so this didn't touch
+version control — and flagged to the user in the phase report rather than
+left as a silent, unexplained deviation from the literal instructions.
+
+**Decided differently:** none on the migration content itself. Autogenerate
+is documented as unreliable at capturing `CHECK` constraints on some
+SQLAlchemy/Alembic version combinations, so the generated migration file was
+read in full against the explicit checklist (every `CHECK`, the partial
+index, the `(author_id, client_msg_id)` `UNIQUE`, every FK's `ON DELETE`
+clause) before treating it as done. All of it came through correctly on the
+first generation; no hand-editing was needed.
+
+**Follow-up, same phase:** after the initial report, the user asked for
+three more things before committing: sync `.env.example`'s `DATABASE_URL`
+to the same real credentials (so the next person copying it doesn't hit the
+same connection-refused confusion), fix the two README lines flagged as
+stale in that report ("Out of scope this week: ... a database", and "12
+tests across 4 files" — now 65 across 12), and this journal entry. All
+three were diffed for the user before being asked to commit; nothing in
+this phase was committed by the assistant at any point, per standing
+instruction.
