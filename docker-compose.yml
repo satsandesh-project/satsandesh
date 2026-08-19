@@ -49,6 +49,34 @@ services:
       timeout: 5s
       retries: 5
 
+  # Spike B (Week 2): custom-lite chat backbone, FastAPI WebSockets +
+  # Postgres outbox. Exploratory, not part of the Week 1 shell — only
+  # starts with `docker compose --profile spike up`, never with a plain
+  # `docker compose up`. Reuses the existing postgres service; its schema
+  # (spike_messages/spike_outbox) is applied by the app itself on startup,
+  # separate from db/init/. See backbone/spike-custom-lite/ and
+  # docs/adr/0002-chat-backbone.md.
+  spike-backbone:
+    profiles: ["spike"]
+    build:
+      context: ./backbone/spike-custom-lite
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Published directly (not routed through Caddy this week) so it's
+      # reachable for manual poking during the spike without joining the
+      # compose network.
+      - "8100:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
