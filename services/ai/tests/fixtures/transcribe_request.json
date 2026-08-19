@@ -1,0 +1,10 @@
+{
+  "audio": {
+    "duration_ms": 30000,
+    "format": "wav_pcm16",
+    "sample_rate_hz": 16000,
+    "uri": "file:///tmp/sample.wav"
+  },
+  "contract_version": "0.1.0",
+  "language_hint": "te"
+}

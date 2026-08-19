@@ -1,0 +1,10 @@
+{
+  "code": "OUT_OF_MEMORY",
+  "contract_version": "0.1.0",
+  "detail": {
+    "available_mb": 640,
+    "requested_mb": 1800
+  },
+  "message": "Failed to allocate VRAM for Indic-TTS while ASR and moderation models were resident.",
+  "stage": "render.tts"
+}

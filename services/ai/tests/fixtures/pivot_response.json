@@ -1,0 +1,12 @@
+{
+  "contract_version": "0.1.0",
+  "degraded": {
+    "active": false,
+    "detail": null,
+    "reason": "none"
+  },
+  "duration_ms": 95.2,
+  "model_version": "indictrans2-distilled@1",
+  "pivot_text": "Namaste, what time is today's satsang?",
+  "source_language": "te"
+}
