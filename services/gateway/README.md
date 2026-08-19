@@ -10,7 +10,7 @@ This is the **Month 1, Week 1 gateway skeleton**: a FastAPI app object, a health
 check, auth stubs, and a WebSocket echo endpoint. Nothing more.
 
 **Out of scope this week:** routing to the chat backbone, proxying to
-`services/ai/`, LiveKit integration, a database, real authentication, voice or
+`services/ai/`, LiveKit integration, real authentication, voice or
 translation features. Those come later — see below.
 
 **Relationship to `services/ai/`:** that folder (Month 2 on the compressed
@@ -55,6 +55,67 @@ this service gets containerized, its Compose-specific env file (or the
 `environment:` block in `docker-compose.yml`) needs its own `DATABASE_URL`
 distinct from the one in this local `.env`.
 
+## Database
+
+Postgres 16, run locally via Docker — no `docker-compose.yml` in this
+service's scope, just a standalone container:
+
+```bash
+docker run --name satsandesh-pg -e POSTGRES_PASSWORD=devpass \
+  -e POSTGRES_DB=satsandesh -p 5432:5432 -d postgres:16
+```
+
+If the container already exists from an earlier run, `docker start
+satsandesh-pg` instead of running that again. This creates the `postgres`
+superuser (password `devpass`) and a `satsandesh` database — `.env`'s
+`DATABASE_URL` should point at that same user/password/database:
+`postgresql://postgres:devpass@localhost:5432/satsandesh`.
+
+Tests run against a second, separate database, `satsandesh_test`, so a test
+run never truncates dev data (see `tests/conftest.py`'s `TEST_DATABASE_URL`):
+
+```bash
+docker exec satsandesh-pg createdb -U postgres satsandesh_test
+```
+
+### Migrations (Alembic)
+
+Bring a database up to the latest committed schema:
+
+```bash
+./.venv/Scripts/python.exe -m alembic upgrade head
+```
+
+Run that against **both** databases before running tests — once with the
+normal `.env`-provided `DATABASE_URL` (the `satsandesh` dev db), and once
+with `DATABASE_URL` overridden to point at `satsandesh_test`:
+
+```bash
+DATABASE_URL="postgresql://postgres:devpass@localhost:5432/satsandesh_test" \
+  ./.venv/Scripts/python.exe -m alembic upgrade head
+```
+
+To generate a new migration after changing `app/db/models.py`:
+
+```bash
+./.venv/Scripts/python.exe -m alembic revision --autogenerate -m "describe the change"
+```
+
+Autogenerate is not fully reliable — it's known to silently drop `CHECK`
+constraints on some SQLAlchemy/Alembic version combinations. Always open the
+generated file in `alembic/versions/` and confirm every constraint, index,
+and `ON DELETE` clause you expect actually made it in before running
+`upgrade head` against anything.
+
+**The Docker-networking gotcha above applies to Alembic too, unchanged.**
+`alembic/env.py` reads `DATABASE_URL` from `app.config.get_settings()` — the
+exact same settings object the app itself uses, not a separate value
+hardcoded in `alembic.ini` (`alembic.ini`'s own `sqlalchemy.url` is
+deliberately left blank; see the comment above it). So whatever
+`localhost`-vs-`postgres:5432` distinction applies to the app's own
+`DATABASE_URL` applies identically to every `alembic` command run in that
+same environment — there's exactly one place this value is ever configured.
+
 ## What is stubbed and who replaces it
 
 `app/auth.py`'s `user_from_token(token)` is the **single swap point** for real
@@ -94,7 +155,7 @@ cd services/gateway
 ./.venv/Scripts/python.exe -m pytest tests/
 ```
 
-12 tests across 4 files, all passing:
+65 tests across 12 files, all passing:
 
 - `tests/test_health.py` — `/health` returns `{"status": "ok"}`; `/health/ready`
   returns the expected `{"status", "checks"}` shape; `/health` is proven
@@ -110,6 +171,16 @@ cd services/gateway
   construction; settings load correctly from env.
 - `tests/test_ws.py` — `/ws` echoes a message, rejects a missing token with
   close code 1008, and handles a client disconnect cleanly.
+- `tests/test_models.py` — `app/db/models.py`'s SQLAlchemy models against a
+  real Postgres database migrated with `alembic upgrade head`: every `CHECK`
+  constraint, the canonical-ordering constraint on `conversations`, the
+  `(author_id, client_msg_id)` idempotency constraint, and the partial sync
+  index all get exercised directly, since SQLite doesn't reproduce them
+  faithfully. See "Database" above for how the test database is wired up.
+- `tests/test_contracts_chat_*.py`, `tests/test_golden_fixtures_chat.py`,
+  `tests/test_mock_chat_server.py` — the `contracts/chat/` Pydantic wire
+  schemas and the mock chat gateway built on top of them; not detailed here
+  since they predate this section's last update.
 
 ## Development
 
