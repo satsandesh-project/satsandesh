@@ -9,17 +9,19 @@ delivery? See docs/adr/0002-chat-backbone.md for the findings.
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import List
+from typing import List, Optional
 
 import psycopg
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from circles import OutboxCircleStore
 from db import DATABASE_URL, ensure_schema
 from dispatcher import run_forever
 from registry import ConnectionRegistry
 
 registry = ConnectionRegistry()
+circle_store = OutboxCircleStore()
 
 
 @asynccontextmanager
@@ -72,6 +74,72 @@ async def send(req: SendRequest):
                 )
         await conn.commit()
     return {"message_id": message_id}
+
+
+# --- circles -------------------------------------------------------------
+# Thin HTTP surface over OutboxCircleStore, so the gateway (a separate
+# container) can reach it. The gateway talks to these routes and never to
+# this module's internals -- that boundary is what ADR 0002's unresolved
+# decision is being insulated behind. See backbone/interfaces.py.
+
+
+class CreateCircleRequest(BaseModel):
+    name: str
+
+
+class AddMemberRequest(BaseModel):
+    user_id: str
+
+
+class AnnounceRequest(BaseModel):
+    sender_id: str
+    body: str
+
+
+@app.post("/circles")
+async def create_circle(req: CreateCircleRequest):
+    circle_id = await circle_store.create_circle(req.name)
+    return {"circle_id": circle_id}
+
+
+@app.post("/circles/{circle_id}/members")
+async def add_member(circle_id: str, req: AddMemberRequest):
+    await circle_store.add_member(circle_id, req.user_id)
+    return {"status": "ok"}
+
+
+@app.delete("/circles/{circle_id}/members/{user_id}")
+async def remove_member(circle_id: str, user_id: str):
+    await circle_store.remove_member(circle_id, user_id)
+    return {"status": "ok"}
+
+
+@app.get("/circles/{circle_id}/members")
+async def list_members(circle_id: str):
+    return {"members": await circle_store.list_members(circle_id)}
+
+
+@app.post("/circles/{circle_id}/announce")
+async def announce(circle_id: str, req: AnnounceRequest):
+    message_id = await circle_store.post_announcement(circle_id, req.sender_id, req.body)
+    return {"message_id": message_id}
+
+
+@app.get("/circles/{circle_id}/messages")
+async def list_messages(circle_id: str, limit: int = 50, before: Optional[str] = None):
+    messages = await circle_store.list_messages(circle_id, limit=limit, before=before)
+    return {
+        "messages": [
+            {
+                "id": m.id,
+                "circle_id": m.circle_id,
+                "sender_id": m.sender_id,
+                "body": m.body,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in messages
+        ]
+    }
 
 
 @app.websocket("/ws")

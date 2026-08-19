@@ -23,7 +23,8 @@ def spike_clean_db():
         await ensure_schema()
         async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
             await conn.execute(
-                "TRUNCATE spike_outbox, spike_messages RESTART IDENTITY CASCADE"
+                "TRUNCATE spike_outbox, spike_messages, spike_circle_members, "
+                "spike_circles RESTART IDENTITY CASCADE"
             )
             await conn.commit()
 
