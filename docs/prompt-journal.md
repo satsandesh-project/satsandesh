@@ -263,3 +263,116 @@ against real Postgres without needing the `spike` profile running at
 all — only the base `docker compose up` for Postgres itself. `docker
 stats` measured the spike container's real idle footprint (~42MB RAM,
 ~3% CPU) rather than guessing.
+
+## Week 3 — circles (groups), memberships, and announcement channels
+
+**Date:** 2026-08-19
+
+**Prompt (summarized):** Build circles + memberships and announcement
+channels; deliverable "post to a circle works". Scope limited to
+`backbone/` and `gateway/`. Two instructions shaped the whole week more
+than the feature itself did: (1) record honestly in ADR 0002 and the
+work breakdown that the backbone decision is *still open and past its
+time-box*, and that Week 3 proceeds behind an interface rather than
+treating custom-lite as decided; (2) check for Week 2's
+users/circles/memberships schema (Student 3's task) and **reuse it if
+present, or flag the gap explicitly rather than silently inventing a
+competing version**.
+
+**The gap, checked before building anything:** there is no canonical
+users/circles/memberships schema in this repo. Searched every `.sql`
+file, grepped the tree, and checked `origin/main` for commits not held
+locally — the only migrations are Week 1's `db/init/001_init.sql` and
+Week 2's spike schema. So Week 3 defines only the minimum tables circles
+need (`spike_circles`, `spike_circle_members`), under the existing
+`spike_` prefix, and **deliberately does not create a `spike_users`
+table** — nothing here needs one (user ids are caller-asserted strings,
+there's no auth), and inventing one would be inventing an identity model
+that belongs to whoever owns the canonical data model. Recorded as a
+known duplicate-to-reconcile in `docs/work-breakdown.md`, so it surfaces
+as a flagged decision rather than as a merge conflict later.
+
+**Why an interface rather than waiting, or just building on custom-lite:**
+Circles are needed by other students' work now; blocking them on an
+unresolved architecture decision would be the worse trade. But building
+directly against custom-lite would have quietly converted "the only
+option that currently exists" into "the option we chose", which is
+exactly the failure mode the ADR note now guards against. The interface
+(`backbone/interfaces.py`) is what lets both be true at once: real
+progress this week, and a contained swap when ADR 0002 actually
+resolves. The ADR and work-breakdown notes say in plain words that the
+current wiring is provisional and chosen for availability, not merit.
+
+**How little the feature itself needed:** an announcement is exactly the
+"one message, many recipients" fan-out Week 2's outbox already did and
+already tested. `post_announcement` resolves membership into a recipient
+list and hands it to the same transactional write. No delivery logic was
+rebuilt — the dispatcher, `SKIP LOCKED` claiming, offline queueing,
+ordering and crash recovery are untouched. Two semantics were worth
+pinning down in the contract before there are two implementations to
+disagree about: add/remove member are idempotent, and recipients are
+resolved *at post time*, so removal affects future announcements only
+while an already-written obligation still gets delivered.
+
+**What broke, and what each cost:**
+
+1. **The Week 2 migration splitter was quietly wrong.** `ensure_schema()`
+   split each `.sql` file on `;` and executed the fragments. That splits
+   inside SQL *comments* too. `002_circles.sql` had a comment containing
+   "reconciling; that's recorded ...", so the tail became a bogus
+   statement: `syntax error at or near "that"`. The tempting fix was to
+   reword my comment — which would have hidden the bug and left it for
+   whoever wrote the next semicolon. Checked instead whether psycopg
+   could execute multi-statement SQL directly: it can (parameterless
+   `execute()` uses the simple query protocol, and Postgres parses the
+   statements itself, semicolons-in-comments included). Verified that
+   empirically before relying on it. The splitter was both unnecessary
+   and the bug, so it's deleted rather than patched.
+
+2. **The spike container was broken while every host test passed.**
+   `circles.py` imports the contract via a `sys.path` shim that resolves
+   from the repo, so 11/11 tests passed locally — but the spike's Docker
+   build context was its own directory, which doesn't contain
+   `backbone/interfaces.py`. The container built fine and died at startup
+   with `ModuleNotFoundError: No module named 'interfaces'`. Only caught
+   by actually running `docker compose --profile spike up` rather than
+   trusting green tests. Fix: build both gateway and spike-backbone from
+   the repo root and copy the contract into each image, plus a root
+   `.dockerignore` (a directory-scoped one is inert under a root context,
+   so the two per-service files were removed rather than left looking
+   active). Same class of mistake as the Week 2 event-loop issue: code
+   that works in one entry point and silently doesn't in another.
+
+3. **A passing end-to-end check that proved nothing.** The first Docker
+   end-to-end run printed "bob received: satsang at 6pm" and looked like
+   a success — but the body and circle id didn't match what had just been
+   posted. It was leftover backlog from an earlier curl test still owed to
+   `bob`, correctly redelivered by the outbox. The outbox was right; the
+   *test* was meaningless. Rerun with per-run unique user ids and explicit
+   assertions on the exact body, plus a non-member case. Worth recording
+   because the failure mode was a green result, not a red one.
+
+**On verifying the boundary:** the acceptance criterion asked for a grep
+proving `gateway/circles.py` doesn't reference the concrete backbone. A
+plain grep *fails* — the file's own docstring explains which backends it
+deliberately avoids, so "matrix" and "outbox" appear as prose. Rather
+than weaken the pattern until it passed, the check parses the file's AST
+and inspects real imports and referenced names, ignoring comments and
+strings. It reports four imports (`typing`, `fastapi`, `pydantic`,
+`interfaces`) and no concrete implementation names. That's a check that
+would actually catch a violation, where a tuned grep might not.
+
+**Claude Code reliability:** the design work (interface shape, reusing
+the outbox fan-out, transaction boundary for membership resolution) was
+sound first time and no invented APIs appeared. The two real misses were
+both *environment* rather than logic — the migration splitter inherited
+from Week 2, and the Docker context assumption — and both were found by
+running things rather than by reading them. Consistent with Week 2's
+finding: the failures are platform-interaction gaps, not hallucinations.
+One near-miss worth noting: the first draft of the non-member test poked
+a private Starlette attribute (`ws._receive_queue`) that doesn't exist —
+checking the actual API showed the real name is `_send_rx`, and that
+prompted a better approach anyway (assert the Postgres invariant that no
+delivery obligation was ever created, rather than "nothing arrived yet",
+which is indistinguishable from "nothing has arrived *yet*" and would
+have been quietly flaky).
