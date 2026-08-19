@@ -4,6 +4,30 @@
 **Date:** 2026-08-01
 **Author(s):** Student 2
 
+> ### ⚠ Note — 2026-08-19: decision still open, and now past its time-box
+>
+> This ADR's own spike plan set a two-week box with a day-10 pivot point.
+> That box has now passed and **the decision has still not been made**:
+> Spike B's findings are recorded below, but Spike A (Matrix/Tuwunel) has
+> not reported, so there is nothing to compare against yet.
+>
+> **Week 3 work (circles + announcement channels) is proceeding anyway,
+> deliberately built behind an abstract interface** (`backbone/interfaces.py`)
+> rather than waiting for this decision or assuming its outcome. Circles are
+> needed by other students' work now, and blocking them on an unresolved
+> architecture decision would be the worse trade.
+>
+> **The concrete implementation wired up for now is Option B (custom-lite)**
+> — for the plain reason that it is the only option that currently exists in
+> working form. **This is provisional and is NOT a de facto decision.** It
+> was chosen for availability, not on merit, and no comparison has been run.
+> Whoever picks this up must revisit it once Spike A's findings land; the
+> interface exists precisely so that swapping the implementation is a
+> contained change rather than a rewrite.
+>
+> Treating "Option B is what's currently wired up" as "Option B won" would be
+> exactly the mistake this note exists to prevent.
+
 ## Context
 
 The proposal's original architecture (Section 8) names two options for the

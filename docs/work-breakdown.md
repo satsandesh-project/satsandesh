@@ -1,4 +1,6 @@
-# Team Work Breakdown — Month 1 / Week 1
+# Team Work Breakdown — Month 1
+
+_Week 1 below; Week 3 is at the end of this file._
 
 _Status: draft — Student 2's Week 1 items below are complete and merged.
 Students 1/3/4: please confirm or adjust your own section before we treat
@@ -105,3 +107,50 @@ check before Student 2 sinks real time into the spike. Also: ADR 0002
 flags that full E2EE isn't compatible with server-side moderation/
 translation as designed — worth confirming this is written into the
 SRS's privacy/ethics section, not just left in the ADR.
+
+---
+
+# Week 3
+
+## Backbone decision status — READ BEFORE BUILDING ON THIS (2026-08-19)
+
+ADR 0002 (Matrix vs custom-lite) is **still open, and now past its
+two-week time-box.** Spike B (custom-lite) reported; Spike A
+(Matrix/Tuwunel) has not, so no comparison has happened.
+
+Week 3's circles/announcements work is **proceeding behind an abstract
+interface** (`backbone/interfaces.py`) rather than waiting on that
+decision or assuming its outcome. The concrete implementation wired up
+for now is **Option B (custom-lite) — chosen because it is the only
+working option that exists, not because it won anything.** This is
+provisional and **must be revisited once Spike A's findings land.**
+
+Please don't read "Option B is what's currently running" as "the team
+picked Option B." Nobody has picked anything yet.
+
+## Student 2 — Platform & backbone
+
+**Week 3 — circles (groups) + memberships, announcement channels.**
+Deliverable: "post to a circle works" — create a circle, manage its
+members, post one announcement, and have every member receive it
+(including members who were offline at post time).
+
+Built against `backbone/interfaces.py` so the eventual ADR 0002 outcome
+is a contained implementation swap rather than a gateway rewrite.
+
+**Blocked-on / gap found this week:** Week 2's "data model + migrations"
+task (users / circles / memberships schema, Student 3) **has not landed
+in this repo** — no such schema exists on `main` or anywhere in the tree,
+confirmed by search. Rather than silently invent a competing version,
+Week 3 defines only the minimum circles/membership tables it needs, under
+the existing `spike_` prefix convention, scoped to the spike. **If a
+canonical users/circles schema arrives later, these will need
+reconciling** — flagged here rather than discovered as a conflict during
+a merge. Whoever owns the canonical data model should treat this as a
+known duplicate to resolve, not as a decision already made.
+
+## Students 1 / 3 / 4 — Week 3
+
+_To be filled in by each owner. Student 2's section above reflects only
+its own scope (circles/announcements); another student owns 1:1
+messaging this week._
