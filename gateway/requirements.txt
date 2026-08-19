@@ -1,3 +1,6 @@
 fastapi
 uvicorn[standard]
 psycopg[binary]
+# Runtime, not test-only: the gateway calls the backbone over HTTP
+# (see backbone_client.py).
+httpx

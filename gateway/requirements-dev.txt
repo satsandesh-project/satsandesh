@@ -1,5 +1,8 @@
 # Test-only deps. Not installed in the Docker image (see Dockerfile —
 # it only installs requirements.txt) or shipped to production.
 # Local dev: pip install -r requirements.txt -r requirements-dev.txt
+#
+# httpx is NOT here: it's a runtime dependency now (backbone_client.py),
+# so it lives in requirements.txt. Starlette's TestClient needs it too,
+# and picks it up from there.
 pytest
-httpx
