@@ -3,9 +3,19 @@ import os
 import psycopg
 from fastapi import FastAPI, HTTPException
 
+import circles
+from backbone_client import HttpCircleBackbone
+
 app = FastAPI(title="SatSandesh Gateway")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
+# The one place the gateway names a concrete backbone. Everything else --
+# circles.py in particular -- sees only the CircleBackbone interface, so
+# resolving ADR 0002 means changing this line and BACKBONE_URL, not the
+# route code.
+circles.set_backbone(HttpCircleBackbone())
+app.include_router(circles.router)
 
 
 @app.get("/health")
