@@ -28,6 +28,17 @@ from datetime import datetime
 from typing import List, Optional
 
 
+class BackboneUnavailable(RuntimeError):
+    """The backbone could not be reached or failed the request.
+
+    Part of the contract rather than any one implementation's business:
+    every backbone can be down, and callers need to handle that without
+    knowing whether "down" meant a refused TCP connection, an HTTP 500, or
+    a dead database. Keeps route code free of implementation-specific
+    exception types.
+    """
+
+
 @dataclass(frozen=True)
 class CircleMessage:
     """One message posted to a circle.
