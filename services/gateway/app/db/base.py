@@ -12,7 +12,7 @@ matches what's actually there.
 
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -34,3 +34,16 @@ def get_db() -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+def check_database_connection() -> bool:
+    """Best-effort connectivity probe for /health/ready. Returns False on
+    any failure instead of letting an exception surface — a readiness
+    check must report unhealthy, not crash the request that's asking
+    whether this instance is healthy."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
