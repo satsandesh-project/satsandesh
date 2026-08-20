@@ -54,6 +54,17 @@ def post_message(
             raise HTTPException(status_code=403, detail="Not a member of this circle")
         target_circle_id = target_uuid
     else:
+        if target_uuid == caller_id:
+            # Not a supported case — see app/ws.py's identical check for
+            # the full reasoning: docs/SCHEMA_DRAFT.md's `conversations`
+            # table enforces a *strict* CHECK (user_a < user_b), making a
+            # self-pair structurally impossible at the DB level, and it's
+            # never discussed anywhere as a supported "note to self"
+            # feature. Rejected explicitly here rather than left to
+            # surface as an unhandled IntegrityError — this route has no
+            # try/except around create_message below, so that would
+            # otherwise be a bare 500, not even a clean error response.
+            raise HTTPException(status_code=422, detail="cannot send a DM to yourself")
         target_user_id = target_uuid
 
     message = create_message(
