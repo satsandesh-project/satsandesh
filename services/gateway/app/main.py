@@ -4,7 +4,10 @@ from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth import get_current_user
+from app.circles import router as circles_router
 from app.config import get_settings
+from app.db.base import check_database_connection
+from app.messages import router as messages_router
 from app.models import User
 from app.ws import router as ws_router
 
@@ -33,6 +36,8 @@ app.add_middleware(
 )
 
 app.include_router(ws_router)
+app.include_router(messages_router)
+app.include_router(circles_router)
 
 
 @app.get("/health")
@@ -52,15 +57,17 @@ def ready(response: Response) -> dict:
     # Once a dependency check below reports unhealthy, this must return
     # HTTP 503 (not 200) so upstreams stop routing traffic to this instance —
     # /health must keep returning 200 regardless.
-    checks: dict = {}
+    checks: dict = {"postgres": "ok" if check_database_connection() else "unreachable"}
 
-    # TODO(readiness-checks): plug in real dependency checks here as they
+    # TODO(readiness-checks): plug in further dependency checks here as they
     # land, each writing its own entry into `checks`, e.g.:
-    #   checks["postgres"] = await _check_postgres()
     #   checks["ai_service"] = await _check_ai_service()
-    # If any entry above is unhealthy, set response.status_code = 503 and
-    # status to "degraded" — don't leak versions or dependency internals
-    # (hostnames, DSNs, stack traces) to this unauthenticated endpoint.
+    # Don't leak versions or dependency internals (hostnames, DSNs, stack
+    # traces) to this unauthenticated endpoint — "ok"/"unreachable" only.
+
+    if any(value != "ok" for value in checks.values()):
+        response.status_code = 503
+        return {"status": "degraded", "checks": checks}
 
     return {"status": "ok", "checks": checks}
 
