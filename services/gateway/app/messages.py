@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.db.base import get_db
+from app.db.models import Message
 from app.db.repository import (
     create_message,
     find_conversation_id,
@@ -36,6 +37,30 @@ def _parse_uuid(value: str, *, field: str) -> uuid.UUID:
         return uuid.UUID(value)
     except ValueError:
         raise HTTPException(status_code=422, detail=f"{field} must be a valid UUID") from None
+
+
+def message_to_out(message: Message) -> MessageOut:
+    """Maps a stored Message row to its wire shape. Each row's own real
+    target, not any caller's frame of reference — for a DM, that flips
+    depending on which direction a given message went (docs/SCHEMA_DRAFT.md
+    design question #1a: "the other party from one side" is not the same
+    value for both directions). Shared by GET /messages below, and by
+    app/ws.py's `message.new` and `sync.batch` frames — one mapping, not
+    three copies that could quietly drift apart."""
+    return MessageOut(
+        id=str(message.id),
+        author_id=str(message.author_id),
+        target_type=message.target_type,
+        target_id=(
+            str(message.target_circle_id)
+            if message.target_type == "circle"
+            else str(message.target_user_id)
+        ),
+        kind=message.kind,
+        text=message.text,
+        created_at=message.created_at,
+        status=message.status,
+    )
 
 
 @router.post("/messages", response_model=AckOut)
@@ -123,29 +148,7 @@ def get_messages(
     has_more = len(rows) > limit
     page = rows[:limit]
 
-    messages = [
-        MessageOut(
-            id=str(row.id),
-            author_id=str(row.author_id),
-            target_type=row.target_type,
-            # Each row's own real target, not the sync query's target_id —
-            # for a DM, that flips depending on which direction a given
-            # message went (docs/SCHEMA_DRAFT.md design question #1a: "the
-            # other party from one side" is not the same value for both
-            # directions), and MessageOut needs to be meaningful standalone
-            # (e.g. a `message.new` WS frame), not just inside this batch.
-            target_id=(
-                str(row.target_circle_id)
-                if row.target_type == "circle"
-                else str(row.target_user_id)
-            ),
-            kind=row.kind,
-            text=row.text,
-            created_at=row.created_at,
-            status=row.status,
-        )
-        for row in page
-    ]
+    messages = [message_to_out(row) for row in page]
     return SyncBatch(
         target_type=target_type, target_id=target_id, messages=messages, has_more=has_more
     )
