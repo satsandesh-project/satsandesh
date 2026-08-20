@@ -2,9 +2,9 @@ import logging
 import uuid
 
 from contracts.chat.common import TargetType
-from contracts.chat.envelope import FrameType, RawFrame
+from contracts.chat.envelope import FrameType, RawFrame, SyncBatch, SyncRequest
 from contracts.chat.errors import ErrorCode, ErrorPayload
-from contracts.chat.messages import AckOut, MessageIn, MessageOut
+from contracts.chat.messages import AckOut, MessageIn
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
@@ -14,9 +14,12 @@ from app.auth import user_from_token
 from app.db.base import get_db
 from app.db.repository import (
     create_message_with_created_flag,
+    find_conversation_id,
+    get_messages_since,
     is_circle_member,
     list_member_ids_for_circle,
 )
+from app.messages import message_to_out
 from app.models import User
 
 logger = logging.getLogger(__name__)
@@ -193,20 +196,7 @@ async def _handle_message_send(
 
     new_frame = {
         "type": FrameType.MESSAGE_NEW.value,
-        "data": MessageOut(
-            id=str(message.id),
-            author_id=str(message.author_id),
-            target_type=message.target_type,
-            target_id=(
-                str(message.target_circle_id)
-                if message.target_type == "circle"
-                else str(message.target_user_id)
-            ),
-            kind=message.kind,
-            text=message.text,
-            created_at=message.created_at,
-            status=message.status,
-        ).model_dump(mode="json"),
+        "data": message_to_out(message).model_dump(mode="json"),
     }
 
     if msg.target_type is TargetType.CIRCLE:
@@ -229,6 +219,89 @@ async def _handle_message_send(
     await manager.broadcast(recipients, new_frame, exclude=websocket)
 
 
+async def _handle_sync_request(
+    websocket: WebSocket, db: Session, user: User, raw_data: dict
+) -> None:
+    """Week 3 Phase 6, Path 1 (confirmed Step 0): the offline-queue read
+    side, built exactly per the shipped contract — per-conversation,
+    resolving `(target_type, target_id)` -> `conversation_id` the same way
+    `app/messages.py::get_messages` already does (`find_conversation_id`/
+    `is_circle_member`), then calling the existing `get_messages_since`
+    unchanged. No new repository function, no contract change — this is a
+    read path, so no `db.commit()` and no interaction with Phase 5's
+    fan-out/broadcast machinery at all.
+    """
+    try:
+        req = SyncRequest.model_validate(raw_data)
+    except ValidationError as exc:
+        await _send_error(
+            websocket,
+            ErrorCode.VALIDATION_FAILED,
+            "invalid sync.request payload",
+            detail={"error": str(exc)},
+        )
+        return
+
+    try:
+        target_uuid = uuid.UUID(req.target_id)
+    except ValueError:
+        await _send_error(websocket, ErrorCode.VALIDATION_FAILED, "target_id must be a valid UUID")
+        return
+
+    caller_id = uuid.UUID(user.id)
+
+    if req.target_type is TargetType.CIRCLE:
+        if not is_circle_member(db, circle_id=target_uuid, user_id=caller_id):
+            await _send_error(websocket, ErrorCode.UNAUTHORIZED, "Not a member of this circle")
+            return
+        conversation_id: uuid.UUID | None = target_uuid
+    else:
+        # Read-only resolution (find_conversation_id, not
+        # _get_or_create_conversation): a sync of a DM that's never been
+        # messaged must return empty history, not create a conversations
+        # row as a side effect of a sync.
+        conversation_id = find_conversation_id(db, caller_id, target_uuid)
+
+    if conversation_id is None:
+        batch = SyncBatch(
+            target_type=req.target_type, target_id=req.target_id, messages=[], has_more=False
+        )
+        await websocket.send_json(
+            {"type": FrameType.SYNC_BATCH.value, "data": batch.model_dump(mode="json")}
+        )
+        return
+
+    if req.since_id is not None:
+        try:
+            since_uuid = uuid.UUID(req.since_id)
+        except ValueError:
+            await _send_error(
+                websocket, ErrorCode.VALIDATION_FAILED, "since_id must be a valid UUID"
+            )
+            return
+    else:
+        since_uuid = None
+
+    # Fetch one extra row past the page to learn whether more remain,
+    # without a second COUNT query — same trick as
+    # app/messages.py::get_messages.
+    rows = get_messages_since(
+        db, conversation_id=conversation_id, since_id=since_uuid, limit=req.limit + 1
+    )
+    has_more = len(rows) > req.limit
+    page = rows[: req.limit]
+
+    batch = SyncBatch(
+        target_type=req.target_type,
+        target_id=req.target_id,
+        messages=[message_to_out(row) for row in page],
+        has_more=has_more,
+    )
+    await websocket.send_json(
+        {"type": FrameType.SYNC_BATCH.value, "data": batch.model_dump(mode="json")}
+    )
+
+
 async def _process_frame(websocket: WebSocket, db: Session, user: User, raw_data: dict) -> None:
     try:
         raw = RawFrame.model_validate(raw_data)
@@ -238,15 +311,16 @@ async def _process_frame(websocket: WebSocket, db: Session, user: User, raw_data
         )
         return
 
-    if raw.type is not FrameType.MESSAGE_SEND:
+    if raw.type is FrameType.MESSAGE_SEND:
+        await _handle_message_send(websocket, db, user, raw.data)
+    elif raw.type is FrameType.SYNC_REQUEST:
+        await _handle_sync_request(websocket, db, user, raw.data)
+    else:
         await _send_error(
             websocket,
             ErrorCode.VALIDATION_FAILED,
             f"unsupported frame type from a client: {raw.type.value}",
         )
-        return
-
-    await _handle_message_send(websocket, db, user, raw.data)
 
 
 @router.websocket("/ws")
