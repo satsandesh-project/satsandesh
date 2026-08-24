@@ -72,6 +72,21 @@ def _get_or_create_conversation(
     return conversation
 
 
+def find_conversation_id(
+    session: Session, user_a_id: uuid.UUID, user_b_id: uuid.UUID
+) -> uuid.UUID | None:
+    """Read-only counterpart to _get_or_create_conversation: the DM's
+    conversation id if this pair has ever exchanged a message, None if
+    not. Used by the sync/read path (GET /messages), which must not
+    create a conversations row as a side effect of a read the way the
+    write path's get-or-create legitimately does."""
+    low, high = sorted([user_a_id, user_b_id])
+    existing = session.execute(
+        select(Conversation).where(Conversation.user_a == low, Conversation.user_b == high)
+    ).scalar_one_or_none()
+    return existing.id if existing is not None else None
+
+
 def create_message(
     session: Session,
     *,
@@ -171,6 +186,16 @@ def add_member(
     session.add(membership)
     session.flush()
     return membership
+
+
+def is_circle_member(session: Session, *, circle_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """Whether user_id has a memberships row for circle_id, any role — the
+    authorization check every circle-scoped route needs (posting to a
+    circle, syncing a circle's messages, adding a new member)."""
+    existing = session.execute(
+        select(Membership).where(Membership.circle_id == circle_id, Membership.user_id == user_id)
+    ).scalar_one_or_none()
+    return existing is not None
 
 
 def list_circles_for_user(session: Session, *, user_id: uuid.UUID) -> list[Circle]:

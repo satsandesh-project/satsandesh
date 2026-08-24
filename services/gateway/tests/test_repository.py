@@ -23,7 +23,9 @@ from app.db.repository import (
     add_member,
     create_circle,
     create_message,
+    find_conversation_id,
     get_messages_since,
+    is_circle_member,
     list_circles_for_user,
 )
 
@@ -374,6 +376,57 @@ def test_create_circle_and_add_member(db_session):
     assert fetched.role == "member"
     assert membership.circle_id == circle.id
     assert membership.user_id == alice.id
+
+
+def test_find_conversation_id_returns_none_when_no_messages_sent(db_session):
+    # Route-layer motivation: GET /messages on a DM that's never been
+    # messaged must return an empty history without creating a
+    # conversations row as a side effect of a read — that's what makes
+    # find_conversation_id a separate, read-only function from the
+    # private, insert-capable _get_or_create_conversation above.
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+
+    assert find_conversation_id(db_session, alice.id, bob.id) is None
+
+    rows = db_session.execute(select(Conversation)).scalars().all()
+    assert rows == []
+
+
+def test_find_conversation_id_returns_existing_conversation_regardless_of_argument_order(
+    db_session,
+):
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+    message = create_message(
+        db_session,
+        author_id=alice.id,
+        target_type="user",
+        target_user_id=bob.id,
+        kind="text",
+        text="hi",
+        client_msg_id=uuid.uuid4(),
+    )
+
+    assert find_conversation_id(db_session, alice.id, bob.id) == message.conversation_id
+    assert find_conversation_id(db_session, bob.id, alice.id) == message.conversation_id
+
+
+def test_is_circle_member_true_for_a_member(db_session):
+    alice = _make_user(db_session, "Alice")
+    circle = create_circle(db_session, name="Evening Satsang", created_by=alice.id)
+    add_member(db_session, circle_id=circle.id, user_id=alice.id)
+
+    assert is_circle_member(db_session, circle_id=circle.id, user_id=alice.id) is True
+
+
+def test_is_circle_member_false_for_a_non_member(db_session):
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+    circle = create_circle(db_session, name="Evening Satsang", created_by=alice.id)
+    add_member(db_session, circle_id=circle.id, user_id=alice.id)
+
+    assert is_circle_member(db_session, circle_id=circle.id, user_id=bob.id) is False
 
 
 def test_list_circles_for_user(db_session):
