@@ -11,12 +11,6 @@ def client():
         yield test_client
 
 
-def test_ws_echo(client):
-    with client.websocket_connect("/ws?token=faketoken") as ws:
-        ws.send_text("hello")
-        assert ws.receive_text() == "hello"
-
-
 def test_ws_rejects_missing_token(client):
     # The server now accepts the handshake, then immediately sends a real WS
     # close frame with code 1008 and this reason — that frame is what a real
@@ -43,6 +37,12 @@ def test_ws_handles_disconnect(client):
     # unhandled error, FastAPI's TestClient would surface that as an exception
     # here on __exit__. Reaching the end of this test without one *is* the
     # assertion that the server treated the disconnect as normal control flow.
-    with client.websocket_connect("/ws?token=faketoken") as ws:
-        ws.send_text("hello")
-        assert ws.receive_text() == "hello"
+    #
+    # No frame needs to be exchanged first: the server is already blocked on
+    # receive_json() immediately after connecting, so a bare connect-then-exit
+    # exercises the exact same server-side disconnect path as disconnecting
+    # mid-conversation. Message-content scenarios (Phase 5 on) live in
+    # tests/test_ws_delivery.py, which needs real authenticated DB users
+    # rather than this file's tokenless stub.
+    with client.websocket_connect("/ws?token=faketoken"):
+        pass

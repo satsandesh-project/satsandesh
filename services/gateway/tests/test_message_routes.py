@@ -82,6 +82,34 @@ def test_post_messages_dm_creates_message(client, db_session, login_as):
     assert isinstance(body["id"], str) and body["id"]
 
 
+def test_post_messages_dm_to_self_is_rejected(client, db_session, login_as):
+    # Not a supported case (see app/ws.py's identical check, added
+    # alongside this one, for the full reasoning): docs/SCHEMA_DRAFT.md's
+    # `conversations` table enforces a *strict* CHECK (user_a < user_b),
+    # making a self-pair structurally impossible at the DB level. Before
+    # this check existed, this route had no try/except around
+    # create_message at all, so a self-DM would have surfaced as an
+    # unhandled 500, not even a clean error response.
+    alice = _make_db_user(db_session, "Alice")
+    login_as(alice)
+
+    response = client.post(
+        "/messages",
+        json={
+            "client_msg_id": str(uuid.uuid4()),
+            "target_type": "user",
+            "target_id": str(alice.id),
+            "kind": "text",
+            "text": "note to self",
+        },
+    )
+
+    assert response.status_code == 422
+
+    rows = db_session.execute(select(Message).where(Message.author_id == alice.id)).scalars().all()
+    assert rows == []
+
+
 def test_post_messages_idempotent_on_client_msg_id(client, db_session, login_as):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")

@@ -111,3 +111,51 @@ def login_as():
 
     yield _login_as
     app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.fixture()
+def ws_login_as(monkeypatch):
+    """Returns a function that, given a real DB user row, returns a token
+    string `/ws?token=...` will authenticate as that user.
+
+    app/ws.py's `/ws` route calls `app.auth.user_from_token` directly, not
+    via FastAPI's `Depends`/`dependency_overrides` the way `/me` does (the
+    token travels as a query param, not a header, since browsers can't set
+    custom headers on a WS handshake) — so the `login_as` fixture above,
+    which relies on `dependency_overrides`, never reaches it. This patches
+    the name as imported into `app.ws`'s own module namespace, not
+    `app.auth`'s copy — same reasoning tests/test_health.py's
+    `check_database_connection` patch documents: whichever module already
+    imported the name is what actually resolves at call time.
+
+    Also unlike the real `user_from_token` stub (which returns the same
+    hardcoded user for any non-empty token), this supports more than one
+    live identity at once — WS delivery tests need at least two distinct,
+    simultaneously-connected users to prove fan-out reaches the right
+    socket and not just any socket.
+    """
+    import app.ws as ws_module
+    from app.models import User as WireUser
+
+    tokens: dict[str, WireUser] = {}
+
+    def _fake_user_from_token(token):
+        from fastapi import HTTPException
+
+        if token is None or token not in tokens:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return tokens[token]
+
+    monkeypatch.setattr(ws_module, "user_from_token", _fake_user_from_token)
+
+    def _login_as(db_user) -> str:
+        token = f"token-{db_user.id}"
+        tokens[token] = WireUser(
+            id=str(db_user.id),
+            name=db_user.name,
+            preferred_language=db_user.preferred_language,
+            role=db_user.role,
+        )
+        return token
+
+    return _login_as
