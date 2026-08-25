@@ -376,3 +376,162 @@ prompted a better approach anyway (assert the Postgres invariant that no
 delivery obligation was ever created, rather than "nothing arrived yet",
 which is indistinguishable from "nothing has arrived *yet*" and would
 have been quietly flaky).
+
+## Week 4 — Matrix implementation of the circles backbone (ADR 0002 decided)
+
+**Date:** 2026-08-25
+
+**Prompt (summarized):** ADR 0002 has been decided in favour of Option A
+(Matrix/Tuwunel) — build the Matrix-backed `CircleBackbone`
+implementation. Step 0, before any code: locate the teammate's Spike A
+material at one of two named paths; if missing, stop and say exactly
+what's missing rather than recreate or guess at it. Then: stand up
+Tuwunel (not Conduit — Spike A's confirmed unfixed join bug), implement
+`MatrixCircleStore` against the same 6-route HTTP contract
+`spike-custom-lite` already exposes, treating every mapping (room
+creation, membership, sender attribution, encryption-off, pagination) as
+a hypothesis to verify against a real server rather than a certainty.
+Two decisions had to be picked and written down, not left implicit:
+whether the AS impersonates the sender or posts as itself, and what
+"offline member still gets it" actually means under Matrix's sync model.
+Swap `BACKBONE_URL`, confirm `gateway/circles.py` needs zero changes via
+an AST check, not a plain grep.
+
+**Step 0, as it actually went:** neither named path
+(`services/backbone-spike-a/` or `backbone/spike-matrix-a/`) existed.
+Found the real material at a third location,
+`backbone/Spike material A/services/backbone-spike-a/` — untracked by
+git, a space in the directory name, one level deeper than either named
+path. Read it fully before deciding anything (327-line findings doc with
+real HTTP/server-log evidence, a working 149-line AS bot, 9 passing
+tests) and confirmed it was genuine, substantial work, not a stub. Then
+stopped and asked rather than silently relocating it: moving a
+teammate's uncommitted work into "the structure I think is right" is the
+same category of unilateral guess Step 0 was written to prevent, one
+step removed from recreating it outright. Given "do the most feasible
+thing" in response, chose `backbone/spike-matrix-a/` over the other
+option on reflection — it matches ADR 0001's top-level-folder convention
+and sits beside `spike-custom-lite/`, where a new top-level `services/`
+would not. Preserved the original `services/backbone-spike-a/` nesting
+inside that new location specifically because the findings doc's own
+relative links (`../services/backbone-spike-a/app/bot.py`) depend on it —
+noticed only by reading the doc's links before moving anything, not
+after.
+
+**Methodology: verify every hypothesis against a real server before
+writing the code that depends on it.** Before `matrix_client.py` or
+`matrix_circle_store.py` existed, ran each planned operation by hand
+against a live Tuwunel container with raw `httpx` calls and read the
+actual response: first-user registration and its UIA `m.login.dummy`
+stage, the admin-room appservice-registration command and its confirming
+reply, whether the bot auto-joins as room creator (yes), whether no
+`m.room.encryption` event exists on a room created without one (yes,
+404), whether a member joins cleanly via AS impersonation with no
+Conduit-style join bug (yes), and the `/context` + `/messages` pagination
+technique needed for the interface's `before` parameter (worked,
+confirmed by anchoring mid-sequence and checking later events were
+excluded). The one hypothesis that came back genuinely interesting rather
+than "yes, as expected": whether a member added *after* a message can see
+it. Tested directly with a brand-new user who was never present
+beforehand, reading via *that user's own* impersonated access rather than
+the bot's system-level read — confirmed yes, under Tuwunel's default
+`history_visibility: shared`. That's the real, documented finding behind
+this week's second required decision, not an assumption.
+
+**Real bugs found, each by running the actual thing, not by review:**
+
+1. **`psycopg`'s Windows event-loop issue from Week 3 does not recur
+   here** — worth noting as a negative result: this service uses `httpx`
+   throughout, not `psycopg`, so there was nothing to hit. Confirms that
+   bug was specific to `psycopg`'s async driver, not a property of async
+   Python on Windows generally.
+2. **pytest-asyncio API mismatch.** First test run failed at fixture
+   setup: a manually-defined `event_loop` fixture (the pattern used
+   safely elsewhere in this codebase's Python history) conflicts with
+   pytest-asyncio 1.4.0's own session-scoped runner machinery. Fixed by
+   removing it entirely and using `@pytest_asyncio.fixture(scope="session",
+   loop_scope="session")` plus `@pytest.mark.asyncio(loop_scope="session")`
+   on each test — the modern supported shape, found by reading the actual
+   `AssertionError` traceback into pytest-asyncio's own source rather than
+   guessing at a fix.
+3. **Two un-templated registration fields.** `AS_ID` and
+   `BOT_LOCALPART`/`sender_localpart` were both configurable in Python but
+   hardcoded literals in `registration.yaml` — the real server-side
+   registration silently ignored both env vars. Found as two separate,
+   specific failures: bootstrap's confirmation check timing out because
+   the server's real reply named the hardcoded id, not the configured
+   one; then `create_circle` failing with `M_EXCLUSIVE` because the code
+   tried to operate as a bot user the server had never actually
+   registered under that name. Neither was visible from reading the code
+   — both only showed up by running a differently-configured identity
+   against the real server.
+4. **Test/service identity conflict, and the design lesson underneath
+   it.** First design used a separate `"_test"`-suffixed admin username,
+   AS id, and bot localpart for the test suite, reasoning that isolation
+   from the "production" identity was safer. This broke the moment the
+   test suite ran against a Tuwunel instance where the actual
+   `matrix-circle-service` container had already bootstrapped: Tuwunel
+   grants "first user becomes admin, auto-joined to the admin room" to
+   the literal first-ever user on that homeserver instance, not to "the
+   first time this particular username was registered" — a second,
+   different admin identity registers as an ordinary user with zero
+   special rooms and there is no API to discover or join the admin room
+   after the fact. The fix was not a workaround but a correction to the
+   design itself: there is only one true bootstrap-admin path per
+   homeserver, so the tests and the running service registering the
+   *same* appservice identity isn't a compromise, it's the accurate
+   model — confirmed by removing the test-specific overrides and running
+   the suite three times in a row against an already-bootstrapped
+   instance without conflict.
+5. **Tuwunel's own documentation is wrong about one thing.** Its
+   published appservices page says re-registering an existing appservice
+   id "replaces the previous entry." Empirically false for the version
+   deployed here: a second registration of the same id gets `"Failed to
+   register appservice: Duplicate id: <id>"`. Found by actually re-running
+   bootstrap twice against a live server and reading the real reply — not
+   by re-reading the docs more carefully, which would not have caught it,
+   since the docs are simply incorrect. `bootstrap.py` now treats that
+   specific error as an equally-valid confirmation, and says so in both
+   the module docstring and inline at the check itself, since trusting
+   vendor documentation over an empirical result would be exactly the
+   habit this whole project has been pushing against.
+6. **Bootstrap's admin-room discovery has a real, undismissed limitation**,
+   surfaced by finding #4 above before the fix: it only works cleanly
+   against a genuinely fresh Tuwunel volume. Documented in
+   `bootstrap.py`'s `_find_admin_room` with the concrete recovery step
+   (`docker compose --profile matrix down -v tuwunel matrix-circle-service`)
+   rather than built around with a more complex fallback — real,
+   out-of-scope work (tracking whether bootstrap already ran, e.g. via a
+   marker on the data volume) that a spike doesn't need to solve to prove
+   the mechanism.
+
+**The two required decisions, documented in
+`matrix_circle_store.py`'s module docstring** (repeated in
+`docs/adr/0002-chat-backbone.md`'s Week 4 section, not duplicated in full
+here): the bot posts every announcement as itself with the real sender
+recorded in a custom content field, because the interface's own contract
+says the sender need not be a member and impersonation can't satisfy that
+without corrupting `list_members` or failing outright; and offline
+delivery under Matrix means something qualitatively different from the
+outbox's per-recipient obligation — a member added after a post can still
+see it, verified directly rather than assumed to work "the same way".
+
+**Verification, shown in full during the session, not summarized:**
+`docker compose up --build` (no profile) reconfirmed healthy after every
+change that touched shared files (the `.dockerignore`/build-context
+changes, the `docker-compose.yml` `BACKBONE_URL` default change) — twice,
+including one clean rebuild from scratch after the default changed. AST
+check (not grep — a plain grep false-positives on this file's own
+docstring prose) confirmed `gateway/circles.py` imports nothing beyond
+`interfaces`, `fastapi`, `pydantic`, `typing`. `gateway/`'s existing 9
+tests pass unmodified. All 4 required Matrix circle behaviours pass
+against real Tuwunel, run three times in a row for stability including
+once sharing identity with the live `matrix-circle-service` container.
+Full end-to-end proof run through Caddy → gateway → matrix-circle-service
+→ Tuwunel, with the real (not manually overridden) `BACKBONE_URL`
+default, using freshly-generated user/circle names each run so leftover
+state from earlier verification couldn't produce a false pass (the same
+discipline Week 3's journal entry flagged after a similar near-miss) —
+including one deliberate check that a room id returned by the gateway
+actually starts with `!`, i.e. is a real Matrix room, not a
+coincidentally-similar Postgres identifier.
