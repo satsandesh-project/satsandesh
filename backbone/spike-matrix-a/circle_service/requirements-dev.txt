@@ -1,0 +1,3 @@
+# Test-only deps. Not installed in the Docker image.
+pytest
+pytest-asyncio
