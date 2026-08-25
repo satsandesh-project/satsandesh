@@ -28,12 +28,14 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      # Where the gateway reaches the backbone. Points at the custom-lite
-      # spike because it's the only implementation that exists — NOT
-      # because ADR 0002 has been decided (it hasn't). Swapping backbones
-      # should be a change to this URL plus a client implementation, not a
-      # change to gateway/circles.py.
-      BACKBONE_URL: ${BACKBONE_URL:-http://spike-backbone:8000}
+      # Where the gateway reaches the backbone. ADR 0002 is decided
+      # (Option A, Matrix/Tuwunel) -- points at matrix-circle-service,
+      # which only actually exists when the "matrix" profile is up.
+      # Swapping backbones is exactly this line plus a client
+      # implementation (see gateway/backbone_client.py); no change to
+      # gateway/circles.py, verified by an AST check every time it's
+      # touched (see docs/adr/0002-chat-backbone.md).
+      BACKBONE_URL: ${BACKBONE_URL:-http://matrix-circle-service:8000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,6 +91,77 @@ services:
       timeout: 5s
       retries: 5
 
+  # Matrix backend (ADR 0002, Option A): Tuwunel homeserver + the
+  # FastAPI service implementing CircleBackbone against it. Separate
+  # "matrix" profile so it never starts with a plain `docker compose up`
+  # or with `--profile spike` -- the two backbone implementations don't
+  # run against each other's rooms/outbox. See backbone/spike-matrix-a/.
+  tuwunel:
+    profiles: ["matrix"]
+    image: ghcr.io/matrix-construct/tuwunel:latest
+    restart: unless-stopped
+    environment:
+      TUWUNEL_SERVER_NAME: localhost
+      TUWUNEL_DATABASE_PATH: /var/lib/tuwunel
+      TUWUNEL_ALLOW_REGISTRATION: "true"
+      # Confirmed by actually starting the container and reading its own
+      # refusal, not by guessing from docs: without a registration_token,
+      # Tuwunel hard-refuses to start with allow_registration on unless
+      # this exact flag says so explicitly. Fine for a local dev spike --
+      # this is exactly the abuse case the flag exists to gate.
+      TUWUNEL_YES_I_AM_VERY_VERY_SURE_I_WANT_AN_OPEN_REGISTRATION_SERVER_PRONE_TO_ABUSE: "true"
+      # Also confirmed by reading the container's own startup warning:
+      # it defaults to binding 127.0.0.1/[::1], which is unreachable from
+      # another container (matrix-circle-service needs to reach this one
+      # by service name over the compose network).
+      TUWUNEL_ADDRESS: "0.0.0.0"
+      # Single-node dev setup -- Spike A's own findings note federation
+      # was irrelevant to the join bug it found, and we have no second
+      # server to federate with here anyway.
+      TUWUNEL_ALLOW_FEDERATION: "false"
+    volumes:
+      - tuwunel_data:/var/lib/tuwunel
+    ports:
+      # Published for the bootstrap/registration script and manual
+      # poking. 8448 (federation) is exposed by the image but unused
+      # with federation off.
+      - "8008:8008"
+    # The image ships its own healthcheck binary flag -- confirmed by
+    # inspecting the image directly (`docker inspect`) rather than
+    # assuming curl/wget/python exist in what turned out to be a
+    # shell-less minimal image. Declared explicitly here to shorten the
+    # interval for faster dev feedback than the image's 30s default.
+    healthcheck:
+      test: ["CMD", "tuwunel", "--health-check"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  matrix-circle-service:
+    profiles: ["matrix"]
+    build:
+      # Repo root, same reason as gateway/spike-backbone: needs
+      # backbone/interfaces.py, which lives outside this service's own
+      # directory.
+      context: .
+      dockerfile: backbone/spike-matrix-a/circle_service/Dockerfile
+    restart: unless-stopped
+    environment:
+      HOMESERVER_URL: http://tuwunel:8008
+      SERVER_NAME: localhost
+    depends_on:
+      tuwunel:
+        condition: service_healthy
+    ports:
+      - "8101:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -106,3 +179,4 @@ services:
 
 volumes:
   pgdata:
+  tuwunel_data:
