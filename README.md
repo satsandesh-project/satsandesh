@@ -5,7 +5,6 @@
 Open source, self-hosted, built as seva. No advertising, no engagement traps, no data sold.
 
 > **Status: early development.** Month 1 of a 3-month build. Nothing here is usable yet.
-> Working title — alternatives under consideration: Satsang Setu, Prema Vaani, Seva Sandesh.
 
 ---
 
