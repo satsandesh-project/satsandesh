@@ -33,11 +33,14 @@ Circle routes talk to a backbone through `backbone/interfaces.py`'s
 concrete backbone; `gateway/backbone_client.py` is the only file that
 knows how to reach one, and `main.py` is the only place that names it.
 
-That's deliberate: **ADR 0002 (Matrix vs custom-lite) is still open.**
-`BACKBONE_URL` currently points at the custom-lite spike because it's the
-only implementation that exists — not because the decision was made.
-Swapping backbones should mean a new client class and a different URL,
-not edits to route code.
+That boundary just paid for itself: **ADR 0002 is now decided — Option A,
+Matrix on Tuwunel.** `BACKBONE_URL` points at
+`matrix-circle-service:8000` (`docker-compose.yml`, `matrix` profile).
+The swap from the custom-lite spike was exactly what the boundary was
+built for: a new client class (`backbone_client.py`'s `HttpCircleBackbone`
+still works unchanged — it talks HTTP, not Postgres or Matrix directly)
+and a different URL. `gateway/circles.py` had zero lines changed, verified
+by an AST check, not just by eye.
 
 ## Run & Verify
 
