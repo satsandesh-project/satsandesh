@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from contracts.chat.common import TargetType
 from contracts.chat.envelope import FrameType, RawFrame, SyncBatch, SyncRequest
@@ -10,18 +11,18 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import undo
 from app.auth import user_from_token
-from app.db.base import get_db
+from app.config import get_settings
+from app.db.base import SessionLocal, get_db
 from app.db.repository import (
     create_message_with_created_flag,
     find_conversation_id,
     get_messages_since,
     is_circle_member,
-    list_member_ids_for_circle,
 )
-from app.messages import message_to_out
+from app.messages import fan_out_message, message_to_out
 from app.models import User
-from app.push import maybe_push_for_message
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,9 @@ async def _handle_message_send(
             return
         target_user_id = target_uuid
 
+    settings = get_settings()
+    undo_expires_at = datetime.now(UTC) + timedelta(seconds=settings.UNDO_WINDOW_SECONDS)
+
     try:
         # create_message_with_created_flag, not create_message: the
         # `created` flag is decided atomically inside the same
@@ -176,6 +180,7 @@ async def _handle_message_send(
             media_duration_ms=msg.media_ref.duration_ms if msg.media_ref is not None else None,
             source_lang=msg.source_lang,
             client_msg_id=msg.client_msg_id,
+            undo_expires_at=undo_expires_at,
         )
     except IntegrityError:
         # Persist failed (e.g. target_id doesn't reference a real user/
@@ -199,40 +204,23 @@ async def _handle_message_send(
 
     if not created:
         # A retry of an already-delivered send — the sender gets their ack
-        # (same server id, proving the earlier attempt landed), but nobody
-        # gets a second message.new for it.
+        # (same server id, proving the earlier attempt landed), but its
+        # fan-out was already scheduled by the original call; scheduling a
+        # second one here would either be a harmless no-op (app/undo.py's
+        # own idempotency guard) or leak an unawaited coroutine if
+        # constructed without ever being scheduled.
         return
 
-    new_frame = {
-        "type": FrameType.MESSAGE_NEW.value,
-        "data": message_to_out(message).model_dump(mode="json"),
-    }
-
-    if msg.target_type is TargetType.CIRCLE:
-        recipients = [
-            str(member_id)
-            for member_id in list_member_ids_for_circle(db, circle_id=target_circle_id)
-        ]
-    else:
-        # The other party, plus the sender's own other connected devices —
-        # same reasoning as the circle case (confirmed product decision,
-        # Week 3 Phase 5 Step 0, now applied consistently to DMs too): a
-        # second open tab/device should see a message you just sent
-        # without waiting for a sync.
-        recipients = [str(target_user_id), str(caller_id)]
-
-    # A circle poster's own other devices, and now a DM sender's own other
-    # devices, are both included in `recipients` above — `exclude` is what
-    # keeps either case from also echoing back onto the exact socket that
-    # sent it (which already got the ack).
-    await manager.broadcast(recipients, new_frame, exclude=websocket)
-
-    # Week 3 Phase 7 (extracted per the correction: app/messages.py's
-    # POST /messages needs this exact same trigger, not a second copy of
-    # it) — push for whoever won't see the WS frame above live. Always
-    # excludes the sender, unlike `recipients` above, which deliberately
-    # includes the sender's own other devices for the WS echo.
-    maybe_push_for_message(db, message=message, sender_id=caller_id, connection_manager=manager)
+    # Week 4 Phase 8: real delivery (message.new + push) is deferred to
+    # app/messages.py's fan_out_message, run by app/undo.py
+    # settings.UNDO_WINDOW_SECONDS from now unless DELETE /messages/{id}
+    # cancels it first — exactly the same scheduling POST /messages uses,
+    # so a WS-sent and an HTTP-sent message share one delivery path.
+    undo.schedule_fan_out(
+        str(message.id),
+        settings.UNDO_WINDOW_SECONDS,
+        fan_out_message(message.id, manager, SessionLocal, exclude=websocket),
+    )
 
 
 async def _handle_sync_request(

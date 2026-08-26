@@ -16,10 +16,12 @@ already exists, just not `send_to_user`/`broadcast` yet), but every test
 here is expected to fail until Step 2's implementation lands.
 """
 
+import time
 import uuid
 
+import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import Message
 from app.db.models import User as DbUser
@@ -27,11 +29,79 @@ from app.db.repository import add_member, create_circle, upsert_push_subscriptio
 from app.ws import ConnectionManager
 
 
+@pytest.fixture()
+def _instant_fan_out(monkeypatch, engine):
+    """Week 4 Phase 8 deferred every message.send's real delivery
+    (message.new + push) by settings.UNDO_WINDOW_SECONDS, run later by
+    app/undo.py's scheduler instead of inline in _handle_message_send. This
+    file's tests were written against the old immediate-delivery behavior
+    and don't care about the undo window itself (tests/test_undo.py owns
+    that) — they just need delivery to still actually happen during the
+    test's real few-millisecond lifetime. Collapsing app/undo.py's real
+    sleep to instant, and pointing its independent session at the test
+    database, gets the real scheduled asyncio.Task (not a substitute) to
+    run to completion almost immediately, preserving every assertion below
+    unchanged — including the sender's-own-originating-socket exclusion,
+    which only the real scheduled path (closing over the actual server-side
+    WebSocket object) can reproduce; a test calling fan_out_message directly
+    has no way to reconstruct that reference.
+
+    A real sessionmaker bound to the shared test `engine` — same shape as
+    production's own app.db.base.SessionLocal — not `lambda: db_session`:
+    fan_out_message calls `session.close()` when it's done, same as
+    production does on its own independently-opened session. Handing it the
+    test's *shared* db_session directly means that close() call detaches
+    every object the test itself already loaded (alice, bob, circle, ...)
+    right as `expire_on_commit`'s default (True, for a bare `Session(engine)`
+    with none of production SessionLocal's overrides) tries to refresh them
+    from a session that's no longer there — a real DetachedInstanceError
+    this file's tests hit until this was caught. A separate session on the
+    same underlying database sidesteps it entirely: Postgres's read-committed
+    default means it sees everything db_session already committed (the WS
+    handler commits before the ack, before fan-out is even scheduled), and
+    db_session's own already-loaded objects are never touched by it.
+
+    Not autouse: three tests below (ConnectionManager's own unit tests)
+    build a bare ConnectionManager() and touch no DB at all — forcing a
+    db_session dependency on them via an autouse fixture would give them a
+    Postgres dependency they don't otherwise have.
+    """
+    import app.undo as undo_module
+    import app.ws as ws_module
+
+    test_session_local = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    monkeypatch.setattr(ws_module, "SessionLocal", test_session_local)
+
+    async def instant_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(undo_module, "asyncio_sleep", instant_sleep)
+
+
 def _make_db_user(db_session, name="User", preferred_language="en", role="elder"):
     user = DbUser(name=name, preferred_language=preferred_language, role=role)
     db_session.add(user)
     db_session.flush()
     return user
+
+
+def _wait_for_push_calls(push_calls, expected, *, timeout=2.0, interval=0.02):
+    """Polls until app/push.py's send_push (monkeypatched below) has
+    recorded `expected`, or gives up — the deferred push has no natural
+    blocking read to synchronize on the way a `message.new` recipient's
+    own `receive_json()` does, since a push specifically only fires for
+    recipients with no live socket to deliver over."""
+    deadline = time.monotonic() + timeout
+    while push_calls != expected and time.monotonic() < deadline:
+        time.sleep(interval)
+
+
+def _settle(seconds: float = 0.05) -> None:
+    """For a "this must NOT have been pushed" assertion: give the
+    (now near-instant) deferred fan-out a moment to actually run, so the
+    absence of a push call is a real negative, not just "it hasn't run
+    yet"."""
+    time.sleep(seconds)
 
 
 def _send_frame(*, client_msg_id, target_type, target_id, text):
@@ -47,7 +117,9 @@ def _send_frame(*, client_msg_id, target_type, target_id, text):
     }
 
 
-def test_dm_message_send_persists_and_delivers_to_recipient(client, db_session, ws_login_as):
+def test_dm_message_send_persists_and_delivers_to_recipient(
+    client, db_session, ws_login_as, _instant_fan_out
+):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     alice_token = ws_login_as(alice)
@@ -92,7 +164,7 @@ def test_dm_message_send_persists_and_delivers_to_recipient(client, db_session, 
     assert row.text == "hi Bob"
 
 
-def test_message_send_failure_does_not_fan_out(client, db_session, ws_login_as):
+def test_message_send_failure_does_not_fan_out(client, db_session, ws_login_as, _instant_fan_out):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     alice_token = ws_login_as(alice)
@@ -185,7 +257,7 @@ def test_message_send_invalid_payload_returns_error_frame_not_close(
 
 
 def test_message_send_idempotent_client_msg_id_does_not_double_deliver(
-    client, db_session, ws_login_as
+    client, db_session, ws_login_as, _instant_fan_out
 ):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
@@ -258,7 +330,7 @@ def test_message_send_idempotent_client_msg_id_does_not_double_deliver(
 
 
 def test_message_send_concurrent_retry_fans_out_message_new_exactly_once(
-    client, db_session, engine, ws_login_as
+    client, db_session, engine, ws_login_as, _instant_fan_out
 ):
     """A purely sequential retry on one connection (the test above) can't
     tell a correct atomic implementation apart from a buggy
@@ -388,7 +460,9 @@ def test_message_send_concurrent_retry_fans_out_message_new_exactly_once(
     assert len(rows) == 1
 
 
-def test_dm_message_send_echoes_to_senders_own_other_devices(client, db_session, ws_login_as):
+def test_dm_message_send_echoes_to_senders_own_other_devices(
+    client, db_session, ws_login_as, _instant_fan_out
+):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     alice_token = ws_login_as(alice)
@@ -438,7 +512,7 @@ def test_dm_message_send_echoes_to_senders_own_other_devices(client, db_session,
         assert next_on_alice_ws["data"]["client_msg_id"] == sentinel_id
 
 
-def test_dm_message_send_to_self_is_rejected(client, db_session, ws_login_as):
+def test_dm_message_send_to_self_is_rejected(client, db_session, ws_login_as, _instant_fan_out):
     # Not a supported case: docs/SCHEMA_DRAFT.md's `conversations` table
     # (design question #1a) enforces a *strict* CHECK (user_a < user_b),
     # making a self-pair structurally impossible at the DB level, and it's
@@ -529,7 +603,9 @@ def test_message_send_to_circle_requires_membership(client, db_session, ws_login
     assert rows == []
 
 
-def test_circle_message_fans_out_to_all_connected_members(client, db_session, ws_login_as):
+def test_circle_message_fans_out_to_all_connected_members(
+    client, db_session, ws_login_as, _instant_fan_out
+):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     carol = _make_db_user(db_session, "Carol")
@@ -589,7 +665,9 @@ def test_circle_message_fans_out_to_all_connected_members(client, db_session, ws
         assert next_on_bob_ws["data"]["client_msg_id"] == sentinel_id
 
 
-def test_send_to_user_reaches_all_of_that_users_connected_devices(client, db_session, ws_login_as):
+def test_send_to_user_reaches_all_of_that_users_connected_devices(
+    client, db_session, ws_login_as, _instant_fan_out
+):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     alice_token = ws_login_as(alice)
@@ -720,7 +798,7 @@ async def test_is_connected_true_while_at_least_one_of_several_devices_remains()
 
 
 def test_dm_to_offline_recipient_triggers_exactly_one_push(
-    client, db_session, ws_login_as, monkeypatch
+    client, db_session, ws_login_as, monkeypatch, _instant_fan_out
 ):
     import app.push as push_module
 
@@ -749,10 +827,13 @@ def test_dm_to_offline_recipient_triggers_exactly_one_push(
         ack = alice_ws.receive_json()
         assert ack["type"] == "message.ack"
 
+    _wait_for_push_calls(push_calls, [bob.id])
     assert push_calls == [bob.id]
 
 
-def test_dm_to_online_recipient_triggers_no_push(client, db_session, ws_login_as, monkeypatch):
+def test_dm_to_online_recipient_triggers_no_push(
+    client, db_session, ws_login_as, monkeypatch, _instant_fan_out
+):
     import app.push as push_module
 
     alice = _make_db_user(db_session, "Alice")
@@ -786,10 +867,13 @@ def test_dm_to_online_recipient_triggers_no_push(client, db_session, ws_login_as
         new = bob_ws.receive_json()
         assert new["type"] == "message.new"
 
+    _settle()
     assert push_calls == []
 
 
-def test_senders_own_idle_device_is_not_pushed(client, db_session, ws_login_as, monkeypatch):
+def test_senders_own_idle_device_is_not_pushed(
+    client, db_session, ws_login_as, monkeypatch, _instant_fan_out
+):
     # Alice has two devices; only device 1 sends. Device 2 is connected
     # (not the originating socket, but live) and gets Phase 5's WS echo —
     # proving push is filtered on a *separate* "real recipients" set that
@@ -832,11 +916,12 @@ def test_senders_own_idle_device_is_not_pushed(client, db_session, ws_login_as, 
 
     # Bob (offline) gets pushed. Alice never does, for her own message —
     # despite having a subscription and a connected-but-non-sending device.
+    _wait_for_push_calls(push_calls, [bob.id])
     assert push_calls == [bob.id]
 
 
 def test_circle_send_pushes_only_offline_members_excluding_sender(
-    client, db_session, ws_login_as, monkeypatch
+    client, db_session, ws_login_as, monkeypatch, _instant_fan_out
 ):
     import app.push as push_module
 
@@ -885,11 +970,12 @@ def test_circle_send_pushes_only_offline_members_excluding_sender(
     # Carol (offline) gets pushed. Bob (online) already got it live, no
     # push needed. Alice (the sender) never gets pushed for her own
     # message, despite having a subscription too.
+    _wait_for_push_calls(push_calls, [carol.id])
     assert push_calls == [carol.id]
 
 
 def test_quiet_hours_suppresses_push_for_affected_recipient(
-    client, db_session, ws_login_as, monkeypatch
+    client, db_session, ws_login_as, monkeypatch, _instant_fan_out
 ):
     import app.push as push_module
 
@@ -924,4 +1010,5 @@ def test_quiet_hours_suppresses_push_for_affected_recipient(
         ack = alice_ws.receive_json()
         assert ack["type"] == "message.ack"
 
+    _settle()
     assert push_calls == []

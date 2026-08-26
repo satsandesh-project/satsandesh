@@ -46,6 +46,11 @@ class Settings(BaseSettings):
         default_factory=list
     )
 
+    # Week 4 Phase 8: how long a sender can undo a just-sent message before
+    # app/undo.py's scheduled fan-out delivers it for real. See app/undo.py
+    # for the in-memory scheduler this drives.
+    UNDO_WINDOW_SECONDS: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:

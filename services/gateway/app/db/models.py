@@ -156,8 +156,13 @@ class Message(Base):
         ),
         sa.CheckConstraint("target_type IN ('user', 'circle')", name="ck_messages_target_type"),
         sa.CheckConstraint("kind IN ('text', 'voice')", name="ck_messages_kind"),
+        # Week 4 Phase 8: 'sent' and 'cancelled' added for the 30-second
+        # undo window (see app/undo.py) — 'sent' marks a message that
+        # cleared the window and fanned out for real, 'cancelled' one the
+        # author undid within it. Matches contracts/chat/common.py's
+        # MessageStatus enum exactly, same as every other value here.
         sa.CheckConstraint(
-            "status IN ('pending', 'delivered', 'held', 'blocked', 'failed')",
+            "status IN ('pending', 'delivered', 'held', 'blocked', 'failed', 'sent', 'cancelled')",
             name="ck_messages_status",
         ),
         # `messages` Constraints — mirrors MessageIn's model_validator
