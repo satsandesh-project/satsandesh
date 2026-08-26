@@ -17,18 +17,21 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Circle, Conversation, Membership, Message, User
+from app.db.models import Circle, Conversation, Membership, Message, PushSubscription, User
 from app.db.repository import (
     _get_or_create_conversation,
     add_member,
     create_circle,
     create_message,
     create_message_with_created_flag,
+    delete_push_subscription,
     find_conversation_id,
     get_messages_since,
     is_circle_member,
     list_circles_for_user,
     list_member_ids_for_circle,
+    list_push_subscriptions_for_user,
+    upsert_push_subscription,
 )
 
 
@@ -623,3 +626,119 @@ def test_list_circles_for_user(db_session):
     result = list_circles_for_user(db_session, user_id=alice.id)
 
     assert {c.id for c in result} == {circle_1.id, circle_2.id}
+
+
+def test_upsert_push_subscription_creates_new_row(db_session):
+    user = _make_user(db_session, "Alice")
+
+    subscription = upsert_push_subscription(
+        db_session,
+        user_id=user.id,
+        endpoint="https://fcm.googleapis.com/fcm/send/abc123",
+        p256dh="p256dh-initial",
+        auth="auth-initial",
+    )
+
+    assert subscription.user_id == user.id
+    assert subscription.endpoint == "https://fcm.googleapis.com/fcm/send/abc123"
+    assert subscription.p256dh == "p256dh-initial"
+    assert subscription.auth == "auth-initial"
+
+    rows = (
+        db_session.execute(select(PushSubscription).where(PushSubscription.user_id == user.id))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+
+
+def test_upsert_push_subscription_updates_keys_on_existing_endpoint(db_session):
+    # A browser can rotate its own keys for the same endpoint — this must
+    # update the existing row in place, not error and not create a second
+    # row for what the Push API still considers the same subscription.
+    user = _make_user(db_session, "Alice")
+    endpoint = "https://fcm.googleapis.com/fcm/send/abc123"
+
+    first = upsert_push_subscription(
+        db_session, user_id=user.id, endpoint=endpoint, p256dh="old-p256dh", auth="old-auth"
+    )
+    second = upsert_push_subscription(
+        db_session, user_id=user.id, endpoint=endpoint, p256dh="new-p256dh", auth="new-auth"
+    )
+
+    assert second.id == first.id
+    assert second.p256dh == "new-p256dh"
+    assert second.auth == "new-auth"
+
+    rows = (
+        db_session.execute(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].p256dh == "new-p256dh"
+    assert rows[0].auth == "new-auth"
+
+
+def test_delete_push_subscription_by_endpoint(db_session):
+    user = _make_user(db_session, "Alice")
+    endpoint = "https://fcm.googleapis.com/fcm/send/abc123"
+    upsert_push_subscription(db_session, user_id=user.id, endpoint=endpoint, p256dh="p", auth="a")
+
+    delete_push_subscription(db_session, endpoint=endpoint, user_id=user.id)
+
+    rows = (
+        db_session.execute(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
+        .scalars()
+        .all()
+    )
+    assert rows == []
+
+
+def test_delete_push_subscription_missing_endpoint_is_a_noop(db_session):
+    # Deleting an endpoint that was never subscribed (or already removed,
+    # e.g. by a prior 404/410 cleanup) must not raise — same
+    # absence-is-a-valid-outcome reasoning as find_conversation_id
+    # returning None rather than erroring.
+    user = _make_user(db_session, "Alice")
+    delete_push_subscription(
+        db_session, endpoint="https://never-subscribed.example/x", user_id=user.id
+    )
+
+
+def test_delete_push_subscription_wrong_user_id_is_a_noop(db_session):
+    # Scoped to WHERE endpoint = :endpoint AND user_id = :user_id — one
+    # caller can never delete another user's subscription by guessing or
+    # replaying their endpoint, even though endpoint alone is unique.
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+    endpoint = "https://fcm.googleapis.com/fcm/send/bobs-endpoint"
+    upsert_push_subscription(db_session, user_id=bob.id, endpoint=endpoint, p256dh="p", auth="a")
+
+    delete_push_subscription(db_session, endpoint=endpoint, user_id=alice.id)
+
+    rows = (
+        db_session.execute(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].user_id == bob.id
+
+
+def test_list_push_subscriptions_for_user(db_session):
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+    upsert_push_subscription(
+        db_session, user_id=alice.id, endpoint="https://a.example/1", p256dh="p1", auth="a1"
+    )
+    upsert_push_subscription(
+        db_session, user_id=alice.id, endpoint="https://a.example/2", p256dh="p2", auth="a2"
+    )
+    upsert_push_subscription(
+        db_session, user_id=bob.id, endpoint="https://b.example/1", p256dh="p3", auth="a3"
+    )
+
+    result = list_push_subscriptions_for_user(db_session, user_id=alice.id)
+
+    assert {s.endpoint for s in result} == {"https://a.example/1", "https://a.example/2"}

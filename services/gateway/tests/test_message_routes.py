@@ -263,6 +263,119 @@ def test_get_messages_since_resolves_target_to_conversation_and_returns_history(
     assert by_id[str(second.id)]["target_id"] == str(alice.id)
 
 
+# --- push trigger integration (Week 3 Phase 7 correction) ------------------
+#
+# POST /messages must trigger the same push logic app/ws.py's message.send
+# already does — the correction this session's brief calls out: before this,
+# a message sent via the HTTP API to an offline recipient never pushed,
+# silently, because the push-trigger block only ever lived inline in
+# _handle_message_send. Same monkeypatch-the-importing-module's-name
+# precedent as tests/test_ws_delivery.py's own push tests, just patched on
+# app.push directly (the shared call site both delivery paths now go
+# through) instead of app.ws.
+
+
+def test_post_messages_dm_to_offline_recipient_triggers_exactly_one_push(
+    client, db_session, login_as, monkeypatch
+):
+    import app.push as push_module
+
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")  # never connects — offline
+    login_as(alice)
+
+    push_calls = []
+    monkeypatch.setattr(
+        push_module, "send_push", lambda session, **kw: push_calls.append(kw["user_id"])
+    )
+
+    response = client.post(
+        "/messages",
+        json={
+            "client_msg_id": str(uuid.uuid4()),
+            "target_type": "user",
+            "target_id": str(bob.id),
+            "kind": "text",
+            "text": "hi Bob",
+        },
+    )
+
+    assert response.status_code == 200
+    assert push_calls == [bob.id]
+
+
+def test_post_messages_dm_to_online_recipient_triggers_no_push(
+    client, db_session, login_as, ws_login_as, monkeypatch
+):
+    import app.push as push_module
+
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")
+    login_as(alice)
+    bob_token = ws_login_as(bob)
+
+    push_calls = []
+    monkeypatch.setattr(
+        push_module, "send_push", lambda session, **kw: push_calls.append(kw["user_id"])
+    )
+
+    # Only bob's live connection matters here (is_connected("<bob.id>")),
+    # not whether he actually receives anything over it — POST /messages
+    # has no WS fan-out of its own (a separate concern from this
+    # correction), so there's nothing to await on bob_ws.
+    with client.websocket_connect(f"/ws?token={bob_token}"):
+        response = client.post(
+            "/messages",
+            json={
+                "client_msg_id": str(uuid.uuid4()),
+                "target_type": "user",
+                "target_id": str(bob.id),
+                "kind": "text",
+                "text": "hi Bob",
+            },
+        )
+        assert response.status_code == 200
+
+    assert push_calls == []
+
+
+def test_post_messages_senders_own_connected_device_is_never_pushed(
+    client, db_session, login_as, ws_login_as, monkeypatch
+):
+    # Alice sends via HTTP while she also has a live WS connection open
+    # (a second device/tab) — that connected device must never be pushed
+    # for her own message, the same "real recipients always exclude the
+    # sender" rule app/ws.py's WS path already enforces. Bob (offline)
+    # still gets pushed, proving this isn't just "nobody ever gets pushed
+    # from the HTTP path."
+    import app.push as push_module
+
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")  # never connects — offline
+    login_as(alice)
+    alice_token = ws_login_as(alice)
+
+    push_calls = []
+    monkeypatch.setattr(
+        push_module, "send_push", lambda session, **kw: push_calls.append(kw["user_id"])
+    )
+
+    with client.websocket_connect(f"/ws?token={alice_token}"):
+        response = client.post(
+            "/messages",
+            json={
+                "client_msg_id": str(uuid.uuid4()),
+                "target_type": "user",
+                "target_id": str(bob.id),
+                "kind": "text",
+                "text": "hi Bob, from my other tab",
+            },
+        )
+        assert response.status_code == 200
+
+    assert push_calls == [bob.id]
+
+
 def test_get_messages_rejects_non_participant(client, db_session, login_as):
     # Circle case: a caller who isn't a member gets 403, not the circle's
     # messages. (The DM case has no equivalent scenario to test — the

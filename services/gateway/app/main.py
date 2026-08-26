@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.db.base import check_database_connection
 from app.messages import router as messages_router
 from app.models import User
+from app.push import router as push_router
 from app.ws import router as ws_router
 
 # Called at import time, not inside a request handler: a missing DATABASE_URL
@@ -38,6 +39,7 @@ app.add_middleware(
 app.include_router(ws_router)
 app.include_router(messages_router)
 app.include_router(circles_router)
+app.include_router(push_router)
 
 
 @app.get("/health")

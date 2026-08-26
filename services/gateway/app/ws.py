@@ -21,6 +21,7 @@ from app.db.repository import (
 )
 from app.messages import message_to_out
 from app.models import User
+from app.push import maybe_push_for_message
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,14 @@ class ConnectionManager:
         connections.discard(websocket)
         if not connections:
             del self._connections[user_id]
+
+    def is_connected(self, user_id: str) -> bool:
+        # A user with zero live sockets has no key in _connections at all
+        # (disconnect() above deletes the key once its set empties out),
+        # not an empty set — .get(user_id) alone would be falsy either way,
+        # but being explicit here documents that both cases are handled,
+        # not just the more obvious "key present with an empty set" one.
+        return bool(self._connections.get(user_id))
 
     async def send_to_user(
         self, user_id: str, frame: dict, *, exclude: WebSocket | None = None
@@ -217,6 +226,13 @@ async def _handle_message_send(
     # keeps either case from also echoing back onto the exact socket that
     # sent it (which already got the ack).
     await manager.broadcast(recipients, new_frame, exclude=websocket)
+
+    # Week 3 Phase 7 (extracted per the correction: app/messages.py's
+    # POST /messages needs this exact same trigger, not a second copy of
+    # it) — push for whoever won't see the WS frame above live. Always
+    # excludes the sender, unlike `recipients` above, which deliberately
+    # includes the sender's own other devices for the WS echo.
+    maybe_push_for_message(db, message=message, sender_id=caller_id, connection_manager=manager)
 
 
 async def _handle_sync_request(

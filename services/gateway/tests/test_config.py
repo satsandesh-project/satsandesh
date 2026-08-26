@@ -27,11 +27,17 @@ def test_missing_required_vars_fail_loudly(monkeypatch):
 def test_settings_load_from_env(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
     monkeypatch.setenv("JWT_SECRET", "test-secret")
+    monkeypatch.setenv("VAPID_PRIVATE_KEY", "test-vapid-private-key")
+    monkeypatch.setenv("VAPID_PUBLIC_KEY", "test-vapid-public-key")
+    monkeypatch.setenv("VAPID_SUBJECT", "mailto:test@example.com")
 
     settings = Settings(_env_file=None)
 
     assert settings.DATABASE_URL == "postgresql://user:pass@localhost:5432/db"
     assert settings.JWT_SECRET == "test-secret"
+    assert settings.VAPID_PRIVATE_KEY == "test-vapid-private-key"
+    assert settings.VAPID_PUBLIC_KEY == "test-vapid-public-key"
+    assert settings.VAPID_SUBJECT == "mailto:test@example.com"
     assert settings.APP_ENV == "dev"
     assert settings.PORT == 8000
     assert settings.LOG_LEVEL == "INFO"

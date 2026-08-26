@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SatSandesh — manual push verification (throwaway)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.2rem; }
+  .warn { background: #fff3cd; border: 1px solid #ffe69c; padding: 0.75rem 1rem; border-radius: 4px; }
+  label { display: block; margin-top: 1rem; font-weight: 600; }
+  input { width: 100%; box-sizing: border-box; padding: 0.4rem; margin-top: 0.25rem; font-family: monospace; }
+  button { margin-top: 1rem; padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+  #log { white-space: pre-wrap; background: #111; color: #0f0; padding: 1rem; margin-top: 1.5rem; border-radius: 4px; font-family: monospace; font-size: 0.85rem; min-height: 4rem; }
+</style>
+</head>
+<body>
+<h1>SatSandesh — manual Web Push verification</h1>
+<p class="warn">
+  Throwaway scaffolding (see README.md next to this file) — not part of the
+  product. Serve this directory with a static file server; don't open it as
+  a <code>file://</code> URL (service workers require http/https).
+</p>
+
+<label for="gatewayUrl">Gateway base URL</label>
+<input id="gatewayUrl" value="http://localhost:8000" />
+
+<label for="vapidKey">VAPID_PUBLIC_KEY (from services/gateway/.env)</label>
+<input id="vapidKey" placeholder="paste VAPID_PUBLIC_KEY here" />
+
+<label for="token">Auth token (a real user's UUID — see README for how to get one)</label>
+<input id="token" placeholder="e.g. 0198c2b1-...-...-...-..." />
+
+<button id="subscribeBtn">Register service worker + subscribe</button>
+
+<div id="log">(log output appears here)</div>
+
+<script>
+  const logEl = document.getElementById("log");
+  function log(msg) {
+    const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logEl.textContent += (logEl.textContent === "(log output appears here)" ? "" : "\n") + line;
+    console.log(line);
+  }
+
+  function urlBase64ToUint8Array(base64String) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const rawData = atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; i++) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }
+
+  document.getElementById("subscribeBtn").addEventListener("click", async () => {
+    const gatewayUrl = document.getElementById("gatewayUrl").value.trim().replace(/\/$/, "");
+    const vapidKey = document.getElementById("vapidKey").value.trim();
+    const token = document.getElementById("token").value.trim();
+
+    if (!vapidKey || !token) {
+      log("ERROR: fill in both VAPID_PUBLIC_KEY and a token first.");
+      return;
+    }
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      log("ERROR: this browser doesn't support Service Workers / Push API.");
+      return;
+    }
+
+    try {
+      log("Registering service worker (sw.js)...");
+      const registration = await navigator.serviceWorker.register("sw.js");
+      await navigator.serviceWorker.ready;
+      log("Service worker ready.");
+
+      log("Requesting notification permission...");
+      const permission = await Notification.requestPermission();
+      log(`Permission: ${permission}`);
+      if (permission !== "granted") {
+        log("ERROR: notification permission not granted — cannot continue.");
+        return;
+      }
+
+      log("Subscribing via PushManager...");
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidKey),
+        });
+      }
+      const subJson = subscription.toJSON();
+      log(`Subscribed. endpoint=${subJson.endpoint.slice(0, 60)}...`);
+
+      log(`POSTing subscription to ${gatewayUrl}/push/subscribe ...`);
+      const resp = await fetch(`${gatewayUrl}/push/subscribe`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          endpoint: subJson.endpoint,
+          keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth },
+        }),
+      });
+
+      if (resp.ok) {
+        log(`SUCCESS: server responded ${resp.status}. Subscription stored.`);
+        log("You can now close every tab of this page and trigger a message to this user.");
+      } else {
+        const body = await resp.text();
+        log(`FAILED: server responded ${resp.status}: ${body}`);
+      }
+    } catch (err) {
+      log(`ERROR: ${err}`);
+    }
+  });
+</script>
+</body>
+</html>

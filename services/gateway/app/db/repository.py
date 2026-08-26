@@ -7,11 +7,11 @@ owns the transaction boundary and this module stays testable without HTTP.
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Circle, Conversation, Membership, Message
+from app.db.models import Circle, Conversation, Membership, Message, PushSubscription
 
 # Exact names Alembic generated for the two UNIQUE constraints this module
 # recovers from (alembic/versions/8761697bd6bb_initial_schema_users_circles_.py,
@@ -293,6 +293,55 @@ def list_member_ids_for_circle(session: Session, *, circle_id: uuid.UUID) -> lis
     circle)."""
     return list(
         session.execute(select(Membership.user_id).where(Membership.circle_id == circle_id))
+        .scalars()
+        .all()
+    )
+
+
+def upsert_push_subscription(
+    session: Session, *, user_id: uuid.UUID, endpoint: str, p256dh: str, auth: str
+) -> PushSubscription:
+    """Create a subscription row for `endpoint`, or, if one already exists
+    (a browser rotating its own keys for the same endpoint — the Push API
+    guarantees `endpoint` is unique per subscription), update its
+    `p256dh`/`auth` in place rather than erroring or creating a second row
+    for what's still the same subscription."""
+    existing = session.execute(
+        select(PushSubscription).where(PushSubscription.endpoint == endpoint)
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.p256dh = p256dh
+        existing.auth = auth
+        session.flush()
+        return existing
+
+    subscription = PushSubscription(user_id=user_id, endpoint=endpoint, p256dh=p256dh, auth=auth)
+    session.add(subscription)
+    session.flush()
+    return subscription
+
+
+def delete_push_subscription(session: Session, *, endpoint: str, user_id: uuid.UUID) -> None:
+    """Scoped delete: only removes a subscription that's both this
+    `endpoint` and owned by this `user_id`. A no-op, not an error, when
+    nothing matches — whether because the endpoint was never subscribed,
+    already removed (e.g. app/push.py's own 404/410 cleanup), or belongs
+    to someone else entirely."""
+    session.execute(
+        delete(PushSubscription).where(
+            PushSubscription.endpoint == endpoint, PushSubscription.user_id == user_id
+        )
+    )
+    session.flush()
+
+
+def list_push_subscriptions_for_user(
+    session: Session, *, user_id: uuid.UUID
+) -> list[PushSubscription]:
+    return list(
+        session.execute(
+            select(PushSubscription).where(PushSubscription.user_id == user_id)
+        )
         .scalars()
         .all()
     )

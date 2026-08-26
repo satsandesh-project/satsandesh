@@ -28,6 +28,7 @@ from app.db.repository import (
     is_circle_member,
 )
 from app.models import User
+from app.push import maybe_push_for_message
 
 router = APIRouter()
 
@@ -109,6 +110,16 @@ def post_message(
     # deliberately leaves the transaction boundary to its caller. This is
     # the end of the request's unit of work, so it commits here.
     db.commit()
+
+    # app/ws.py imports this module (message_to_out) at module level, so a
+    # module-level `from app.ws import manager` here would be circular;
+    # this local import only runs at request time, once both modules are
+    # already fully loaded. Same push trigger app/ws.py's WS `message.send`
+    # path uses, so an HTTP-sent message to an offline recipient pushes
+    # exactly the same way a WS-sent one does.
+    from app.ws import manager
+
+    maybe_push_for_message(db, message=message, sender_id=caller_id, connection_manager=manager)
 
     return AckOut(client_msg_id=body.client_msg_id, id=str(message.id), status=message.status)
 
