@@ -159,3 +159,64 @@ def ws_login_as(monkeypatch):
         return token
 
     return _login_as
+
+
+@pytest.fixture()
+def _instant_fan_out(monkeypatch, engine):
+    """Week 4 Phase 8 deferred every message.send's real delivery
+    (message.new + push) by settings.UNDO_WINDOW_SECONDS, run later by
+    app/undo.py's scheduler instead of inline in _handle_message_send. Any
+    test exercising real delivery (tests/test_ws_delivery.py,
+    tests/test_message_delivered.py) needs it to still actually happen
+    during the test's real few-millisecond lifetime, without caring about
+    the undo window itself (tests/test_undo.py owns that). Collapsing
+    app/undo.py's real sleep to instant, and pointing its independent
+    session at the test database, gets the real scheduled asyncio.Task (not
+    a substitute) to run to completion almost immediately, preserving every
+    assertion in either file unchanged — including the sender's-own-
+    originating-socket exclusion, which only the real scheduled path
+    (closing over the actual server-side WebSocket object) can reproduce; a
+    test calling fan_out_message directly has no way to reconstruct that
+    reference.
+
+    Lives here, not in tests/test_ws_delivery.py where it was originally
+    written: a second file needing the same fixture is exactly the case
+    conftest.py exists for — pytest picks up a fixture defined here
+    automatically, no import needed in either file, unlike cross-importing
+    it directly from another test module (which ruff correctly flags as
+    F811 redefinition at every test that requests it as a parameter).
+
+    A real sessionmaker bound to the shared test `engine` — same shape as
+    production's own app.db.base.SessionLocal — not `lambda: db_session`:
+    fan_out_message calls `session.close()` when it's done, same as
+    production does on its own independently-opened session. Handing it a
+    test's *shared* db_session directly means that close() call detaches
+    every object the test itself already loaded (alice, bob, circle, ...)
+    right as `expire_on_commit`'s default (True, for a bare `Session(engine)`
+    with none of production SessionLocal's overrides) tries to refresh them
+    from a session that's no longer there — a real DetachedInstanceError
+    tests/test_ws_delivery.py's tests hit until this was caught. A separate
+    session on the same underlying database sidesteps it entirely:
+    Postgres's read-committed default means it sees everything db_session
+    already committed (the WS handler commits before the ack, before
+    fan-out is even scheduled), and db_session's own already-loaded objects
+    are never touched by it.
+
+    Not autouse: some tests (e.g. ConnectionManager's own unit tests in
+    tests/test_ws_delivery.py) build a bare ConnectionManager() and touch
+    no DB at all — forcing a db_session dependency on them via an autouse
+    fixture would give them a Postgres dependency they don't otherwise
+    have.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    import app.undo as undo_module
+    import app.ws as ws_module
+
+    test_session_local = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    monkeypatch.setattr(ws_module, "SessionLocal", test_session_local)
+
+    async def instant_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(undo_module, "asyncio_sleep", instant_sleep)

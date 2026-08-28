@@ -16,6 +16,8 @@ def test_frame_type_enumerates_every_wire_type() -> None:
         "message.send",
         "message.ack",
         "message.new",
+        "message.delivered",
+        "message.status",
         "sync.request",
         "sync.batch",
         "error",

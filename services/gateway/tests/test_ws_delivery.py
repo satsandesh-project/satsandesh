@@ -19,63 +19,19 @@ here is expected to fail until Step 2's implementation lands.
 import time
 import uuid
 
-import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from app.db.models import Message
 from app.db.models import User as DbUser
 from app.db.repository import add_member, create_circle, upsert_push_subscription
 from app.ws import ConnectionManager
 
-
-@pytest.fixture()
-def _instant_fan_out(monkeypatch, engine):
-    """Week 4 Phase 8 deferred every message.send's real delivery
-    (message.new + push) by settings.UNDO_WINDOW_SECONDS, run later by
-    app/undo.py's scheduler instead of inline in _handle_message_send. This
-    file's tests were written against the old immediate-delivery behavior
-    and don't care about the undo window itself (tests/test_undo.py owns
-    that) — they just need delivery to still actually happen during the
-    test's real few-millisecond lifetime. Collapsing app/undo.py's real
-    sleep to instant, and pointing its independent session at the test
-    database, gets the real scheduled asyncio.Task (not a substitute) to
-    run to completion almost immediately, preserving every assertion below
-    unchanged — including the sender's-own-originating-socket exclusion,
-    which only the real scheduled path (closing over the actual server-side
-    WebSocket object) can reproduce; a test calling fan_out_message directly
-    has no way to reconstruct that reference.
-
-    A real sessionmaker bound to the shared test `engine` — same shape as
-    production's own app.db.base.SessionLocal — not `lambda: db_session`:
-    fan_out_message calls `session.close()` when it's done, same as
-    production does on its own independently-opened session. Handing it the
-    test's *shared* db_session directly means that close() call detaches
-    every object the test itself already loaded (alice, bob, circle, ...)
-    right as `expire_on_commit`'s default (True, for a bare `Session(engine)`
-    with none of production SessionLocal's overrides) tries to refresh them
-    from a session that's no longer there — a real DetachedInstanceError
-    this file's tests hit until this was caught. A separate session on the
-    same underlying database sidesteps it entirely: Postgres's read-committed
-    default means it sees everything db_session already committed (the WS
-    handler commits before the ack, before fan-out is even scheduled), and
-    db_session's own already-loaded objects are never touched by it.
-
-    Not autouse: three tests below (ConnectionManager's own unit tests)
-    build a bare ConnectionManager() and touch no DB at all — forcing a
-    db_session dependency on them via an autouse fixture would give them a
-    Postgres dependency they don't otherwise have.
-    """
-    import app.undo as undo_module
-    import app.ws as ws_module
-
-    test_session_local = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-    monkeypatch.setattr(ws_module, "SessionLocal", test_session_local)
-
-    async def instant_sleep(_delay):
-        return None
-
-    monkeypatch.setattr(undo_module, "asyncio_sleep", instant_sleep)
+# _instant_fan_out lives in tests/conftest.py, not here: tests/test_message_delivered.py
+# needs it too, and a pytest fixture picked up via conftest.py needs no
+# import at all in either file — the cross-file `from .test_ws_delivery
+# import _instant_fan_out` this used before ruff-flagged as F811
+# (redefinition) at every test that requested it as a parameter.
 
 
 def _make_db_user(db_session, name="User", preferred_language="en", role="elder"):
