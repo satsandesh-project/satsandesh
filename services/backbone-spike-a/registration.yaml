@@ -1,0 +1,21 @@
+# Application Service registration template for Spike A.
+#
+# This file is committed with PLACEHOLDER tokens only. Real tokens live in
+# the gitignored .env (see .env.example) and are substituted in when
+# generating the file actually handed to Conduit — see
+# scripts/render_registration.py. Never put real tokens here.
+
+id: satsandesh-spike-a
+url: http://host.docker.internal:9000
+as_token: "REPLACE_WITH_AS_TOKEN_FROM_ENV"
+hs_token: "REPLACE_WITH_HS_TOKEN_FROM_ENV"
+sender_localpart: satsandesh_bot
+rate_limited: false
+namespaces:
+  users:
+    - exclusive: true
+      regex: "@spike_.*:localhost"
+  aliases:
+    - exclusive: true
+      regex: "#spike_.*:localhost"
+  rooms: []
