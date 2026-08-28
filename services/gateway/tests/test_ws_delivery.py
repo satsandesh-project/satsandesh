@@ -16,6 +16,7 @@ already exists, just not `send_to_user`/`broadcast` yet), but every test
 here is expected to fail until Step 2's implementation lands.
 """
 
+import time
 import uuid
 
 from sqlalchemy import select
@@ -23,8 +24,14 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Message
 from app.db.models import User as DbUser
-from app.db.repository import add_member, create_circle
+from app.db.repository import add_member, create_circle, upsert_push_subscription
 from app.ws import ConnectionManager
+
+# _instant_fan_out lives in tests/conftest.py, not here: tests/test_message_delivered.py
+# needs it too, and a pytest fixture picked up via conftest.py needs no
+# import at all in either file — the cross-file `from .test_ws_delivery
+# import _instant_fan_out` this used before ruff-flagged as F811
+# (redefinition) at every test that requested it as a parameter.
 
 
 def _make_db_user(db_session, name="User", preferred_language="en", role="elder"):
@@ -32,6 +39,25 @@ def _make_db_user(db_session, name="User", preferred_language="en", role="elder"
     db_session.add(user)
     db_session.flush()
     return user
+
+
+def _wait_for_push_calls(push_calls, expected, *, timeout=2.0, interval=0.02):
+    """Polls until app/push.py's send_push (monkeypatched below) has
+    recorded `expected`, or gives up — the deferred push has no natural
+    blocking read to synchronize on the way a `message.new` recipient's
+    own `receive_json()` does, since a push specifically only fires for
+    recipients with no live socket to deliver over."""
+    deadline = time.monotonic() + timeout
+    while push_calls != expected and time.monotonic() < deadline:
+        time.sleep(interval)
+
+
+def _settle(seconds: float = 0.05) -> None:
+    """For a "this must NOT have been pushed" assertion: give the
+    (now near-instant) deferred fan-out a moment to actually run, so the
+    absence of a push call is a real negative, not just "it hasn't run
+    yet"."""
+    time.sleep(seconds)
 
 
 def _send_frame(*, client_msg_id, target_type, target_id, text):
@@ -47,7 +73,9 @@ def _send_frame(*, client_msg_id, target_type, target_id, text):
     }
 
 
-def test_dm_message_send_persists_and_delivers_to_recipient(client, db_session, ws_login_as):
+def test_dm_message_send_persists_and_delivers_to_recipient(
+    client, db_session, ws_login_as, _instant_fan_out
+):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     alice_token = ws_login_as(alice)
@@ -92,7 +120,7 @@ def test_dm_message_send_persists_and_delivers_to_recipient(client, db_session, 
     assert row.text == "hi Bob"
 
 
-def test_message_send_failure_does_not_fan_out(client, db_session, ws_login_as):
+def test_message_send_failure_does_not_fan_out(client, db_session, ws_login_as, _instant_fan_out):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     alice_token = ws_login_as(alice)
@@ -185,7 +213,7 @@ def test_message_send_invalid_payload_returns_error_frame_not_close(
 
 
 def test_message_send_idempotent_client_msg_id_does_not_double_deliver(
-    client, db_session, ws_login_as
+    client, db_session, ws_login_as, _instant_fan_out
 ):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
@@ -258,7 +286,7 @@ def test_message_send_idempotent_client_msg_id_does_not_double_deliver(
 
 
 def test_message_send_concurrent_retry_fans_out_message_new_exactly_once(
-    client, db_session, engine, ws_login_as
+    client, db_session, engine, ws_login_as, _instant_fan_out
 ):
     """A purely sequential retry on one connection (the test above) can't
     tell a correct atomic implementation apart from a buggy
@@ -388,7 +416,9 @@ def test_message_send_concurrent_retry_fans_out_message_new_exactly_once(
     assert len(rows) == 1
 
 
-def test_dm_message_send_echoes_to_senders_own_other_devices(client, db_session, ws_login_as):
+def test_dm_message_send_echoes_to_senders_own_other_devices(
+    client, db_session, ws_login_as, _instant_fan_out
+):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     alice_token = ws_login_as(alice)
@@ -438,7 +468,7 @@ def test_dm_message_send_echoes_to_senders_own_other_devices(client, db_session,
         assert next_on_alice_ws["data"]["client_msg_id"] == sentinel_id
 
 
-def test_dm_message_send_to_self_is_rejected(client, db_session, ws_login_as):
+def test_dm_message_send_to_self_is_rejected(client, db_session, ws_login_as, _instant_fan_out):
     # Not a supported case: docs/SCHEMA_DRAFT.md's `conversations` table
     # (design question #1a) enforces a *strict* CHECK (user_a < user_b),
     # making a self-pair structurally impossible at the DB level, and it's
@@ -529,7 +559,9 @@ def test_message_send_to_circle_requires_membership(client, db_session, ws_login
     assert rows == []
 
 
-def test_circle_message_fans_out_to_all_connected_members(client, db_session, ws_login_as):
+def test_circle_message_fans_out_to_all_connected_members(
+    client, db_session, ws_login_as, _instant_fan_out
+):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     carol = _make_db_user(db_session, "Carol")
@@ -589,7 +621,9 @@ def test_circle_message_fans_out_to_all_connected_members(client, db_session, ws
         assert next_on_bob_ws["data"]["client_msg_id"] == sentinel_id
 
 
-def test_send_to_user_reaches_all_of_that_users_connected_devices(client, db_session, ws_login_as):
+def test_send_to_user_reaches_all_of_that_users_connected_devices(
+    client, db_session, ws_login_as, _instant_fan_out
+):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     alice_token = ws_login_as(alice)
@@ -671,3 +705,266 @@ async def test_broadcast_survives_concurrent_disconnect():
 
     assert device_a.sent == [frame]
     assert device_c.sent == [frame]
+
+
+async def test_is_connected_true_when_registered_false_once_the_last_socket_disconnects():
+    # Matches the key-deleted-when-empty behavior found in Step 0 item 3:
+    # a user with zero live sockets has no key in _connections at all, not
+    # an empty set, so is_connected has to check for absence correctly in
+    # both the "never connected" and "connected then fully disconnected"
+    # cases, not just the latter.
+    manager = ConnectionManager()
+    device = _FakeWebSocket()
+
+    assert manager.is_connected("alice") is False
+
+    await manager.connect("alice", device)
+    assert manager.is_connected("alice") is True
+
+    manager.disconnect("alice", device)
+    assert manager.is_connected("alice") is False
+
+
+async def test_is_connected_true_while_at_least_one_of_several_devices_remains():
+    manager = ConnectionManager()
+    device_1, device_2 = _FakeWebSocket(), _FakeWebSocket()
+
+    await manager.connect("alice", device_1)
+    await manager.connect("alice", device_2)
+    manager.disconnect("alice", device_1)
+
+    assert manager.is_connected("alice") is True
+
+    manager.disconnect("alice", device_2)
+    assert manager.is_connected("alice") is False
+
+
+# --- push trigger integration (Week 3 Phase 7) -----------------------------
+#
+# The actual push-trigger call lives in app.push.maybe_push_for_message (an
+# extraction shared with app/messages.py's POST /messages — see
+# tests/test_message_routes.py's own push tests for that path), not inline
+# in app/ws.py any more — so these tests patch app.push.send_push /
+# app.push.is_quiet_hours directly, matching the monkeypatch-the-importing-
+# module's-name precedent applied to the module that actually calls them
+# now. Patching real pywebpush network calls or real wall-clock-dependent
+# quiet-hours math is unnecessary either way — both are proven independently
+# in tests/test_push.py. These tests only prove _handle_message_send's
+# wiring: who gets a push call, and who doesn't.
+
+
+def test_dm_to_offline_recipient_triggers_exactly_one_push(
+    client, db_session, ws_login_as, monkeypatch, _instant_fan_out
+):
+    import app.push as push_module
+
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")  # never connects — offline
+    upsert_push_subscription(
+        db_session, user_id=bob.id, endpoint="https://b.example/1", p256dh="p", auth="a"
+    )
+    db_session.commit()
+
+    push_calls = []
+    monkeypatch.setattr(
+        push_module, "send_push", lambda session, **kw: push_calls.append(kw["user_id"])
+    )
+
+    alice_token = ws_login_as(alice)
+    with client.websocket_connect(f"/ws?token={alice_token}") as alice_ws:
+        alice_ws.send_json(
+            _send_frame(
+                client_msg_id=str(uuid.uuid4()),
+                target_type="user",
+                target_id=str(bob.id),
+                text="hi Bob",
+            )
+        )
+        ack = alice_ws.receive_json()
+        assert ack["type"] == "message.ack"
+
+    _wait_for_push_calls(push_calls, [bob.id])
+    assert push_calls == [bob.id]
+
+
+def test_dm_to_online_recipient_triggers_no_push(
+    client, db_session, ws_login_as, monkeypatch, _instant_fan_out
+):
+    import app.push as push_module
+
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")
+    upsert_push_subscription(
+        db_session, user_id=bob.id, endpoint="https://b.example/1", p256dh="p", auth="a"
+    )
+    db_session.commit()
+
+    push_calls = []
+    monkeypatch.setattr(
+        push_module, "send_push", lambda session, **kw: push_calls.append(kw["user_id"])
+    )
+
+    alice_token = ws_login_as(alice)
+    bob_token = ws_login_as(bob)
+    with (
+        client.websocket_connect(f"/ws?token={alice_token}") as alice_ws,
+        client.websocket_connect(f"/ws?token={bob_token}") as bob_ws,
+    ):
+        alice_ws.send_json(
+            _send_frame(
+                client_msg_id=str(uuid.uuid4()),
+                target_type="user",
+                target_id=str(bob.id),
+                text="hi Bob",
+            )
+        )
+        ack = alice_ws.receive_json()
+        assert ack["type"] == "message.ack"
+        new = bob_ws.receive_json()
+        assert new["type"] == "message.new"
+
+    _settle()
+    assert push_calls == []
+
+
+def test_senders_own_idle_device_is_not_pushed(
+    client, db_session, ws_login_as, monkeypatch, _instant_fan_out
+):
+    # Alice has two devices; only device 1 sends. Device 2 is connected
+    # (not the originating socket, but live) and gets Phase 5's WS echo —
+    # proving push is filtered on a *separate* "real recipients" set that
+    # excludes the sender entirely, not just reusing Phase 5's broadcast
+    # list (which deliberately includes the sender's other devices).
+    import app.push as push_module
+
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")
+    upsert_push_subscription(
+        db_session, user_id=alice.id, endpoint="https://a.example/1", p256dh="p", auth="a"
+    )
+    upsert_push_subscription(
+        db_session, user_id=bob.id, endpoint="https://b.example/1", p256dh="p", auth="a"
+    )
+    db_session.commit()
+
+    push_calls = []
+    monkeypatch.setattr(
+        push_module, "send_push", lambda session, **kw: push_calls.append(kw["user_id"])
+    )
+
+    alice_token = ws_login_as(alice)
+    with (
+        client.websocket_connect(f"/ws?token={alice_token}") as alice_ws,
+        client.websocket_connect(f"/ws?token={alice_token}") as alice_second_device,
+    ):
+        alice_ws.send_json(
+            _send_frame(
+                client_msg_id=str(uuid.uuid4()),
+                target_type="user",
+                target_id=str(bob.id),
+                text="hi Bob",
+            )
+        )
+        ack = alice_ws.receive_json()
+        assert ack["type"] == "message.ack"
+        echoed = alice_second_device.receive_json()
+        assert echoed["type"] == "message.new"
+
+    # Bob (offline) gets pushed. Alice never does, for her own message —
+    # despite having a subscription and a connected-but-non-sending device.
+    _wait_for_push_calls(push_calls, [bob.id])
+    assert push_calls == [bob.id]
+
+
+def test_circle_send_pushes_only_offline_members_excluding_sender(
+    client, db_session, ws_login_as, monkeypatch, _instant_fan_out
+):
+    import app.push as push_module
+
+    alice = _make_db_user(db_session, "Alice")  # sender, connects
+    bob = _make_db_user(db_session, "Bob")  # connects, online
+    carol = _make_db_user(db_session, "Carol")  # never connects, offline
+    circle = create_circle(db_session, name="Evening Satsang", created_by=alice.id)
+    add_member(db_session, circle_id=circle.id, user_id=alice.id, role="admin")
+    add_member(db_session, circle_id=circle.id, user_id=bob.id)
+    add_member(db_session, circle_id=circle.id, user_id=carol.id)
+    upsert_push_subscription(
+        db_session, user_id=alice.id, endpoint="https://a.example/1", p256dh="p", auth="a"
+    )
+    upsert_push_subscription(
+        db_session, user_id=bob.id, endpoint="https://b.example/1", p256dh="p", auth="a"
+    )
+    upsert_push_subscription(
+        db_session, user_id=carol.id, endpoint="https://c.example/1", p256dh="p", auth="a"
+    )
+    db_session.commit()
+
+    push_calls = []
+    monkeypatch.setattr(
+        push_module, "send_push", lambda session, **kw: push_calls.append(kw["user_id"])
+    )
+
+    alice_token = ws_login_as(alice)
+    bob_token = ws_login_as(bob)
+    with (
+        client.websocket_connect(f"/ws?token={alice_token}") as alice_ws,
+        client.websocket_connect(f"/ws?token={bob_token}") as bob_ws,
+    ):
+        alice_ws.send_json(
+            _send_frame(
+                client_msg_id=str(uuid.uuid4()),
+                target_type="circle",
+                target_id=str(circle.id),
+                text="evening satsang starting",
+            )
+        )
+        ack = alice_ws.receive_json()
+        assert ack["type"] == "message.ack"
+        new = bob_ws.receive_json()
+        assert new["type"] == "message.new"
+
+    # Carol (offline) gets pushed. Bob (online) already got it live, no
+    # push needed. Alice (the sender) never gets pushed for her own
+    # message, despite having a subscription too.
+    _wait_for_push_calls(push_calls, [carol.id])
+    assert push_calls == [carol.id]
+
+
+def test_quiet_hours_suppresses_push_for_affected_recipient(
+    client, db_session, ws_login_as, monkeypatch, _instant_fan_out
+):
+    import app.push as push_module
+
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")  # offline, but in quiet hours
+    upsert_push_subscription(
+        db_session, user_id=bob.id, endpoint="https://b.example/1", p256dh="p", auth="a"
+    )
+    db_session.commit()
+
+    push_calls = []
+    monkeypatch.setattr(
+        push_module, "send_push", lambda session, **kw: push_calls.append(kw["user_id"])
+    )
+    # Force "quiet hours are active" rather than depending on the real
+    # wall clock and a specific timezone/window combination —
+    # is_quiet_hours' own window/wraparound/default-fallback correctness
+    # is proven independently in tests/test_push.py; this test only proves
+    # _handle_message_send's wiring respects the result.
+    monkeypatch.setattr(push_module, "is_quiet_hours", lambda **kwargs: True)
+
+    alice_token = ws_login_as(alice)
+    with client.websocket_connect(f"/ws?token={alice_token}") as alice_ws:
+        alice_ws.send_json(
+            _send_frame(
+                client_msg_id=str(uuid.uuid4()),
+                target_type="user",
+                target_id=str(bob.id),
+                text="hi Bob",
+            )
+        )
+        ack = alice_ws.receive_json()
+        assert ack["type"] == "message.ack"
+
+    _settle()
+    assert push_calls == []

@@ -31,10 +31,25 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     JWT_SECRET: str
 
+    # Week 3 Phase 7: required-with-no-default, same fail-loud-at-startup
+    # reasoning as DATABASE_URL/JWT_SECRET above — a one-time-generated
+    # VAPID keypair (see README.md's "Configuration" section for the
+    # `vapid --gen` process), never generated at runtime. VAPID_SUBJECT is
+    # the `mailto:`/`https:` contact URL the VAPID spec requires in every
+    # push request's JWT `sub` claim.
+    VAPID_PRIVATE_KEY: str
+    VAPID_PUBLIC_KEY: str
+    VAPID_SUBJECT: str
+
     LOG_LEVEL: str = "INFO"
     CORS_ORIGINS: Annotated[list[str], NoDecode, BeforeValidator(_split_csv)] = Field(
         default_factory=list
     )
+
+    # Week 4 Phase 8: how long a sender can undo a just-sent message before
+    # app/undo.py's scheduled fan-out delivers it for real. See app/undo.py
+    # for the in-memory scheduler this drives.
+    UNDO_WINDOW_SECONDS: int = 30
 
 
 @lru_cache

@@ -24,8 +24,20 @@ Pydantic schemas in `contracts/ai/`, but no such routing exists yet.
 cd services/gateway
 py -m venv .venv
 ./.venv/Scripts/python.exe -m pip install -e .[dev]
-./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8000
+PYTHONPATH=../.. ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8000
 ```
+
+**`PYTHONPATH=../..` is required** — `contracts/` (imported by `app/ws.py`,
+`app/messages.py`, `app/push.py`) lives at the repo root, one level above
+`services/`, outside this package. `pytest` never needs it: `conftest.py` at
+this directory's root inserts the repo root onto `sys.path` itself, purely
+for the test run. A direct interpreter/uvicorn invocation has no such hook,
+so it needs the repo root on `PYTHONPATH` explicitly — same convention
+`services/ai/README.md` already documents for its own scripts (e.g.
+`tools/generate_fixtures.py`), applied here for consistency rather than
+inventing a second way to solve the same problem. On PowerShell:
+`$env:PYTHONPATH = "../.."` (or `..\..`) before the same `uvicorn` command,
+in the same shell session.
 
 Interactive docs at `http://localhost:8000/docs` once it's running. Routes so
 far: `/health` and `/health/ready` (no auth), `/me` (requires a `Bearer`
@@ -123,6 +135,13 @@ JWT verification. Both `get_current_user` (HTTP, reads the `Authorization`
 header) and `app/ws.py`'s `/ws` route (WebSocket, reads a `?token=` query
 param) call through this one function — editing its body is enough to wire up
 real auth for both transports at once, no route or call site needs to change.
+
+**Still zero real verification, but a token that's a valid UUID is now taken
+as that user's own id** (any other token keeps falling back to the original
+hardcoded stub identity) — see the comment above `user_from_token`'s body for
+why. Handy for manual multi-user testing against a real running server: mint
+two `users` rows, then use each one's `id` as the bearer/`?token=` value to
+authenticate as that specific user.
 
 **Do not rebind the name — the two call sites resolve it through different
 mechanisms, and a rebind at runtime makes them silently disagree instead of

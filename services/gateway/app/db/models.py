@@ -18,7 +18,7 @@ one exception in the whole schema is `memberships.circle_id`, which
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, time
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -53,6 +53,17 @@ class User(Base):
     # question #4. No DB-level format constraint (Postgres has no built-in
     # domain for it); validate at the application layer later.
     timezone: Mapped[str | None] = mapped_column(sa.Text)
+    # Week 3 Phase 7: wall-clock time-of-day only, no UTC offset attached —
+    # interpreted against `timezone` above at push-check time (via
+    # zoneinfo), not stored pre-converted to UTC, so the window stays
+    # correct across DST transitions the same way design question #4
+    # already reasons about for `timezone` itself. NULL means "not set by
+    # this user yet"; the application-layer quiet-hours check falls back
+    # to a fixed default window in that case — not a DB server_default,
+    # since "unset" and "explicitly set to the default" are meaningfully
+    # different states worth keeping distinguishable.
+    quiet_hours_start: Mapped[time | None] = mapped_column(sa.Time)
+    quiet_hours_end: Mapped[time | None] = mapped_column(sa.Time)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -145,8 +156,13 @@ class Message(Base):
         ),
         sa.CheckConstraint("target_type IN ('user', 'circle')", name="ck_messages_target_type"),
         sa.CheckConstraint("kind IN ('text', 'voice')", name="ck_messages_kind"),
+        # Week 4 Phase 8: 'sent' and 'cancelled' added for the 30-second
+        # undo window (see app/undo.py) — 'sent' marks a message that
+        # cleared the window and fanned out for real, 'cancelled' one the
+        # author undid within it. Matches contracts/chat/common.py's
+        # MessageStatus enum exactly, same as every other value here.
         sa.CheckConstraint(
-            "status IN ('pending', 'delivered', 'held', 'blocked', 'failed')",
+            "status IN ('pending', 'delivered', 'held', 'blocked', 'failed', 'sent', 'cancelled')",
             name="ck_messages_status",
         ),
         # `messages` Constraints — mirrors MessageIn's model_validator
@@ -220,6 +236,39 @@ class Message(Base):
     # for Week 4. NULL for message types/paths that don't support undo.
     undo_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+
+class PushSubscription(Base):
+    """Week 3 Phase 7: one row per browser/device Web Push subscription. A
+    user can have several (one per device/browser they've enabled push
+    on) — `endpoint` (the browser's own push endpoint URL) is the natural
+    dedup key, not `user_id`, since the Push API guarantees an endpoint is
+    unique per subscription."""
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=generate_uuid7
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        # CASCADE, not RESTRICT — a deliberate deviation from this file's
+        # dominant FK-to-users.id pattern (see the module docstring: every
+        # FK to users.id is RESTRICT except memberships.circle_id, which
+        # cascades because a membership can't outlive its circle). A push
+        # subscription is the same shape of dependency: it's owned by, and
+        # meaningless without, its user — unlike messages.author_id, which
+        # RESTRICTs specifically to preserve message history as an audit
+        # trail after a user is gone. Confirmed Week 3 Phase 7 Step 0.
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    endpoint: Mapped[str] = mapped_column(sa.Text, nullable=False, unique=True)
+    p256dh: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    auth: Mapped[str] = mapped_column(sa.Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )

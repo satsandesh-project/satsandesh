@@ -299,3 +299,53 @@ tests across 4 files" — now 65 across 12), and this journal entry. All
 three were diffed for the user before being asked to commit; nothing in
 this phase was committed by the assistant at any point, per standing
 instruction.
+
+## Known issue, flagged Week 3 Phase 7 — real boot can't resolve `contracts/`, pytest can
+
+Recreating `.venv` from scratch (required to get real pinned versions for
+`pywebpush` into `requirements.txt`, per the documented regenerate process)
+surfaced a **pre-existing** gap, not something this phase's changes caused:
+`python -m uvicorn app.main:app` fails with `ModuleNotFoundError: No module
+named 'contracts'`, since `contracts/` lives at the repo root, outside
+`services/gateway/`, and nothing in this package's config makes it
+importable for a direct interpreter/uvicorn invocation. `pytest` itself is
+unaffected — confirmed all 118 tests still pass, and empirically confirmed
+the repo root lands on `sys.path` during a pytest run by other means pytest
+doesn't fully explain in the time spent on it, so it wasn't chased further.
+`alembic` is also unaffected (`alembic/env.py` only imports
+`app.config`/`app.db.base`/`app.db.models`, none of which touch
+`contracts`). Confirmed with the user this is a real, separate fix — not
+folded into push-notification logic — to be done as its own small step
+right before Phase 7's real-browser verification, since that step needs an
+actual running server, not just pytest.
+
+**Resolved, Step 3 (real-browser verification prep):** `PYTHONPATH=../..`
+on the direct `uvicorn` invocation, documented in README.md's Quickstart —
+not a new packaging scheme (turning `contracts/` into an installable
+package) and not a `sys.path` hack living in application code. Chosen
+specifically because `services/ai/README.md` already documents this exact
+convention (`PYTHONPATH=../.. ./.venv/Scripts/python.exe
+tools/generate_fixtures.py`) for the identical problem — this service's
+`app/ws.py`/`app/messages.py`/`app/push.py` importing `contracts/` outside
+of pytest, which has its own `conftest.py`-based `sys.path` insertion that
+only ever applies to test runs. Matching the sibling service's established
+answer beats inventing a second way to solve the same problem. Tradeoff:
+this has to be remembered on every direct interpreter/uvicorn invocation
+(easy to forget, would surface immediately as `ModuleNotFoundError:
+No module named 'contracts'` if it is) — a real packaging fix (installing
+`contracts/` as an editable dependency) would make it automatic, but that's
+a bigger, cross-cutting change touching `services/ai/` too, out of scope
+for this one-service fix.
+
+Verified directly, not assumed: booted `python -m uvicorn app.main:app`
+for real from `services/gateway/` with `PYTHONPATH=../..` set (PowerShell,
+`Start-Process` with `-PassThru` so the returned PID is the real Windows
+PID directly — no Bash-job-vs-OS-PID mismatch risk this time, per Finding 2
+above). `GET /health` returned `{"status":"ok"}` and `GET /health/ready`
+returned `{"status":"ok","checks":{"postgres":"ok"}}` — the latter proves
+every router (including the ones that import `contracts/` at module level:
+`app/ws.py`, `app/messages.py`, `app/push.py`) loaded cleanly, not just
+`/health`'s own dependency-free path. Process stopped via `Stop-Process`
+on that same confirmed PID; a follow-up `Get-NetTCPConnection -LocalPort
+8000` came back empty, confirming port 8000 was actually released rather
+than trusting the stop command's own exit code.
