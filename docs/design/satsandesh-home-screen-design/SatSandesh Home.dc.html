@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;700;800&family=Noto+Sans+Telugu:wght@400;600;700&family=Lora:wght@600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#EFE6D6;font-family:Mulish,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#B4531A}a:hover{color:#8A3E0F}
+@keyframes satHalo{0%{box-shadow:0 0 0 0 rgba(180,83,26,.30)}70%{box-shadow:0 0 0 26px rgba(180,83,26,0)}100%{box-shadow:0 0 0 0 rgba(180,83,26,0)}}
+</style>
+</helmet>
+
+<div style="padding:44px 40px 80px;display:flex;flex-wrap:wrap;gap:56px;align-items:flex-start;justify-content:center">
+
+  <!-- ══ LIVE SCREEN ══ -->
+  <div style="display:flex;flex-direction:column;gap:16px;align-items:center">
+    <div style="display:flex;gap:8px;align-items:center;padding:8px 10px;background:#FFFCF6;border:1px solid #E0D3BC;border-radius:14px">
+      <span style="font:800 10px/1 Mulish,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#8B7A5F;padding:0 6px">Preview</span>
+      <button onClick="{{ setPhone }}" style="{{ phoneBtnStyle }}" style-active="transform:scale(.97)">375 px</button>
+      <button onClick="{{ setWide }}" style="{{ wideBtnStyle }}" style-active="transform:scale(.97)">560 px</button>
+      <button onClick="{{ toggleScale }}" style="{{ scaleBtnStyle }}" style-active="transform:scale(.97)">Text {{ scaleLabel }}</button>
+    </div>
+
+    <div style="{{ frameStyle }}">
+      <div style="{{ rootStyle }}">
+       <div style="flex:1;min-height:0;overflow-y:auto">
+
+        <!-- Header -->
+        <header style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 20px 16px;background:#FFFCF6;border-bottom:1px solid #EADCC4;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:12px;min-width:0">
+            <div style="width:52px;height:52px;border-radius:16px;background:#B4531A;display:grid;place-items:center;flex:none">
+              <div style="width:20px;height:20px;border-radius:50%;background:#F6D68A"></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+              <div style="font-family:Lora,Georgia,serif;font-weight:600;font-size:min(1.4em,30px);line-height:1.15;color:#2A2118;overflow-wrap:anywhere">{{ appName }}</div>
+              <div style="font-weight:600;font-size:min(.8em,18px);line-height:1.25;color:#6E6047;overflow-wrap:anywhere">{{ tagline }}</div>
+            </div>
+          </div>
+          <button onClick="{{ toggleLang }}" aria-label="{{ langAria }}" style="display:flex;align-items:center;gap:10px;min-height:88px;padding:14px 20px;border-radius:22px;border:2px solid #2F5D50;background:#EAF1EC;color:#1F4034;font:700 1em/1.1 Mulish,'Noto Sans Telugu',sans-serif;cursor:pointer;transition:transform .12s,background .12s" style-active="background:#2F5D50;color:#FFFCF6;transform:scale(.97)">
+            <span style="display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:#2F5D50;color:#FFFCF6;font-family:Mulish,sans-serif;font-weight:700;font-size:15px;line-height:1;flex:none">A⇄</span>
+            <span style="font-size:min(1em,22px);overflow-wrap:anywhere">{{ langSwitchLabel }}</span>
+          </button>
+        </header>
+
+        <!-- Thought for the day -->
+        <div style="margin:20px 20px 0;padding:20px;background:#FBEFD5;border:1px solid #EFD9A8;border-radius:24px;display:flex;gap:16px;align-items:center">
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px">
+            <div style="font:800 .8em/1.2 Mulish,'Noto Sans Telugu',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#8A5B12">{{ thoughtLabel }}</div>
+            <div style="font:600 1.05em/1.45 Mulish,'Noto Sans Telugu',sans-serif;color:#2A2118;text-wrap:pretty">{{ thoughtText }}</div>
+          </div>
+          <button aria-label="{{ listenAria }}" style="flex:none;width:88px;height:88px;border-radius:50%;border:2px solid #C68A22;background:#FFFCF6;display:grid;place-items:center;cursor:pointer;transition:transform .12s,background .12s" style-active="background:#F3DFAE;transform:scale(.96)">
+            <span style="display:block;width:0;height:0;border-left:22px solid #8A5B12;border-top:14px solid transparent;border-bottom:14px solid transparent;margin-left:6px"></span>
+          </button>
+        </div>
+
+        <!-- Heading -->
+        <h2 style="margin:28px 20px 12px;font:700 1.4em/1.25 Mulish,'Noto Sans Telugu',sans-serif;color:#2A2118">{{ heading }}</h2>
+
+        <!-- Contact rows -->
+        <div style="display:flex;flex-direction:column;gap:14px;padding:0 20px 28px">
+          <sc-for list="{{ people }}" as="p" hint-placeholder-count="4">
+            <button style="display:flex;align-items:center;gap:20px;width:100%;min-height:108px;padding:16px 20px;background:#FFFCF6;border:1px solid #EADCC4;border-radius:28px;box-shadow:0 2px 6px rgba(90,66,32,.07);cursor:pointer;text-align:left;transition:transform .12s,box-shadow .12s,background .12s" style-active="background:#F6EEDF;box-shadow:0 1px 3px rgba(90,66,32,.10);transform:scale(.985)">
+              <span style="{{ p.avatarStyle }}">
+                <span style="font:700 1.5em/1 Mulish,'Noto Sans Telugu',sans-serif;color:#4A3A24;position:relative">{{ p.initial }}</span>
+              </span>
+              <span style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1">
+                <span style="font:700 1.2em/1.3 Mulish,'Noto Sans Telugu',sans-serif;color:#2A2118;text-wrap:pretty">{{ p.name }}</span>
+                <span style="font:400 .85em/1.35 Mulish,'Noto Sans Telugu',sans-serif;color:#6E6047">{{ p.meta }}</span>
+              </span>
+              <span style="flex:none;width:14px;height:14px;border-top:3px solid #B08E5C;border-right:3px solid #B08E5C;transform:rotate(45deg);opacity:.8"></span>
+            </button>
+          </sc-for>
+        </div>
+
+       </div>
+
+        <!-- Mic + bottom bar (outside the scroll area — always reachable) -->
+        <div style="flex:none">
+          <div style="display:flex;justify-content:center;margin-bottom:-46px;position:relative;z-index:2">
+            <button aria-label="{{ micAria }}" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:132px;height:132px;border-radius:50%;border:5px solid #FFFCF6;background:#B4531A;color:#FFFCF6;cursor:pointer;animation:satHalo 3.4s ease-out infinite;transition:transform .12s,background .12s" style-active="background:#8A3E0F;transform:scale(.95)">
+              <span style="display:block;width:26px;height:40px;border-radius:13px;background:#FFFCF6"></span>
+              <span style="display:block;width:34px;height:9px;border-radius:0 0 18px 18px;border:3px solid #FFFCF6;border-top:0"></span>
+            </button>
+          </div>
+          <div style="background:#FFFCF6;border-top:1px solid #EADCC4;padding:56px 20px 20px;display:flex;gap:14px">
+            <button style="flex:1;min-height:88px;border-radius:24px;border:2px solid #2F5D50;background:#EAF1EC;color:#1F4034;font:700 1em/1.2 Mulish,'Noto Sans Telugu',sans-serif;cursor:pointer" style-active="transform:scale(.98)">{{ tabPeople }}</button>
+            <button style="flex:1;min-height:88px;border-radius:24px;border:2px solid #EADCC4;background:#FFFCF6;color:#4A3A24;font:700 1em/1.2 Mulish,'Noto Sans Telugu',sans-serif;cursor:pointer" style-active="background:#F6EEDF;transform:scale(.98)">{{ tabSatsang }}</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    <div style="font:600 12px/1.4 Mulish,sans-serif;color:#7A6A51;max-width:420px;text-align:center">Tap the language button, hold any row or the mic to see pressed states. Text 200% keeps every target ≥ 88 px.</div>
+  </div>
+
+  <!-- ══ HANDOFF SPEC ══ -->
+  <div style="width:460px;max-width:100%;display:flex;flex-direction:column;gap:20px">
+    <div>
+      <div style="font:800 10px/1 Mulish,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:#8B7A5F;margin-bottom:8px">Developer handoff</div>
+      <div style="font:600 22px/1.25 Lora,Georgia,serif;color:#2A2118">Home / Contact list — tokens &amp; states</div>
+    </div>
+
+    <div style="background:#FFFCF6;border:1px solid #E0D3BC;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:14px">
+      <div style="font:800 11px/1 Mulish,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:#8B7A5F">Color palette</div>
+      <sc-for list="{{ palette }}" as="c" hint-placeholder-count="8">
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="{{ c.swatch }}"></span>
+          <span style="flex:1;min-width:0;font:700 13px/1.3 Mulish,sans-serif;color:#2A2118">{{ c.name }}<span style="display:block;font:400 12px/1.4 Mulish,sans-serif;color:#6E6047">{{ c.use }}</span></span>
+          <span style="font:600 12px/1 ui-monospace,Menlo,monospace;color:#4A3A24">{{ c.hex }}</span>
+        </div>
+      </sc-for>
+      <div style="margin-top:4px;padding:12px 14px;background:#EAF1EC;border-radius:12px;font:600 12.5px/1.5 Mulish,sans-serif;color:#1F4034">Ink <b>#2A2118</b> on cream <b>#F7F0E3</b> = <b>13.3:1</b> — passes WCAG 2.2 AA (4.5:1) and AAA (7:1). White on saffron #B4531A = 5.0:1; white on green #2F5D50 = 7.4:1; muted #6E6047 on card #FFFCF6 = 5.6:1.</div>
+    </div>
+
+    <div style="background:#FFFCF6;border:1px solid #E0D3BC;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:12px">
+      <div style="font:800 11px/1 Mulish,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:#8B7A5F">Type scale — base 20 px = 1rem</div>
+      <sc-for list="{{ type }}" as="t" hint-placeholder-count="6">
+        <div style="display:flex;align-items:baseline;gap:12px;border-bottom:1px dashed #EADCC4;padding-bottom:8px">
+          <span style="flex:1;font:700 13px/1.3 Mulish,sans-serif;color:#2A2118">{{ t.role }}</span>
+          <span style="font:600 12px/1 ui-monospace,Menlo,monospace;color:#4A3A24">{{ t.spec }}</span>
+        </div>
+      </sc-for>
+      <div style="font:400 12.5px/1.5 Mulish,sans-serif;color:#6E6047">Latin: Mulish 400/600/700/800. Telugu: Noto Sans Telugu 400/600/700, +8% optical size, line-height +0.1. All sizes in rem off a 20 px root, so a 200% OS text setting scales the whole screen; every container uses min-width:0 and text-wrap:pretty, no fixed heights on text.</div>
+    </div>
+
+    <div style="background:#FFFCF6;border:1px solid #E0D3BC;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:12px">
+      <div style="font:800 11px/1 Mulish,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:#8B7A5F">Spacing &amp; radius</div>
+      <div style="font:600 13px/1.7 Mulish,sans-serif;color:#2A2118">Space: 4 · 8 · 12 · <b>14</b> · 16 · <b>20</b> · 24 · 28 · 32 · 40 (px, 4-pt grid)</div>
+      <div style="font:400 12.5px/1.6 Mulish,sans-serif;color:#6E6047">Screen gutter 20 · row gap 14 · row padding 16/20 · card radius 28 · button radius 22–24 · mic 132 with 5 px cream ring · content column max-width 560, centered · list bottom padding 200 so the mic never covers the last row.</div>
+      <div style="font:600 13px/1.7 Mulish,sans-serif;color:#2A2118">Radius: 12 chip · 16 logo · 20/24 button · 28 row card · 50% avatar &amp; mic</div>
+    </div>
+
+    <div style="background:#FFFCF6;border:1px solid #E0D3BC;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:12px">
+      <div style="font:800 11px/1 Mulish,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:#8B7A5F">Named states</div>
+      <sc-for list="{{ states }}" as="s" hint-placeholder-count="5">
+        <div style="display:flex;flex-direction:column;gap:3px;border-bottom:1px dashed #EADCC4;padding-bottom:9px">
+          <span style="font:700 13px/1.3 Mulish,sans-serif;color:#2A2118">{{ s.el }}</span>
+          <span style="font:400 12.5px/1.5 Mulish,sans-serif;color:#6E6047">{{ s.def }}</span>
+        </div>
+      </sc-for>
+      <div style="font:400 12.5px/1.5 Mulish,sans-serif;color:#6E6047">Focus-visible everywhere: 3 px #2F5D50 outline, 3 px offset. Transitions 120 ms ease-out; honor prefers-reduced-motion (mic halo off).</div>
+    </div>
+
+    <div style="background:#EAF1EC;border:1px solid #C9DCD1;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:10px">
+      <div style="font:800 11px/1 Mulish,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:#2F5D50">Reflex / React mapping</div>
+      <div style="font:600 12.5px/1.6 ui-monospace,Menlo,monospace;color:#1F4034">AppHeader(lang) · LanguageToggle(lang, on_toggle) · ThoughtCard(text, audio_ref) · SectionHeading(text) · ContactRow(person, on_open) · MicButton(on_press_start/end) · BottomTabs(active)</div>
+      <div style="font:400 12.5px/1.55 Mulish,sans-serif;color:#2A4A3E">Rows carry the whole tap target (button element, 108 px min-height, full width). Avatars are photo slots — drop real member photos in; the initial is the fallback. No badges, counts or dots anywhere by design; delivery state lives inside the chat, not here.</div>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1180,&quot;height&quot;:1120}}">
+const T = {
+  en: {
+    appName: "SatSandesh", tagline: "Your circle, in your language",
+    langSwitchLabel: "తెలుగు", langAria: "Switch to Telugu",
+    thoughtLabel: "Thought for the day",
+    thoughtText: "Speak kindly, and the whole hall grows quiet enough to listen.",
+    listenAria: "Listen to the thought for the day",
+    heading: "Your People", micAria: "Hold to speak a message",
+    tabPeople: "People", tabSatsang: "Satsang",
+    people: [
+      { name: "Lakshmi", meta: "Daughter · Hyderabad", initial: "L" },
+      { name: "Ramana Rao", meta: "Satsang · Kondapur", initial: "R" },
+      { name: "Padma Aunty", meta: "Neighbour · Ameerpet", initial: "P" },
+      { name: "Kondapur Circle", meta: "14 members", initial: "K" },
+      { name: "Ashram Announcements", meta: "Listen only", initial: "A" }
+    ]
+  },
+  te: {
+    appName: "సత్‌సందేశ్", tagline: "మీ వాళ్ళు, మీ భాషలో",
+    langSwitchLabel: "English", langAria: "Switch to English",
+    thoughtLabel: "ఈ రోజు ఆలోచన",
+    thoughtText: "మృదువుగా మాట్లాడండి — సభ అంతా వినడానికి నిశ్శబ్దమవుతుంది.",
+    listenAria: "ఈ రోజు ఆలోచన వినండి",
+    heading: "మీ వాళ్ళు", micAria: "మాట్లాడటానికి నొక్కి పట్టుకోండి",
+    tabPeople: "మీ వాళ్ళు", tabSatsang: "సత్సంగం",
+    people: [
+      { name: "లక్ష్మి", meta: "కూతురు · హైదరాబాద్", initial: "ల" },
+      { name: "రమణ రావు", meta: "సత్సంగం · కొండాపూర్", initial: "ర" },
+      { name: "పద్మ ఆంటీ", meta: "పొరుగు · అమీర్‌పేట్", initial: "ప" },
+      { name: "కొండాపూర్ బృందం", meta: "14 మంది", initial: "కొ" },
+      { name: "ఆశ్రమ ప్రకటనలు", meta: "వినడానికి మాత్రమే", initial: "ఆ" }
+    ]
+  }
+};
+const TINTS = ["#F2E3C9", "#E7EFE6", "#F7E2D6", "#EFE7D2", "#E9E6DE"];
+
+class Component extends DCLogic {
+  state = { lang: "en", width: 375, base: 20 };
+
+  chip(active) {
+    return "font:700 12.5px/1 Mulish,sans-serif;padding:9px 13px;border-radius:9px;cursor:pointer;transition:transform .12s;border:1px solid " +
+      (active ? "#2F5D50;background:#2F5D50;color:#FFFCF6" : "#E0D3BC;background:#FFF9EE;color:#3A2E20");
+  }
+
+  renderVals() {
+    const s = this.state, t = T[s.lang];
+    const w = s.width;
+    return {
+      ...t,
+      setPhone: () => this.setState({ width: 375 }),
+      setWide: () => this.setState({ width: 560 }),
+      toggleScale: () => this.setState(p => ({ base: p.base === 20 ? 40 : 20 })),
+      toggleLang: () => this.setState(p => ({ lang: p.lang === "en" ? "te" : "en" })),
+      scaleLabel: s.base === 20 ? "100%" : "200%",
+      phoneBtnStyle: this.chip(w === 375),
+      wideBtnStyle: this.chip(w === 560),
+      scaleBtnStyle: this.chip(s.base === 40),
+      frameStyle: "width:" + w + "px;max-width:100%;border-radius:40px;padding:10px;background:#DFD2B9;box-shadow:0 24px 60px rgba(80,58,26,.20)",
+      rootStyle: "position:relative;display:flex;flex-direction:column;overflow:hidden;height:" + (s.base === 40 ? 1040 : 840) +
+        "px;border-radius:32px;background:#F7F0E3;font-size:" + s.base +
+        "px;color:#2A2118;font-family:Mulish,'Noto Sans Telugu',system-ui,sans-serif",
+      people: t.people.map((p, i) => ({
+        ...p,
+        avatarStyle: "flex:none;width:76px;height:76px;border-radius:50%;display:grid;place-items:center;overflow:hidden;background:" +
+          TINTS[i % TINTS.length] +
+          ";background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.55) 0 6px,rgba(0,0,0,0) 6px 12px);box-shadow:inset 0 0 0 2px rgba(74,58,36,.14)"
+      })),
+      palette: [
+        { name: "Cream canvas", use: "app background", hex: "#F7F0E3" },
+        { name: "Card cream", use: "rows, header, tabs", hex: "#FFFCF6" },
+        { name: "Ink", use: "names, headings, body", hex: "#2A2118" },
+        { name: "Muted ink", use: "secondary line", hex: "#6E6047" },
+        { name: "Saffron", use: "mic, logo, primary action", hex: "#B4531A" },
+        { name: "Saffron pressed", use: "mic :active", hex: "#8A3E0F" },
+        { name: "Deep green", use: "language toggle, active tab", hex: "#2F5D50" },
+        { name: "Green tint", use: "toggle / tab fill", hex: "#EAF1EC" },
+        { name: "Gold sand", use: "Thought for the day card", hex: "#FBEFD5" },
+        { name: "Warm border", use: "hairlines, card edge", hex: "#EADCC4" }
+      ].map(c => ({ ...c, swatch: "flex:none;width:34px;height:34px;border-radius:10px;box-shadow:inset 0 0 0 1px rgba(74,58,36,.18);background:" + c.hex })),
+      type: [
+        { role: "App name (serif)", spec: "28 px / 1.4rem · Lora 600 · lh 1.15" },
+        { role: "Section heading", spec: "28 px / 1.4rem · 700 · lh 1.25" },
+        { role: "Contact name", spec: "24 px / 1.2rem · 700 · lh 1.3" },
+        { role: "Body / thought", spec: "21 px / 1.05rem · 600 · lh 1.45" },
+        { role: "Button label", spec: "20 px / 1rem · 700 · lh 1.2" },
+        { role: "Secondary line", spec: "17 px / 0.85rem · 400 · lh 1.35" },
+        { role: "Eyebrow (caps)", spec: "16 px / 0.8rem · 800 · +0.08em" }
+      ],
+      states: [
+        { el: "Contact row (88+ target, 108 px tall)", def: "default #FFFCF6, border #EADCC4, shadow 0 2 6 rgba(90,66,32,.07) → pressed #F6EEDF, shadow 0 1 3, scale .985" },
+        { el: "Language toggle", def: "default #EAF1EC on 2 px #2F5D50, label #1F4034 → pressed fill #2F5D50, label #FFFCF6, scale .97" },
+        { el: "Mic button (132 px)", def: "default #B4531A + 5 px #FFFCF6 ring, 3.4 s halo → pressed #8A3E0F, scale .95, recording ring 6 px #F6D68A" },
+        { el: "Listen button (88 px)", def: "default #FFFCF6 on 2 px #C68A22 → pressed #F3DFAE, scale .96" },
+        { el: "Tab — active / inactive", def: "active #EAF1EC on #2F5D50 · inactive #FFFCF6 on #EADCC4, pressed #F6EEDF" }
+      ]
+    };
+  }
+}
+
+</script>
+</body>
+</html>
