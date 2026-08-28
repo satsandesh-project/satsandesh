@@ -22,7 +22,6 @@ Design principles, straight from the Week 4 schedule line for M1:
 """
 
 import reflex as rx
-
 from rxconfig import config
 
 TEXTS = {
@@ -319,7 +318,12 @@ def chat_screen() -> rx.Component:
             ),
             width="100%",
             spacing="3",
-            style={"position": "sticky", "bottom": "0", "background": "#f5f5f5", "padding_top": "12px"},
+            style={
+                "position": "sticky",
+                "bottom": "0",
+                "background": "#f5f5f5",
+                "padding_top": "12px",
+            },
         ),
         spacing="3",
         width="100%",
@@ -330,7 +334,11 @@ def chat_screen() -> rx.Component:
 def index() -> rx.Component:
     return rx.box(
         rx.cond(State.current_contact_id == "", home_screen(), chat_screen()),
-        style={"min_height": "100vh", "background": "#f5f5f5", "font_family": "system-ui, sans-serif"},
+        style={
+            "min_height": "100vh",
+            "background": "#f5f5f5",
+            "font_family": "system-ui, sans-serif",
+        },
     )
 
 
