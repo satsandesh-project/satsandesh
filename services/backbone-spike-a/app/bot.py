@@ -44,7 +44,7 @@ def _require_hs_token(authorization: Optional[str]) -> None:
             status_code=401,
             detail={"errcode": "M_MISSING_TOKEN", "error": "Missing Authorization header"},
         )
-    token = authorization[len("Bearer "):]
+    token = authorization[len("Bearer ") :]
     if token != HS_TOKEN:
         raise HTTPException(
             status_code=401, detail={"errcode": "M_UNKNOWN_TOKEN", "error": "Bad token"}
@@ -67,7 +67,9 @@ async def _join_room_as_bot(room_id: str) -> None:
     url = f"{HOMESERVER_URL}/_matrix/client/v3/rooms/{qualified_room_id}/join"
     async with httpx.AsyncClient() as http_client:
         resp = await http_client.post(url, headers={"Authorization": f"Bearer {AS_TOKEN}"})
-        logger.info("join attempt room_id=%s -> HTTP %s: %s", qualified_room_id, resp.status_code, resp.text)
+        logger.info(
+            "join attempt room_id=%s -> HTTP %s: %s", qualified_room_id, resp.status_code, resp.text
+        )
         resp.raise_for_status()
 
 

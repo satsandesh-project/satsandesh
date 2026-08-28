@@ -17,9 +17,8 @@ os.environ.setdefault("ROOM_ALIAS_NAMESPACE_REGEX", r"#spike_.*:localhost")
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-
 from app.bot import _fully_qualified_room_id, app, received_events
+from fastapi.testclient import TestClient
 
 HS_TOKEN = os.environ["HS_TOKEN"]
 
@@ -174,15 +173,11 @@ def test_user_and_room_query_endpoints_respond(client):
 def test_fully_qualified_room_id_appends_domain_when_missing():
     # Conduit's transaction payloads have been observed to omit the
     # server-name suffix; the join call needs it, so we add it back.
-    assert (
-        _fully_qualified_room_id("!abc123") == "!abc123:localhost"
-    )
+    assert _fully_qualified_room_id("!abc123") == "!abc123:localhost"
 
 
 def test_fully_qualified_room_id_leaves_already_qualified_id_untouched():
-    assert (
-        _fully_qualified_room_id("!abc123:localhost") == "!abc123:localhost"
-    )
+    assert _fully_qualified_room_id("!abc123:localhost") == "!abc123:localhost"
 
 
 def test_keys_query_proxy_responds_empty_for_valid_token(client):
