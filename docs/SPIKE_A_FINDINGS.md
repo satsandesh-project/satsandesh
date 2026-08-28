@@ -324,3 +324,82 @@ automatically forwarding room events to an external bot, which can then
 run them through moderation/translation and re-inject a response — is now
 proven to work end-to-end, on the homeserver the team would actually use.
 
+---
+
+## Migration to the shared team machine (2026-08-28)
+
+*Appended after the two sections above, which are unchanged.* The full
+Conduit + Tuwunel + bot setup was rebuilt on the team's shared Linux
+machine (previously only local to one laptop). Reproducing it there
+surfaced three infrastructure-level issues worth documenting — none of
+them changed the mechanism-level findings above, but each one would
+otherwise cost real time for whoever sets this up next.
+
+### The shared machine has no traditional Docker permission path
+
+The account this runs under has no `sudo` at all (confirmed: "not in the
+sudoers file"), and this is a 40+ user shared server, not a private team
+box — normal `usermod -aG docker` was a dead end. **Resolved without any
+admin involvement**: rootless Docker was already available
+(`dockerd-rootless-setuptool.sh`), with every prerequisite
+(`newuidmap`/`newgidmap`, subuid/subgid ranges) already provisioned.
+Running the setup tool as a plain user gives a fully working Docker
+daemon at `unix:///run/user/<uid>/docker.sock` — verified with
+`docker run hello-world`. No root-equivalent access was ever granted.
+
+### Rootless Docker blocks containers from reaching the host
+
+The first attempt reused the same `host.docker.internal` approach that
+worked locally. It doesn't work here: rootless Docker's networking
+sandbox (`rootlesskit`) is started with `--disable-host-loopback` by
+default — an intentional security measure that prevents containers from
+reaching back out to services running directly on the host. Since the
+bot was running as a bare host process, Conduit/Tuwunel genuinely could
+not reach it, confirmed directly in Conduit's own log:
+```
+Could not send request to appservice "satsandesh-spike-a" at
+http://host.docker.internal:9000: error sending request for url (...)
+```
+**Fix:** containerized the bot itself (new `Dockerfile`,
+`.dockerignore`) and put it on the same user-defined Docker network as
+the homeservers, so they reach each other by container name over
+Docker's internal networking rather than crossing the host boundary at
+all. This sidesteps the restriction entirely rather than working around
+it, and is arguably the more correct setup regardless of rootless vs.
+rootful Docker.
+
+### `docker network connect` needs a container restart before DNS works
+
+Attaching an already-running container to a new network with `docker
+network connect` does not reliably wire up Docker's embedded DNS for
+that container immediately — the homeserver containers could not
+resolve the bot containers' names until they were restarted after being
+connected. Confirmed directly:
+```
+Could not send request to appservice ... at http://spike-bot-tuwunel:9000:
+... Dns(ResponseCode(ServFail))
+```
+`docker restart` on the affected containers resolved it immediately,
+verified with `docker run --rm --network spike-net busybox nslookup
+spike-bot-tuwunel` succeeding afterward.
+
+### One more real code bug, unrelated to networking
+
+The bot's `HOMESERVER_URL` config still pointed at `localhost:<port>` —
+correct when the bot ran directly on the host, wrong once it moved into
+its own container, where `localhost` refers to the bot's own container,
+not the homeserver's. Fixed by pointing it at the homeserver's container
+name and *internal* port instead (e.g. `http://tuwunel:8008`, not the
+externally-published `6168`).
+
+### Final result, reproduced on the shared machine
+
+With all three fixes applied, the exact same end-to-end proof from the
+original Tuwunel test above was reproduced cleanly on the shared
+machine: invite → bot auto-joins → plaintext message delivered,
+confirmed on two separate rooms. Everything now runs under
+`~/kshitiz/satsandesh/` there — `conduit`, `tuwunel`,
+`spike-bot-conduit`, and `spike-bot-tuwunel` as four containers on a
+shared Docker network, reachable by any teammate with access to the
+machine, not just one laptop.
+
