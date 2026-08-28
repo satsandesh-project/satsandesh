@@ -1,27 +1,30 @@
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 
-from contracts.chat.common import TargetType
+from contracts.chat.common import MessageStatus, TargetType
 from contracts.chat.envelope import FrameType, RawFrame, SyncBatch, SyncRequest
 from contracts.chat.errors import ErrorCode, ErrorPayload
-from contracts.chat.messages import AckOut, MessageIn
+from contracts.chat.messages import AckOut, DeliveredIn, MessageIn, MessageStatusOut
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import undo
 from app.auth import user_from_token
-from app.db.base import get_db
+from app.config import get_settings
+from app.db.base import SessionLocal, get_db
 from app.db.repository import (
     create_message_with_created_flag,
     find_conversation_id,
+    get_message_by_id,
     get_messages_since,
     is_circle_member,
-    list_member_ids_for_circle,
+    set_message_status,
 )
-from app.messages import message_to_out
+from app.messages import fan_out_message, message_to_out
 from app.models import User
-from app.push import maybe_push_for_message
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +154,9 @@ async def _handle_message_send(
             return
         target_user_id = target_uuid
 
+    settings = get_settings()
+    undo_expires_at = datetime.now(UTC) + timedelta(seconds=settings.UNDO_WINDOW_SECONDS)
+
     try:
         # create_message_with_created_flag, not create_message: the
         # `created` flag is decided atomically inside the same
@@ -176,6 +182,7 @@ async def _handle_message_send(
             media_duration_ms=msg.media_ref.duration_ms if msg.media_ref is not None else None,
             source_lang=msg.source_lang,
             client_msg_id=msg.client_msg_id,
+            undo_expires_at=undo_expires_at,
         )
     except IntegrityError:
         # Persist failed (e.g. target_id doesn't reference a real user/
@@ -199,40 +206,112 @@ async def _handle_message_send(
 
     if not created:
         # A retry of an already-delivered send — the sender gets their ack
-        # (same server id, proving the earlier attempt landed), but nobody
-        # gets a second message.new for it.
+        # (same server id, proving the earlier attempt landed), but its
+        # fan-out was already scheduled by the original call; scheduling a
+        # second one here would either be a harmless no-op (app/undo.py's
+        # own idempotency guard) or leak an unawaited coroutine if
+        # constructed without ever being scheduled.
         return
 
-    new_frame = {
-        "type": FrameType.MESSAGE_NEW.value,
-        "data": message_to_out(message).model_dump(mode="json"),
+    # Week 4 Phase 8: real delivery (message.new + push) is deferred to
+    # app/messages.py's fan_out_message, run by app/undo.py
+    # settings.UNDO_WINDOW_SECONDS from now unless DELETE /messages/{id}
+    # cancels it first — exactly the same scheduling POST /messages uses,
+    # so a WS-sent and an HTTP-sent message share one delivery path.
+    undo.schedule_fan_out(
+        str(message.id),
+        settings.UNDO_WINDOW_SECONDS,
+        fan_out_message(message.id, manager, SessionLocal, exclude=websocket),
+    )
+
+
+async def _handle_message_delivered(
+    websocket: WebSocket, db: Session, user: User, raw_data: dict
+) -> None:
+    """Week 3: the still-missing half of "sent / delivered states" —
+    `sent` (app/undo.py's deferred fan_out_message, above) already existed
+    and only ever meant "the server pushed this out," not "the recipient
+    actually has it." This is the recipient's own confirmation of that,
+    and the resulting notification back to the *sender*.
+
+    DM-scoped only, deliberately: `message.target_type != "user"` below
+    rejects a circle message outright rather than guessing at "delivered
+    to whom" for a multi-recipient target — a separate design question
+    this doesn't try to answer (see tests/test_message_delivered.py's
+    circle-target test).
+
+    Idempotent by construction: set_message_status's WHERE-scoped update
+    (same guard app/undo.py's cancellation and fan_out_message already
+    rely on) means a second ack for an already-`delivered` message is a
+    silent no-op, not an error and not a second redundant push to the
+    sender — a client retry or a second device acking the same message
+    must not look like a problem.
+    """
+    try:
+        delivered = DeliveredIn.model_validate(raw_data)
+    except ValidationError as exc:
+        await _send_error(
+            websocket,
+            ErrorCode.VALIDATION_FAILED,
+            "invalid message.delivered payload",
+            detail={"error": str(exc)},
+        )
+        return
+
+    try:
+        message_uuid = uuid.UUID(delivered.message_id)
+    except ValueError:
+        await _send_error(websocket, ErrorCode.VALIDATION_FAILED, "message_id must be a valid UUID")
+        return
+
+    message = get_message_by_id(db, message_uuid)
+    if message is None:
+        await _send_error(websocket, ErrorCode.NOT_FOUND, "message not found")
+        return
+
+    if message.target_type != "user":
+        await _send_error(
+            websocket,
+            ErrorCode.VALIDATION_FAILED,
+            "message.delivered is only supported for DMs, not circle messages",
+        )
+        return
+
+    caller_id = uuid.UUID(user.id)
+    if message.target_user_id != caller_id:
+        # Covers both "not this message's recipient" (some unrelated third
+        # party) and "the author trying to mark their own sent message
+        # delivered" in one check: target_user_id can never equal author_id
+        # for a real DM (app/ws.py's own can't-DM-yourself check in
+        # _handle_message_send), so an author here always fails this too.
+        await _send_error(
+            websocket,
+            ErrorCode.UNAUTHORIZED,
+            "only the message's recipient can mark it delivered",
+        )
+        return
+
+    updated = set_message_status(
+        db,
+        message_uuid,
+        new_status=MessageStatus.DELIVERED.value,
+        expected=MessageStatus.SENT.value,
+    )
+    db.commit()
+    if not updated:
+        # Already delivered (a duplicate ack, e.g. the recipient's second
+        # device) or some other unexpected state — either way, the caller
+        # didn't do anything wrong by acking a message that isn't (or is no
+        # longer) `sent`, so this is a no-op, not an error.
+        return
+
+    status_frame = {
+        "type": FrameType.MESSAGE_STATUS.value,
+        "data": MessageStatusOut(id=str(message.id), status=MessageStatus.DELIVERED).model_dump(
+            mode="json"
+        ),
     }
-
-    if msg.target_type is TargetType.CIRCLE:
-        recipients = [
-            str(member_id)
-            for member_id in list_member_ids_for_circle(db, circle_id=target_circle_id)
-        ]
-    else:
-        # The other party, plus the sender's own other connected devices —
-        # same reasoning as the circle case (confirmed product decision,
-        # Week 3 Phase 5 Step 0, now applied consistently to DMs too): a
-        # second open tab/device should see a message you just sent
-        # without waiting for a sync.
-        recipients = [str(target_user_id), str(caller_id)]
-
-    # A circle poster's own other devices, and now a DM sender's own other
-    # devices, are both included in `recipients` above — `exclude` is what
-    # keeps either case from also echoing back onto the exact socket that
-    # sent it (which already got the ack).
-    await manager.broadcast(recipients, new_frame, exclude=websocket)
-
-    # Week 3 Phase 7 (extracted per the correction: app/messages.py's
-    # POST /messages needs this exact same trigger, not a second copy of
-    # it) — push for whoever won't see the WS frame above live. Always
-    # excludes the sender, unlike `recipients` above, which deliberately
-    # includes the sender's own other devices for the WS echo.
-    maybe_push_for_message(db, message=message, sender_id=caller_id, connection_manager=manager)
+    await manager.send_to_user(str(message.author_id), status_frame)
 
 
 async def _handle_sync_request(
@@ -329,6 +408,8 @@ async def _process_frame(websocket: WebSocket, db: Session, user: User, raw_data
 
     if raw.type is FrameType.MESSAGE_SEND:
         await _handle_message_send(websocket, db, user, raw.data)
+    elif raw.type is FrameType.MESSAGE_DELIVERED:
+        await _handle_message_delivered(websocket, db, user, raw.data)
     elif raw.type is FrameType.SYNC_REQUEST:
         await _handle_sync_request(websocket, db, user, raw.data)
     else:

@@ -19,6 +19,8 @@ def test_message_status_is_a_closed_enum() -> None:
         "held",
         "blocked",
         "failed",
+        "sent",
+        "cancelled",
     }
 
 

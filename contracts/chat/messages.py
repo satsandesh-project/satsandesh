@@ -60,3 +60,22 @@ class AckOut(VersionedModel):
     client_msg_id: UUID
     id: str
     status: MessageStatus
+
+
+class DeliveredIn(VersionedModel):
+    """`data` for a `message.delivered` WS frame — the recipient confirming
+    actual receipt of a `message.new`, not just that the server attempted a
+    push. DM-scoped only (see app/ws.py's `_handle_message_delivered`);
+    there is deliberately no equivalent for circle messages yet."""
+
+    message_id: str
+
+
+class MessageStatusOut(VersionedModel):
+    """`data` for a `message.status` WS frame — pushed to the *sender's*
+    connected devices when a message's status changes after the initial
+    ack (currently: `sent` -> `delivered`), so their UI can move off
+    whatever it showed for the ack without polling."""
+
+    id: str
+    status: MessageStatus

@@ -1,5 +1,6 @@
-"""`POST /messages` and `GET /messages` — contracts/chat/'s messages.py and
-envelope.py wire shapes, backed by app/db/repository.py.
+"""`POST /messages`, `GET /messages`, and `DELETE /messages/{id}` —
+contracts/chat/'s messages.py and envelope.py wire shapes, backed by
+app/db/repository.py.
 
 Authorization: circle targets require the caller to be a member
 (app/db/repository.py::is_circle_member) — anyone can be DMed, but nobody
@@ -8,27 +9,50 @@ membership check for a DM target: the resolved conversation is always
 (caller, target_id), so a caller can never address anyone else's DM through
 this wire shape (see tests/test_message_routes.py's
 test_get_messages_rejects_non_participant docstring).
+
+Week 4 Phase 8: a message is created `pending` and its real delivery is
+deferred `settings.UNDO_WINDOW_SECONDS` via app/undo.py's scheduler
+(`fan_out_message` below is the deferred half) — `DELETE /messages/{id}`
+lets the author pull it back within that window. Both this route and
+app/ws.py's `message.send` handler schedule the exact same `fan_out_message`
+coroutine, so an HTTP-sent and a WS-sent message go through one delivery
+path, not two that could quietly drift apart.
 """
 
 import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
-from contracts.chat.common import TargetType
-from contracts.chat.envelope import SyncBatch
+from contracts.chat.common import MessageStatus, TargetType
+from contracts.chat.envelope import FrameType, SyncBatch
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from sqlalchemy.orm import Session
 
+from app import undo
 from app.auth import get_current_user
-from app.db.base import get_db
+from app.config import get_settings
+from app.db.base import SessionLocal, get_db
 from app.db.models import Message
 from app.db.repository import (
-    create_message,
+    create_message_with_created_flag,
     find_conversation_id,
+    get_message_by_id,
     get_messages_since,
     is_circle_member,
+    list_member_ids_for_circle,
+    set_message_status,
 )
 from app.models import User
 from app.push import maybe_push_for_message
+
+if TYPE_CHECKING:
+    # Type-hint only — see app/push.py's identical TYPE_CHECKING import for
+    # why: app/ws.py imports this module (message_to_out, fan_out_message)
+    # at module level, so a module-level `from app.ws import ConnectionManager`
+    # here would be circular.
+    from app.ws import ConnectionManager
 
 router = APIRouter()
 
@@ -64,8 +88,83 @@ def message_to_out(message: Message) -> MessageOut:
     )
 
 
+def _fan_out_recipients(session: Session, message: Message) -> list[str]:
+    """Same recipient set app/ws.py's `_handle_message_send` computes for
+    its own (now-immediate-only-for-the-echo) broadcast: circle members, or
+    the other DM party plus the sender's own other devices."""
+    if message.target_type == "circle":
+        return [
+            str(member_id)
+            for member_id in list_member_ids_for_circle(session, circle_id=message.target_circle_id)
+        ]
+    return [str(message.target_user_id), str(message.author_id)]
+
+
+async def fan_out_message(
+    message_id: uuid.UUID,
+    conn_manager: "ConnectionManager",
+    session_factory: Callable[[], Session],
+    *,
+    exclude: WebSocket | None = None,
+) -> None:
+    """The deferred half of message delivery — app/undo.py schedules this
+    to run `settings.UNDO_WINDOW_SECONDS` after a message is created,
+    unless `DELETE /messages/{id}` cancels it first. Opens its own session
+    via `session_factory` rather than reusing the request/connection's own:
+    this can run long after either has ended.
+
+    `exclude`: the WS route's own originating socket, so the sender's exact
+    sending device doesn't get a redundant `message.new` on top of the
+    `message.ack` it already got (app/ws.py's `_handle_message_send` closes
+    over its own `websocket` and passes it through here) — `None` for an
+    HTTP-originated send, which has no such socket to exclude, so the
+    sender's connected devices (all of them, HTTP has no "the one that
+    sent it" to distinguish) receive `message.new` like any other
+    recipient.
+
+    A no-op if the message is no longer `pending` by the time this runs —
+    covers both the message having already been cancelled (the expected
+    case when app/undo.py's cancellation didn't win the race in time, which
+    shouldn't happen since cancel_fan_out is synchronous with the DB update
+    below, but is checked anyway rather than assumed) and this task somehow
+    running twice.
+    """
+    session = session_factory()
+    try:
+        message = get_message_by_id(session, message_id)
+        if message is None or message.status != MessageStatus.PENDING.value:
+            return
+
+        updated = set_message_status(
+            session,
+            message_id,
+            new_status=MessageStatus.SENT.value,
+            expected=MessageStatus.PENDING.value,
+        )
+        session.commit()
+        if not updated:
+            # Lost a race with a concurrent DELETE /messages/{id} undo
+            # between the check above and this update.
+            return
+        message.status = MessageStatus.SENT.value
+
+        new_frame = {
+            "type": FrameType.MESSAGE_NEW.value,
+            "data": message_to_out(message).model_dump(mode="json"),
+        }
+        await conn_manager.broadcast(
+            _fan_out_recipients(session, message), new_frame, exclude=exclude
+        )
+
+        maybe_push_for_message(
+            session, message=message, sender_id=message.author_id, connection_manager=conn_manager
+        )
+    finally:
+        session.close()
+
+
 @router.post("/messages", response_model=AckOut)
-def post_message(
+async def post_message(
     body: MessageIn,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -88,12 +187,16 @@ def post_message(
             # never discussed anywhere as a supported "note to self"
             # feature. Rejected explicitly here rather than left to
             # surface as an unhandled IntegrityError — this route has no
-            # try/except around create_message below, so that would
-            # otherwise be a bare 500, not even a clean error response.
+            # try/except around create_message_with_created_flag below, so
+            # that would otherwise be a bare 500, not even a clean error
+            # response.
             raise HTTPException(status_code=422, detail="cannot send a DM to yourself")
         target_user_id = target_uuid
 
-    message = create_message(
+    settings = get_settings()
+    undo_expires_at = datetime.now(UTC) + timedelta(seconds=settings.UNDO_WINDOW_SECONDS)
+
+    message, created = create_message_with_created_flag(
         db,
         author_id=caller_id,
         target_type=body.target_type.value,
@@ -105,23 +208,72 @@ def post_message(
         media_duration_ms=body.media_ref.duration_ms if body.media_ref is not None else None,
         source_lang=body.source_lang,
         client_msg_id=body.client_msg_id,
+        undo_expires_at=undo_expires_at,
     )
-    # create_message only flushes (SAVEPOINT-scoped) — the repository layer
-    # deliberately leaves the transaction boundary to its caller. This is
-    # the end of the request's unit of work, so it commits here.
+    # create_message_with_created_flag only flushes (SAVEPOINT-scoped) —
+    # the repository layer deliberately leaves the transaction boundary to
+    # its caller. This is the end of the request's unit of work, so it
+    # commits here.
     db.commit()
 
-    # app/ws.py imports this module (message_to_out) at module level, so a
-    # module-level `from app.ws import manager` here would be circular;
-    # this local import only runs at request time, once both modules are
-    # already fully loaded. Same push trigger app/ws.py's WS `message.send`
-    # path uses, so an HTTP-sent message to an offline recipient pushes
-    # exactly the same way a WS-sent one does.
-    from app.ws import manager
+    if created:
+        # app/ws.py imports this module (message_to_out, fan_out_message) at
+        # module level, so a module-level `from app.ws import manager` here
+        # would be circular; this local import only runs at request time,
+        # once both modules are already fully loaded.
+        from app.ws import manager
 
-    maybe_push_for_message(db, message=message, sender_id=caller_id, connection_manager=manager)
+        undo.schedule_fan_out(
+            str(message.id),
+            settings.UNDO_WINDOW_SECONDS,
+            fan_out_message(message.id, manager, SessionLocal),
+        )
+    # A retry of an already-created send (created=False) recovers the same
+    # row and returns the same ack — its fan-out was already scheduled by
+    # the original call, so scheduling a second one here would either be a
+    # harmless no-op (app/undo.py's own idempotency guard) or, worse, leak
+    # an unawaited coroutine if constructed without ever being scheduled.
 
     return AckOut(client_msg_id=body.client_msg_id, id=str(message.id), status=message.status)
+
+
+@router.delete("/messages/{message_id}", status_code=204)
+def delete_message(
+    message_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Undo, within the window: pulls back a still-`pending` message before
+    its scheduled fan-out runs. 404/403 read the row's *current* fields
+    directly; the actual cancel-and-transition below still goes through
+    set_message_status's atomic WHERE clause, not a second trust of that
+    same read, since app/undo.py's scheduled fan-out runs on a different
+    thread than this (synchronous) route handler and could flip the status
+    between the read and the write."""
+    message_uuid = _parse_uuid(message_id, field="message_id")
+    message = get_message_by_id(db, message_uuid)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if message.author_id != uuid.UUID(user.id):
+        raise HTTPException(status_code=403, detail="Not the author of this message")
+    if message.status != MessageStatus.PENDING.value:
+        raise HTTPException(
+            status_code=409, detail="Undo window has closed or message already cancelled"
+        )
+
+    undo.cancel_fan_out(str(message.id))
+    updated = set_message_status(
+        db,
+        message_uuid,
+        new_status=MessageStatus.CANCELLED.value,
+        expected=MessageStatus.PENDING.value,
+    )
+    db.commit()
+    if not updated:
+        # Lost the race described in the docstring above: fan-out won.
+        raise HTTPException(
+            status_code=409, detail="Undo window has closed or message already cancelled"
+        )
 
 
 @router.get("/messages", response_model=SyncBatch)

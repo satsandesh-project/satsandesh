@@ -6,8 +6,9 @@ owns the transaction boundary and this module stays testable without HTTP.
 """
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -100,6 +101,7 @@ def _create_message_impl(
     media_duration_ms: int | None = None,
     source_lang: str | None = None,
     client_msg_id: uuid.UUID,
+    undo_expires_at: datetime | None = None,
 ) -> tuple[Message, bool]:
     """The real create-or-recover logic, returning whether *this call*
     performed the fresh INSERT (`True`) or recovered an existing row via
@@ -130,8 +132,12 @@ def _create_message_impl(
         media_duration_ms=media_duration_ms,
         source_lang=source_lang,
         client_msg_id=client_msg_id,
-        # undo_expires_at left NULL: Week 4 Phase 8's concern (design
-        # question #7), not this phase's — not an oversight.
+        # Week 4 Phase 8: set by both send paths to now + settings.
+        # UNDO_WINDOW_SECONDS; left NULL by any caller that doesn't pass it
+        # (there are none left, but the default keeps this optional rather
+        # than forcing every existing call site to compute a timestamp it
+        # doesn't otherwise need).
+        undo_expires_at=undo_expires_at,
     )
     created = True
     try:
@@ -178,6 +184,7 @@ def create_message(
     media_duration_ms: int | None = None,
     source_lang: str | None = None,
     client_msg_id: uuid.UUID,
+    undo_expires_at: datetime | None = None,
 ) -> Message:
     message, _created = _create_message_impl(
         session,
@@ -191,6 +198,7 @@ def create_message(
         media_duration_ms=media_duration_ms,
         source_lang=source_lang,
         client_msg_id=client_msg_id,
+        undo_expires_at=undo_expires_at,
     )
     return message
 
@@ -208,6 +216,7 @@ def create_message_with_created_flag(
     media_duration_ms: int | None = None,
     source_lang: str | None = None,
     client_msg_id: uuid.UUID,
+    undo_expires_at: datetime | None = None,
 ) -> tuple[Message, bool]:
     """Same as create_message, but also reports whether this call actually
     performed the insert — see _create_message_impl's docstring. Used by
@@ -227,6 +236,7 @@ def create_message_with_created_flag(
         media_duration_ms=media_duration_ms,
         source_lang=source_lang,
         client_msg_id=client_msg_id,
+        undo_expires_at=undo_expires_at,
     )
 
 
@@ -249,6 +259,29 @@ def get_messages_since(
         query = query.where(Message.id > since_id)
     query = query.order_by(Message.id).limit(limit)
     return list(session.execute(query).scalars().all())
+
+
+def get_message_by_id(session: Session, message_id: uuid.UUID) -> Message | None:
+    return session.get(Message, message_id)
+
+
+def set_message_status(
+    session: Session, message_id: uuid.UUID, *, new_status: str, expected: str
+) -> bool:
+    """Atomically set `messages.status` to `new_status`, but only if it's
+    currently `expected` — a WHERE clause, not fetch-then-update, so a
+    concurrent transition (e.g. app/undo.py's scheduled fan-out and a
+    DELETE /messages/{id} undo racing each other) can't have both sides
+    read the old status and both believe they won. Returns True if this
+    call performed the transition, False if the row was already in some
+    other state."""
+    result = session.execute(
+        update(Message)
+        .where(Message.id == message_id, Message.status == expected)
+        .values(status=new_status)
+    )
+    session.flush()
+    return result.rowcount > 0
 
 
 def create_circle(session: Session, *, name: str, created_by: uuid.UUID) -> Circle:
