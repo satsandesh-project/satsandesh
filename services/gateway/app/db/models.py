@@ -45,9 +45,7 @@ class User(Base):
     name: Mapped[str] = mapped_column(sa.Text, nullable=False)
     photo: Mapped[str | None] = mapped_column(sa.Text)
     preferred_language: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    tts_on: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, server_default=sa.text("true")
-    )
+    tts_on: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("true"))
     role: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'elder'"))
     # IANA zone name (e.g. "Asia/Kolkata"), never a UTC offset — design
     # question #4. No DB-level format constraint (Postgres has no built-in
@@ -85,9 +83,7 @@ class Membership(Base):
 
     __tablename__ = "memberships"
     __table_args__ = (
-        sa.CheckConstraint(
-            "role IN ('member', 'moderator', 'admin')", name="ck_memberships_role"
-        ),
+        sa.CheckConstraint("role IN ('member', 'moderator', 'admin')", name="ck_memberships_role"),
     )
 
     circle_id: Mapped[uuid.UUID] = mapped_column(
@@ -100,9 +96,7 @@ class Membership(Base):
         sa.ForeignKey("users.id", ondelete="RESTRICT"),
         primary_key=True,
     )
-    role: Mapped[str] = mapped_column(
-        sa.Text, nullable=False, server_default=sa.text("'member'")
-    )
+    role: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'member'"))
     joined_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -140,9 +134,7 @@ class Message(Base):
     __table_args__ = (
         # `messages` Indexes #2 / Constraints — the idempotency guarantee
         # contracts/chat/README.md design decision #2 promises.
-        sa.UniqueConstraint(
-            "author_id", "client_msg_id", name="uq_messages_author_client_msg_id"
-        ),
+        sa.UniqueConstraint("author_id", "client_msg_id", name="uq_messages_author_client_msg_id"),
         sa.CheckConstraint("target_type IN ('user', 'circle')", name="ck_messages_target_type"),
         sa.CheckConstraint("kind IN ('text', 'voice')", name="ck_messages_kind"),
         sa.CheckConstraint(

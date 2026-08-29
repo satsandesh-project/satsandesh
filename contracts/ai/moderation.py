@@ -32,9 +32,7 @@ class ModerationDecision(VersionedModel):
         description="Independent of label/confidence: a low-confidence call can "
         "always be routed to HOLD regardless of which label the classifier guessed."
     )
-    rationale: str = Field(
-        description="English, for moderators/ops — not shown to the sender."
-    )
+    rationale: str = Field(description="English, for moderators/ops — not shown to the sender.")
     nudge_text: str | None = Field(
         default=None,
         description="Sender-facing message, set when action is NUDGE (or HOLD, if "
