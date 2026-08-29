@@ -1,15 +1,60 @@
 :80 {
-	# AI services first — a more specific path match must come before the
-	# catch-all below, or everything would be routed to the gateway.
+	# Most specific matches first -- a catch-all further down would
+	# otherwise swallow everything ahead of it.
+
+	# AI services.
 	handle_path /ai/* {
 		reverse_proxy ai-services:8001
 	}
 
-	handle {
+	# Gateway's own routes. `handle` (not `handle_path`) preserves the
+	# path -- gateway's handlers expect the full path (e.g. `/health`),
+	# not a stripped one.
+	handle /health {
 		reverse_proxy gateway:8000
+	}
+	handle /db-check {
+		reverse_proxy gateway:8000
+	}
+	handle /session {
+		reverse_proxy gateway:8000
+	}
+	handle /ws {
+		reverse_proxy gateway:8000
+	}
+	handle /circles* {
+		reverse_proxy gateway:8000
+	}
+
+	# Reflex's OWN internal backend (state sync, not the SatSandesh
+	# gateway) -- the elder-app's compiled frontend calls these at
+	# whatever origin REFLEX_API_URL says, which is this same origin (see
+	# docker-compose.yml). Paths per Reflex's own env.json contract.
+	handle /ping {
+		reverse_proxy elder-app:8000
+	}
+	handle /_event* {
+		reverse_proxy elder-app:8000
+	}
+	handle /_upload* {
+		reverse_proxy elder-app:8000
+	}
+	handle /_health {
+		reverse_proxy elder-app:8000
+	}
+	handle /_all_routes {
+		reverse_proxy elder-app:8000
+	}
+
+	# Everything else -- the elder-app frontend itself (its compiled
+	# pages, JS bundles, /client.js-style assets if any are added later).
+	handle {
+		reverse_proxy elder-app:3000
 	}
 }
 
-# Local dev only — plain HTTP on port 80, proxying by Docker Compose's
-# internal service-name DNS. Real HTTPS via Let's Encrypt gets configured
-# later once the pilot has an actual domain name to issue a certificate for.
+# Local dev / early staging only -- plain HTTP on port 80, proxying by
+# Docker Compose's internal service-name DNS. HTTPS via Let's Encrypt
+# needs a real domain (see docs/deployment.md) and is deliberately
+# deferred until before Week 6-7, when microphone access starts requiring
+# it (browsers block getUserMedia on non-HTTPS origins except localhost).
