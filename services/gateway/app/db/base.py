@@ -45,5 +45,5 @@ def check_database_connection() -> bool:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 -- must report unhealthy, not crash
         return False

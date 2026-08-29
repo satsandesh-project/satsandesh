@@ -10,7 +10,7 @@ has to satisfy, not the other way around.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -124,9 +124,7 @@ def test_create_message_reraises_unrelated_integrity_error(db_session):
     # stays usable without an explicit rollback here.
     rows = (
         db_session.execute(
-            select(Message).where(
-                Message.author_id == alice.id, Message.target_type == "user"
-            )
+            select(Message).where(Message.author_id == alice.id, Message.target_type == "user")
         )
         .scalars()
         .all()
@@ -216,9 +214,7 @@ def test_create_message_dm_reuses_existing_conversation_row(db_session):
     low, high = sorted([alice.id, bob.id])
     rows = (
         db_session.execute(
-            select(Conversation).where(
-                Conversation.user_a == low, Conversation.user_b == high
-            )
+            select(Conversation).where(Conversation.user_a == low, Conversation.user_b == high)
         )
         .scalars()
         .all()
@@ -357,7 +353,7 @@ def test_get_messages_since_excludes_soft_deleted(db_session):
     ordered = sorted(messages, key=lambda m: m.id)
 
     middle = ordered[1]
-    middle.deleted_at = datetime.now(timezone.utc)
+    middle.deleted_at = datetime.now(UTC)
     db_session.commit()
 
     result = get_messages_since(db_session, conversation_id=conversation_id)
