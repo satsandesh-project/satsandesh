@@ -1,0 +1,9 @@
+# This build context is clients/elder-app/ itself, not the repo root --
+# the root .dockerignore doesn't apply here at all, hence this separate
+# file. Excludes .web/, the compiled frontend from local `reflex run`
+# testing during this session -- large, and the image rebuilds it fresh
+# anyway via `reflex init` at build time.
+.web/
+__pycache__/
+*.pyc
+.git/
