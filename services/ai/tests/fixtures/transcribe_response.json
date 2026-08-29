@@ -1,0 +1,26 @@
+{
+  "contract_version": "0.1.0",
+  "degraded": {
+    "active": false,
+    "detail": null,
+    "reason": "none"
+  },
+  "detected_language": "te",
+  "duration_ms": 812.4,
+  "model_version": "faster-whisper-small-int8@1",
+  "stage_timings": [
+    {
+      "duration_ms": 40.1,
+      "stage": "preprocess"
+    },
+    {
+      "duration_ms": 700.3,
+      "stage": "inference"
+    },
+    {
+      "duration_ms": 72.0,
+      "stage": "postprocess"
+    }
+  ],
+  "text": "నమస్తే, ఈ రోజు సత్సంగం ఎప్పుడు జరుగుతుంది?"
+}
