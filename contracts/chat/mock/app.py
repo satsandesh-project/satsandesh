@@ -46,11 +46,7 @@ async def _sleep_for_latency(x_mock_latency_ms: str | None) -> None:
     env var default — lets one client simulate a slow moderation/translation
     round trip without slowing every other call. Mirrors
     services/ai/mock/app.py's _sleep_for_latency."""
-    latency_ms = (
-        float(x_mock_latency_ms)
-        if x_mock_latency_ms is not None
-        else DEFAULT_LATENCY_MS
-    )
+    latency_ms = float(x_mock_latency_ms) if x_mock_latency_ms is not None else DEFAULT_LATENCY_MS
     if latency_ms > 0:
         await asyncio.sleep(latency_ms / 1000)
 
@@ -118,9 +114,7 @@ async def list_messages(
     x_mock_latency_ms: str | None = Header(default=None),
 ) -> SyncBatch:
     await _sleep_for_latency(x_mock_latency_ms)
-    req = SyncRequest(
-        target_type=target_type, target_id=target_id, since_id=since, limit=limit
-    )
+    req = SyncRequest(target_type=target_type, target_id=target_id, since_id=since, limit=limit)
     return _sync_batch(req)
 
 
@@ -179,9 +173,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
             if raw.type is FrameType.MESSAGE_SEND:
                 msg = MessageIn.model_validate(raw.data)
                 record = _store_message(msg, user_id)
-                ack = AckOut(
-                    client_msg_id=msg.client_msg_id, id=record.id, status=record.status
-                )
+                ack = AckOut(client_msg_id=msg.client_msg_id, id=record.id, status=record.status)
                 await websocket.send_json(
                     {
                         "type": FrameType.MESSAGE_ACK.value,

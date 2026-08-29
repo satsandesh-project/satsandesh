@@ -12,7 +12,7 @@ contract the implementation has to satisfy, not the other way around.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -230,7 +230,7 @@ def test_soft_deleted_message_still_readable_by_id_but_excluded_by_partial_index
     db_session.add(message)
     db_session.commit()
 
-    message.deleted_at = datetime.now(timezone.utc)
+    message.deleted_at = datetime.now(UTC)
     db_session.commit()
 
     # The row isn't gone — a direct lookup by id still finds it.
