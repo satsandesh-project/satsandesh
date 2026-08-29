@@ -28,3 +28,62 @@ jobs:
 
       - name: Run tests
         run: pytest
+
+  gateway-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: satsandesh
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql://postgres:devpass@localhost:5432/satsandesh
+      TEST_DATABASE_URL: postgresql+psycopg2://postgres:devpass@localhost:5432/satsandesh_test
+      JWT_SECRET: ci-test-secret-not-for-prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install gateway dependencies
+        working-directory: services/gateway
+        run: pip install -r requirements.txt
+
+      - name: Create satsandesh_test database
+        working-directory: services/gateway
+        run: |
+          python - <<'PYEOF'
+          import psycopg2
+
+          conn = psycopg2.connect("postgresql://postgres:devpass@localhost:5432/satsandesh")
+          conn.autocommit = True
+          cur = conn.cursor()
+          cur.execute("SELECT 1 FROM pg_database WHERE datname = 'satsandesh_test'")
+          if not cur.fetchone():
+              cur.execute("CREATE DATABASE satsandesh_test")
+          PYEOF
+
+      - name: Run migrations (satsandesh)
+        working-directory: services/gateway
+        run: python -m alembic upgrade head
+
+      - name: Run migrations (satsandesh_test)
+        working-directory: services/gateway
+        env:
+          DATABASE_URL: postgresql://postgres:devpass@localhost:5432/satsandesh_test
+        run: python -m alembic upgrade head
+
+      - name: Run gateway tests
+        working-directory: services/gateway
+        run: pytest -v
