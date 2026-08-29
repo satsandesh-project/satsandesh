@@ -31,6 +31,10 @@ secrets/
 *.pem
 *.key
 
+# Real server details (IP, hostnames) -- never committed, see
+# docs/deployment.md.
+docs/server-notes.md
+
 # Backups / media (never commit real data)
 infra/backups/*.dump
 infra/backups/*.sql
