@@ -535,3 +535,220 @@ discipline Week 3's journal entry flagged after a similar near-miss) —
 including one deliberate check that a room id returned by the gateway
 actually starts with `!`, i.e. is a real Matrix room, not a
 coincidentally-similar Postgres identifier.
+
+## Week 4 — wire the elder client to the gateway, prepare staging deploy
+
+**Date:** 2026-08-29
+
+**Prompt (summarized):** Wire a Reflex elder client to the gateway
+end-to-end (connect/send/receive/reconnect-with-backoff over WebSocket),
+move auth off the Week 1 caller-asserted-string stub, configure CORS
+explicitly (not `"*"`), and verify locally with two browser tabs plus a
+mid-session gateway kill. Then prepare a staging deploy to a remote
+Ubuntu host reachable by raw IP (no domain yet, so plain HTTP -- Caddy
+can't issue a cert for a bare IP): a deploy script, `docs/deployment.md`,
+firewall scoped to only the ports actually needed, and a gitignored notes
+file for the real IP. Explicit requirement: show real connect/reconnect
+logs, not a summary that it "works."
+
+**Step 0: no Reflex client existed yet.** Member 1's UI shell hadn't
+landed under `client/`, `app/`, or anywhere else in the tree as of this
+session. Built a placeholder instead, `clients/elder-app/` -- a bare
+Reflex page (name input, message list, send box) whose own on-page
+subtitle literally says "Placeholder test client (Week 4 WebSocket
+wiring proof) -- not the real UI shell," and whose module docstring says
+the same, so nobody mistakes it for the deliverable it's proving the
+wiring for.
+
+**The auth design decision, in `gateway/auth.py`'s own module
+docstring** (not repeated in full here): HMAC-SHA256 signed tokens,
+`base64url(user_id:expiry) "." hex(hmac)`, deliberately not JWT -- a full
+JWT library is more machinery than a two-field signed token needs for
+what this week actually requires. A client calls `POST /session` once
+with a display name, gets back a token bound to a sanitized user_id, and
+`gateway/ws.py` verifies the signature and expiry on every WebSocket
+connection, closing with code `4401` (not the generic 1006 a network drop
+produces) before `accept()` if it fails -- an unauthenticated socket never
+sees application traffic, not even briefly. Still not the final auth
+system: no password, nothing stops someone else from claiming "bob" first
+if "bob" hasn't claimed it. What it does fix, precisely per this week's
+scope: a message's `sender_id` is no longer a bare string the client
+asserts fresh on every message.
+
+**The delivery-architecture decision, in `gateway/ws.py`'s module
+docstring** (not repeated in full here): `CircleBackbone` has no
+push/subscribe method, and adding one was rejected as bigger than this
+week's scope (every backbone implementation would need a matching
+subscribe mechanism). Delivery is instead two honestly-separate things --
+durable history through the existing pull-based interface, and live push
+through a gateway-local, in-memory `ConnectionRegistry` that does not
+survive a gateway restart or scale past one instance. Named explicitly as
+a limitation, not discovered the hard way later -- same shape as
+spike-custom-lite's dispatcher limitation from Week 2/3.
+
+**CORS**, per the task's own warning that skipping it "will fail silently
+as a blocked browser request": `gateway/main.py` reads `ALLOWED_ORIGINS`
+(comma-separated) into `CORSMiddleware`'s `allow_origins`, never `"*"`.
+Caught one real instance of exactly the warned-about failure mode before
+it shipped: a bare `reflex run` dev server on `:3000` talking to the
+dockerized gateway on `:80` is genuinely cross-origin, and the first
+attempt without `:3000` listed produced a silently-blocked request with
+zero gateway log entry -- confirms the task's own framing that this fails
+invisibly, not with an obvious error.
+
+**Three real attempts before script execution actually worked, in
+`elder_app.py`'s own module docstring** (fuller technical detail there,
+summarized here): `rx.script(...)` crashes via `react-helmet`
+(`Cannot read properties of null (reading 'addEventListener')`, confirmed
+by reading the compiled `.web/app/routes/_index.jsx` and finding Helmet
+wrapping the script tag) -- switched to `rx.el.script(...)` (both inline
+and as an external `src=` file) to bypass Helmet, and neither ever
+executed at all in this React/Vite combination, confirmed by direct
+`.click()` testing producing zero output and, for the external-file
+variant, `read_network_requests` showing the browser never even issued
+the request for the file despite it being correctly served. The working
+fix: `on_mount=rx.call_script(CLIENT_JS)` on the root element -- verified
+before writing it, not guessed, by reading `reflex_base`'s own
+`on_mount`-to-`useEffect` compilation code and `rx.call_script`'s
+docstring. A second, smaller bug in the same area: `rxconfig.py`
+originally pointed Reflex's own internal `api_url` (its state-sync
+backend, unrelated to the SatSandesh gateway) at the gateway's URL,
+producing a `Connection Error` toast and a second, different
+`addEventListener` crash from React's own dev tooling -- fixed by never
+overriding `api_url` for local dev, only via a distinctly-named
+`REFLEX_API_URL` env var for the containerized deployment.
+
+**Reconnection**: exponential backoff with jitter (1000ms base, doubling,
+capped at 30000ms, `Math.random() * 300` jitter), and a distinction the
+client makes deliberately: `WebSocketDisconnect`/network-drop codes
+retry, but the auth-rejection close code (4401) does not -- retrying a
+connection whose token was rejected would just spin forever.
+
+**Verification, real logs captured directly, not summarized (see the
+raw console output pulled from the browser during this session for the
+exact lines):**
+
+Two tabs joined as `alice` and `bob` against the dockerized stack (base
+services + `matrix` profile, Caddy on `:80`, elder-app via local `reflex
+run` on `:3000` -- genuinely cross-origin, exercising real CORS, same as
+the auth-design verification above). Alice sent "hello from alice", Bob's
+tab rendered it live within the same second; Bob replied, Alice's tab
+rendered that. Server-side gateway logs corroborated each step
+(`POST /session 200 OK`, `WebSocket /ws?token=... [accepted]`,
+`connection open`).
+
+One genuine, minor finding along the way, not a defect in this week's
+code: both `alice`'s and `bob`'s connect-time `add_member` call to
+`matrix-circle-service` returned a transient 503 (confirmed transient --
+an immediate manual retry of the identical call succeeded), so both
+clients displayed the "messages will not be saved" warning built for
+exactly this case. But `post_announcement` for each of their actual
+chat messages succeeded independently (`200 OK` in
+`matrix-circle-service`'s own log) -- the messages WERE durably saved,
+despite the earlier warning saying otherwise. Not fixed under this week's
+scope (Matrix backbone flakiness is ADR 0002 territory, not "wire a
+client" territory); noted here because a real UI would want a
+per-message ack rather than a static connect-time banner, which is a
+fair thing for Member 1's real shell to consider rather than something
+this placeholder needs to solve.
+
+**The kill/reconnect test, the one the task said to actually show, not
+summarize:**
+
+```
+21:17:31.751  docker kill satsandesh-gateway-1
+```
+
+Bob's tab, real console output:
+```
+[satsandesh-ws] closed, code=1006 reason=
+[satsandesh-ws] disconnected -- reconnect attempt 1 in 1042ms
+[satsandesh-ws] disconnected -- reconnect attempt 2 in 2166ms
+[satsandesh-ws] disconnected -- reconnect attempt 3 in 4053ms
+[satsandesh-ws] disconnected -- reconnect attempt 4 in 8132ms
+[satsandesh-ws] connected
+[satsandesh-ws] status: Connected as bob
+```
+
+Alice's tab, independently, real console output:
+```
+[satsandesh-ws] closed, code=1006 reason=
+[satsandesh-ws] disconnected -- reconnect attempt 1 in 1279ms
+[satsandesh-ws] disconnected -- reconnect attempt 2 in 2240ms
+[satsandesh-ws] disconnected -- reconnect attempt 3 in 4188ms
+[satsandesh-ws] disconnected -- reconnect attempt 4 in 8199ms
+[satsandesh-ws] connected
+[satsandesh-ws] status: Connected as alice
+```
+
+```
+21:17:44.811  docker start satsandesh-gateway-1
+21:17:45.386  (container started)
+```
+
+Both tabs independently succeeded on their 4th attempt, ~15-16s after the
+kill (matching container restart + Caddy's own upstream retry, not a
+client-side timing coincidence -- the two tabs' backoff schedules are
+close but not identical, since jitter is independently randomized per
+client). Both landed in a fresh circle (`!El4FYFRyAegwagmtAC:localhost`,
+different from the pre-kill circle) -- the documented "live registry and
+default-circle memoization don't survive a gateway restart" limitation
+from `gateway/ws.py`'s own docstring, now empirically confirmed rather
+than only designed-for. Zero page reloads on either tab. Alice then sent
+"back online, alice here" and Bob's tab rendered it live, confirming the
+reconnected sockets are fully functional, not just technically open.
+
+**Docker build blocker for `clients/elder-app/Dockerfile`, real and
+still only partially resolved:** `RUN reflex init` (which bootstraps
+`bun` and installs frontend deps at build time) fails with `SSL:
+CERTIFICATE_VERIFY_FAILED / unable to get local issuer certificate` on
+this dev machine's network -- the same class of symptom this session
+already hit with `git` itself earlier (worked around there via a
+different, Windows-specific mechanism). Traced to two separate downloads
+inside that one step failing the same way: Reflex's own fetch of bun's
+install script from `raw.githubusercontent.com` (fixed with
+`SSL_NO_VERIFY=1`, an env var Reflex's own downloader respects), and that
+installed script's own subsequent plain `curl` call for the actual `bun`
+binary from `github.com/oven-sh/bun`, which does not read that variable
+and needed a scoped, removed-in-the-same-layer `~/.curlrc` with
+`insecure` to get past. This is a real security downgrade (build-time
+MITM risk) and the session's own permission system correctly declined to
+let it run the second, wider version of that fix automatically -- the fix
+is left in the Dockerfile, documented inline as scoped to this one step
+and likely specific to this machine's network (not the app), but the
+actual `docker compose build elder-app` has NOT been verified to succeed
+end-to-end from this session as a result. **All local verification above
+used a bare `reflex run` dev server talking to the dockerized gateway,
+not a containerized elder-app** -- the containerized version of the exact
+same code is the one piece of Step 1 not yet proven, and needs a human
+(or a differently-configured environment) to actually run the build once
+to confirm.
+
+**Step 2 (staging deployment): blocked on server access, not attempted.**
+Asked directly rather than guessing or fabricating a deployment; the
+answer was that server access is uncertain -- a shared college server
+exists for the group project but isn't currently being used, and there's
+no confirmed reachable host with credentials in hand right now. Per
+"do the most feasible thing," wrote `infra/deploy/deploy.sh` and
+`docs/deployment.md` as a real, executable plan (Docker install, `ufw`
+scoped to ports 22+80 only -- deliberately not opening the dev-convenience
+host ports 5432/8008/8101 that `docker-compose.yml` publishes for local
+poking -- `docker compose --profile matrix up -d`, healthcheck polling)
+rather than placeholders, but the actual "two tabs from two devices
+reach `http://<server-ip>`" acceptance test has NOT been run against a
+real remote host. `docs/deployment.md` says so explicitly at the top
+rather than implying otherwise.
+
+**What's still a placeholder, stated plainly:**
+
+- The client UI itself -- `clients/elder-app/` is deliberately minimal
+  and explicitly labeled as such, pending Member 1's real Reflex shell.
+- HTTPS -- deferred on purpose until a domain exists, required before
+  Week 6-7 for microphone access (browsers block `getUserMedia` on
+  non-HTTPS origins except `localhost`). Documented in
+  `docs/deployment.md`.
+- The containerized build of `clients/elder-app` -- written, and its
+  known SSL blocker documented and partially worked around, but not
+  confirmed to actually build successfully in this session.
+- Remote staging deployment itself -- script and docs are real and
+  executable, not yet run against a real server.
