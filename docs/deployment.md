@@ -5,15 +5,48 @@ per ADR 0002) on a remote Ubuntu host, and what's deliberately deferred.
 
 ## Status
 
-**Not yet executed against a real remote host.** This document, and
-`infra/deploy/deploy.sh`, were written and the steps individually verified
-locally (Docker install command, ufw commands, `docker compose` commands
-all run correctly against this project's own compose file), but there is
-currently no confirmed remote server to run them against -- see
-`docs/prompt-journal.md`'s Week 4 entry for why. Treat the steps below as
-a real, executable plan, not a placeholder -- but the "two tabs from two
-devices exchange a message through a public IP" acceptance test has not
-been run for real yet. Update this section (and the journal) once it has.
+**Executed against a real host: the shared college server.** Full stack
+(base services + `matrix` profile) is deployed and verified working --
+join, live messaging between multiple users, and a manual kill/restart of
+the gateway container with the client recovering on its own, no reload.
+Real, specific things that came up doing this for real, not in the
+original plan below (see the Week 4 journal entry for full detail):
+
+- **The account had no `sudo`.** `infra/deploy/deploy.sh`'s firewall
+  (`ufw`) step needs root and was skipped entirely -- ran the `docker
+  compose` commands directly instead, which don't need it.
+- **The server's address is a private network address**
+  (`10.110.11.31`), not a public one -- it sits behind the college's NAT,
+  and the "public IP" `curl ifconfig.me` reports from inside it
+  (`14.139.86.54`) is the campus network's shared outbound gateway, not
+  an address that routes back to this specific machine. The app is only
+  reachable from devices on the same campus network/VPN, not the open
+  internet, and nothing on this box can change that -- it needs the
+  network administrator to set up inbound NAT/port-forwarding if genuine
+  public-internet reachability is required. The acceptance test below
+  was run over the campus network, not the public internet, as a result.
+- **Two host ports were already taken by other things** on this shared
+  server: `5432` (a teammate's own Postgres container) and `80` (a
+  system-level Apache). Fixed by making both ports overridable
+  (`POSTGRES_HOST_PORT`, `CADDY_HOST_PORT` in `.env` -- see
+  `docker-compose.yml`), remapped to `55432` and `8080` here.
+- **`clients/elder-app/Dockerfile`'s `--env prod` never actually started
+  its backend** -- the frontend came up, but port 8000 stayed
+  connection-refused indefinitely and only one process ever existed in
+  the container. Switched to `--env dev`, the mode actually verified
+  working end-to-end during local development. A real, unexplained
+  Reflex behavior in this version, not a config mistake -- worth
+  root-causing before a real (non-college-project) production deploy.
+- **`docker kill` does not trigger `restart: unless-stopped`.** Docker
+  treats a manual `kill` the same as a manual `stop` for restart-policy
+  purposes -- the container just stays exited until someone runs `docker
+  start` themselves. This matches the assignment's own wording ("kill
+  **and restart**") -- both steps are meant to be manual, not automatic.
+
+The "public IP" framing in the rest of this document below assumes a
+real public-facing host (a droplet, a cloud VM) -- adjust `ALLOWED_ORIGINS`
+/`PUBLIC_ORIGIN` to whatever address your devices actually use to reach
+the server, public or private, and everything else applies unchanged.
 
 ## What you need before starting
 

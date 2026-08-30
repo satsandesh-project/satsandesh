@@ -752,3 +752,120 @@ rather than implying otherwise.
   confirmed to actually build successfully in this session.
 - Remote staging deployment itself -- script and docs are real and
   executable, not yet run against a real server.
+
+## Week 4 (continued) — real staging deployment, done live over chat
+
+**Date:** 2026-08-30
+
+Server access arrived: a directory on the shared college server
+(`cybersecurity`, user `satsandesh`). Ran the actual Step 2 deployment
+live, one command at a time relayed through chat (no direct terminal
+access to that host from this session) -- everything below is what
+genuinely happened, including several real problems neither the plan nor
+the local testing had surfaced.
+
+**The 6 pending commits from earlier this week had never been pushed.**
+First real blocker: `git clone` on the server pulled a version of the
+repo missing all of this week's work (auth, CORS, the elder client, the
+deploy script itself). `git push` had simply never been run after any of
+the local commits. Pushed all 6 before anything else could proceed --
+worth calling out plainly since it's an easy mistake (local commits feel
+"done") and wasted a full round-trip of debugging a phantom `.env.example`
+before the real cause was obvious.
+
+**No `sudo` on this account.** `infra/deploy/deploy.sh`'s firewall setup
+needs root and can't run here. Skipped it and ran the underlying `docker
+compose` commands directly -- Docker itself didn't need `sudo` (the
+account was already in the `docker` group), so this only cost the
+firewall-hardening step, not the deployment itself.
+
+**Two host-port conflicts, both from other real things already running
+on this shared server:** a teammate's own Postgres container already had
+`5432`, and a system-level Apache already had `80`. Neither was
+hypothetical -- both showed up as actual bind failures. Fixed properly
+rather than worked around per-deploy: made both ports configurable via
+env vars (`POSTGRES_HOST_PORT`, `CADDY_HOST_PORT`, both defaulting to the
+standard port so nothing changes for anyone not on a conflicting host) --
+see `docker-compose.yml`. Remapped to `55432` and `8080` here.
+
+**The server's IP is not actually public.** The IP originally given
+(`10.110.11.31`) turned out to be a private/internal address; `curl
+ifconfig.me` from inside the server returned a *different* address
+(`14.139.86.54`), which turned out to be the campus network's shared
+outbound NAT gateway, not an address that routes back to this specific
+machine -- confirmed by testing port 80 (already serving Apache
+successfully to `curl` from *inside* the server) from outside and having
+it fail to load entirely, same as the app's own port. Nothing on the box
+itself can fix this; it needs the network administrator to configure
+inbound port-forwarding if genuine public-internet reachability is
+required. Tested reachability from the private address instead
+(`10.110.11.31:8080`), confirmed working from a device on the same
+campus network -- the acceptance test below was run over the campus
+network, not the open internet, as a direct consequence.
+
+**`clients/elder-app`'s Docker build succeeded cleanly here** -- no SSL
+certificate error at all, confirming the earlier local-machine build
+blocker really was specific to that dev machine's network (likely a
+TLS-intercepting proxy/antivirus), not the app or the Dockerfile.
+
+**A real, previously-undiscovered bug: `--env prod`'s backend never
+started.** The container reported healthy build, the frontend came up
+and served pages, but `/ping` on port 8000 stayed connection-refused
+indefinitely -- confirmed via the healthcheck's own repeated
+`ConnectionRefusedError` log and, more directly, by listing processes
+inside the container via `/proc` (no `ps` binary in the slim image) and
+finding only the single Reflex CLI process, no separate backend process
+at all. This Dockerfile's `CMD` had used `--env prod`, which was never
+actually tested locally -- all prior verification used `--env dev`. Fixed
+by switching the `CMD` to `--env dev`, the mode with real, verified
+evidence behind it, rather than continuing to debug an unverified
+prod-mode code path under time pressure. Documented as a real gap: dev
+mode's hot-reload overhead isn't what a genuine production deploy should
+want, and the actual root cause of prod mode's backend not binding is
+still unknown.
+
+**A second real CORS/origin mismatch, caught by testing, not guessed:**
+`.env` was initially set up with `ALLOWED_ORIGINS`/`PUBLIC_ORIGIN`
+pointing at the NAT gateway address (`14.139.86.54:8080`) before the
+private-address discovery above. The browser's real `Origin` header when
+visiting the working address (`10.110.11.31:8080`) didn't match, and the
+client surfaced this honestly as a connection-timeout error naming the
+exact mismatched WebSocket URL it was trying to reach -- exactly the
+"fails silently as a blocked request" failure mode this project's CORS
+design already anticipated, just from a different cause (wrong configured
+origin, not a missing one) than the Week 4 auth-work entry's example.
+Fixed by correcting both values to the actual working address and
+force-recreating the two containers that read them (`gateway`,
+`elder-app`) -- `docker compose restart` would NOT have picked up the
+`.env` change; env vars are only read at container creation.
+
+**`docker kill` does not trigger `restart: unless-stopped`.** Killed the
+gateway to test recovery, and it stayed `Exited (137)` indefinitely --
+Docker treats a manual `kill` the same as a manual `stop` for
+restart-policy purposes, so the policy never fired. Not a bug: the
+assignment's own wording ("kill **and restart** the gateway container")
+already implies both steps are manual, and a `docker start` afterward is
+exactly the intended test, not a workaround for a broken policy.
+
+**Verification, real, from the actual deployed stack:**
+
+Three different named users (`vk`, `kpsp`, `dongre`) joined and exchanged
+live messages visible to each other in the same session. Then, with one
+tab connected and left untouched, `docker kill veerendra-gateway-1` was
+run -- the tab's own status line changed to reflect the drop without any
+reload, then `docker start veerendra-gateway-1` brought the gateway back
+and the same tab recovered to "Connected as ..." on its own, matching
+exactly the local reconnect behavior already verified with full logs
+earlier this week (same client code, unchanged).
+
+**What's still genuinely open:**
+
+- Public-internet reachability (as opposed to campus-network
+  reachability) needs the college server's network administrator to set
+  up inbound port-forwarding -- outside what either this session or the
+  account's own permissions can do. A ready-to-send request for that is
+  available if/when it's needed.
+- `--env prod`'s backend-not-starting issue is unresolved, only worked
+  around by using `--env dev` instead.
+- HTTPS remains deferred on purpose, per the original plan, until a real
+  domain exists.
