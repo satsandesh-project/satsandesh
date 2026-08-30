@@ -43,4 +43,14 @@ RUN echo "insecure" > /root/.curlrc \
 
 EXPOSE 3000 8000
 
-CMD ["reflex", "run", "--env", "prod", "--backend-host", "0.0.0.0"]
+# --env dev, not prod: --env prod's backend never actually bound its port
+# in real testing (frontend came up, /ping stayed connection-refused,
+# only one process existed in the container -- no separate backend
+# process ever started), while --env dev was directly verified to work
+# end-to-end during local development, including a real reconnect test.
+# This is a real, unexplained Reflex prod-mode issue in this version, not
+# a config mistake -- using what's proven rather than what's merely
+# cleaner. Worth revisiting (dev mode carries hot-reload/watcher overhead
+# a real production deploy shouldn't want) once someone can dig into why
+# prod mode's backend doesn't start.
+CMD ["reflex", "run", "--env", "dev", "--backend-host", "0.0.0.0"]
