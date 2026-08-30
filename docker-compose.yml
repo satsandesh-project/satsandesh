@@ -11,7 +11,12 @@ services:
       # Scripts here run once, only against a fresh (empty) data dir.
       - ./db/init:/docker-entrypoint-initdb.d
     ports:
-      - "5432:5432"
+      # Overridable -- a shared host may already have something else bound
+      # to 5432 (e.g. another project's own Postgres). Nothing else in
+      # this stack reaches Postgres via the host port; every other
+      # service talks to it over the compose-internal network by service
+      # name, so remapping this is always safe.
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
