@@ -155,6 +155,32 @@ specific server) in `docs/server-notes.md`. That filename is in
 create it locally, it will not show up in `git status` as untracked-and-
 ignorable, it'll just be ignored outright.
 
+## Shared hosts: check ports before starting
+
+If this is a shared server (a college machine, a box other teammates
+also deploy to), **check ports 80 and 5432 aren't already taken before
+running the stack**:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:80   # non-000 means something's there
+ss -tlnp 2>/dev/null | grep -E ":80 |:5432 "
+```
+
+Both `docker-compose.yml`'s `postgres` and `caddy` services take their
+host-side port from an env var (`POSTGRES_HOST_PORT`, `CADDY_HOST_PORT`,
+both defaulting to the standard port) specifically so a shared host can
+remap around whatever's already running -- nothing in the stack reaches
+either service via the host port, every service talks to them by name
+over the compose-internal network. If you remap `CADDY_HOST_PORT`, update
+`ALLOWED_ORIGINS` and `PUBLIC_ORIGIN` in `.env` to include that same port
+explicitly (e.g. `http://<ip>:8080`) -- browsers only omit the port from
+the `Origin` header when it's the protocol's real default (80 for http),
+not whatever this happens to be set to.
+
+Hit exactly this on the actual shared college server used for this
+project: a system Apache already on 80, and a teammate's own Postgres
+container already on 5432. See the Week 4 journal entry.
+
 ## Known gaps / deferred on purpose
 
 - **HTTPS**: deferred until a domain exists, required before Week 6-7 for

@@ -202,7 +202,13 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "80:80"
+      # Overridable -- a shared host may already have something bound to
+      # 80 (e.g. a system-level Apache/Nginx a student has no permission
+      # to touch). If you change this, ALLOWED_ORIGINS and PUBLIC_ORIGIN
+      # must include the same non-default port -- browsers only omit the
+      # port from the Origin header for a protocol's actual default (80
+      # for http), not for whatever this happens to be set to.
+      - "${CADDY_HOST_PORT:-80}:80"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile
     # Wait for both upstreams to be *healthy*, not merely started — otherwise
