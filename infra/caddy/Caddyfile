@@ -26,28 +26,17 @@
 		reverse_proxy gateway:8000
 	}
 
-	# Reflex's OWN internal backend (state sync, not the SatSandesh
-	# gateway) -- the elder-app's compiled frontend calls these at
-	# whatever origin REFLEX_API_URL says, which is this same origin (see
-	# docker-compose.yml). Paths per Reflex's own env.json contract.
-	handle /ping {
-		reverse_proxy elder-app:8000
-	}
-	handle /_event* {
-		reverse_proxy elder-app:8000
-	}
-	handle /_upload* {
-		reverse_proxy elder-app:8000
-	}
-	handle /_health {
-		reverse_proxy elder-app:8000
-	}
-	handle /_all_routes {
-		reverse_proxy elder-app:8000
-	}
-
-	# Everything else -- the elder-app frontend itself (its compiled
-	# pages, JS bundles, /client.js-style assets if any are added later).
+	# Everything else -- both the elder-app frontend itself (compiled
+	# pages, JS bundles) AND Reflex's own internal backend paths (/ping,
+	# /_event*, /_upload*, /_health, /_all_routes -- its state sync, not
+	# the SatSandesh gateway). These used to be split across two ports
+	# (elder-app:3000 vs :8000) because Reflex's DEV mode runs frontend
+	# and backend as separate processes on separate ports. The
+	# Dockerfile runs --env prod, which unifies both onto ONE port
+	# (confirmed by reading Reflex's own source -- see the Dockerfile's
+	# comment) -- so every elder-app path, internal or not, now genuinely
+	# goes to the same place, and the split was actively wrong (pointing
+	# at a port nothing binds in prod mode) until fixed here.
 	handle {
 		reverse_proxy elder-app:3000
 	}

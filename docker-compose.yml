@@ -85,11 +85,13 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+    # Only 3000 -- the Dockerfile runs --env prod, which unifies frontend
+    # and backend onto ONE port (see the Dockerfile's own comment for the
+    # full reasoning). There is no separate 8000 to expose in this mode.
     expose:
       - "3000"
-      - "8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ping', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3000/ping', timeout=3)"]
       interval: 5s
       timeout: 5s
       retries: 10
