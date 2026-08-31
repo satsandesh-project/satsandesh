@@ -1,17 +1,60 @@
 # SatSandesh
 
-A moderated, multilingual, elder-first messaging platform for a spiritual community.
+**A moderated, multilingual, elder-first messaging platform for devotional communities.**
 
-"SatSandesh" (truthful message) is a working title.
+Open source, self-hosted, built as seva. No advertising, no engagement traps, no data sold.
+
+> **Status: early development.** Month 1 of a 3-month build. Nothing here is usable yet.
+
+---
 
 ## What this is
 
-An invitation-only messaging app for a spiritual organization — WhatsApp-like in
-familiarity, but different by design in four ways: values-aligned content
-stewardship, a language bridge (voice/text translation across Indian languages),
-first-class satsang and bhajan sessions, and an elder-first experience.
+India's devotional communities live on general-purpose WhatsApp groups, where satsang content is
+diluted by forwards, commerce, arguments and misinformation. Elders in particular find the noise
+stressful and the interface unforgiving.
 
-See the full project proposal for details on scope, architecture, and rationale.
+SatSandesh is a private, invitation-only communication app that differs by design in four ways:
+
+1. **Content stewardship** — every message passes a values-aligned screening step, so the space stays
+   devotional and free of disputes, commercial chatter and explicit material.
+2. **A language bridge** — voice notes spoken in one Indian language are delivered to each receiver as
+   text *and* natural speech in that receiver's own chosen language.
+3. **Satsang and bhajan sessions** — one-to-many broadcast, plus bhajan rooms with a single-lead
+   "floor" so participants never talk over one another.
+4. **Elder-first experience** — voice-driven, large targets, forgiving, honest about ₹7,000 Android
+   phones and rural bandwidth.
+
+The guiding engineering principle is **assemble, don't rebuild**: mature open source supplies message
+delivery, live audio, speech recognition, translation and synthesis. Team effort goes into the
+differentiating parts — the elder experience, the language bridge, stewardship and the satsang
+experience.
+
+---
+
+## How stewardship works
+
+The model is a **parcel stamp, not an archive**. A message is read in transit, judged, and passed on.
+Content that passes is never registered anywhere beyond normal message storage.
+
+- **Explicit / vulgar / abusive** → blocked, with a clear notice to the sender stating why and how to
+  request a review. Never a silent deletion.
+- **Argumentative or disputable** → the *sender* is warned before it sends ("this reads like a
+  complaint about someone — send anyway, or rephrase?"). The sender decides. No deletion.
+- **Personal / off-topic** → a private, kindly-worded nudge, in the sender's own language.
+- **Everything else** → passes.
+
+Two properties this design must preserve:
+
+1. **Appeals need something to appeal to.** Zero retention makes review impossible and the false-positive
+   rate unmeasurable. The intended resolution is a short **quarantine for blocked messages only**
+   (e.g. 72 hours, visible only to whoever handles appeals, auto-purged). Passing messages are never
+   quarantined.
+2. **Over-blocking is a first-class defect.** An elder's message about a sick spouse vanishing without
+   explanation is worse than a dispute getting through. False-hold rate is a tracked metric, not an
+   afterthought.
+
+---
 
 ## Team & ownership
 
@@ -28,6 +71,12 @@ who's blocked on whom, see `docs/work-breakdown.md`.
 
 ## Repo layout
 
+> **Note:** two parallel trees currently coexist here from independent branches of Week 1-4
+> work — `gateway/`/`backbone/`/`infra/` (Member 2's platform work, Docker-based) and
+> `services/`/`contracts/` (the team's canonical structure, with its own gateway, Alembic-backed
+> DB schema, and WS implementation). This is a known, real overlap, not an oversight — see
+> `docs/prompt-journal.md`'s Week 4 entries for how it happened and what's unreconciled.
+
 ```
 satsandesh/
 ├── gateway/              # FastAPI gateway — auth, routing, WebSocket fan-out
@@ -38,7 +87,10 @@ satsandesh/
 │   └── admin-console/    # Reflex admin/moderator console
 ├── infra/
 │   ├── caddy/            # Reverse proxy / HTTPS config
+│   ├── deploy/           # Deploy scripts (college server + personal/team repo sync)
 │   └── backups/          # Backup scripts (pg_dump + restic)
+├── services/              # Team's canonical service layout (gateway, ai) -- see note above
+├── contracts/             # Shared request/response contracts between services
 ├── docs/
 │   ├── adr/               # Architecture Decision Records
 │   ├── SRS.md             # Software Requirements Spec
@@ -57,9 +109,11 @@ satsandesh/
 ## Status
 
 Month 1 — foundations. Backbone architecture spike (Matrix/Conduit vs custom-lite)
-in progress; see `docs/adr/`.
+resolved (Option A, Matrix/Tuwunel — see `docs/adr/0002-chat-backbone.md`). Member 2's
+platform work (gateway, deployment, Week 1-4) is complete and deployed to a real staging
+host; see `docs/prompt-journal.md` for the full history.
 
-## How to run locally
+## How to run locally (Member 2's `gateway`/`docker-compose.yml` tree)
 
 ### Prerequisites
 
@@ -99,6 +153,12 @@ To wipe the database and re-run init from scratch:
 
 ```bash
 docker compose down -v  # removes the named volume too
+```
+
+The Matrix backbone profile (ADR 0002's chosen option) starts alongside the base stack with:
+
+```bash
+docker compose --profile matrix up -d
 ```
 
 ### Running tests

@@ -1,14 +1,9 @@
 """Reflex config for the elder client.
 
-PLACEHOLDER NOTICE: this entire clients/elder-app/ tree is a minimal test
-client, not Member 1's real UI shell. It exists to prove the
-gateway<->client WebSocket wiring works (connect, send, receive,
-reconnect-with-backoff) -- Week 4's actual deliverable. Nothing here
-should be silently replaced or deleted later; when Member 1's real Reflex
-UI shell lands, THIS module's WebSocket connection/reconnect logic
-(elder_app/ws_client.py) is the part worth carrying forward into it, not
-the bare text-box-and-list UI, which is deliberately not the real design.
-See docs/prompt-journal.md's Week 4 entry.
+Merged from two independent branches of Week 4 work: Member 1's real UI
+shell (plugins below) and Member 2's WebSocket wiring / deployment fixes
+(REFLEX_API_URL handling below) -- see docs/prompt-journal.md's Week 4
+entries on each side for the full history.
 """
 
 import os
@@ -23,14 +18,21 @@ import reflex as rx
 # broke ("Connection Error" in the browser, and a page-crashing
 # `TypeError: Cannot read properties of null (reading 'addEventListener')`
 # in the console) because it was pointed at the gateway's address instead
-# of its own backend port. See elder_app/elder_app.py for where the
-# gateway's own URL is actually used (GATEWAY_PUBLIC_URL, a genuinely
-# separate concern).
+# of its own backend port. See elder_app/gateway_ws_proof.py for where
+# the gateway's own URL is actually used (GATEWAY_PUBLIC_URL, a genuinely
+# separate concern) -- not elder_app.py, which isn't wired to the gateway
+# yet (see that module's own docstring for why).
 #
 # Left unset here on purpose: Reflex's own default is correct for local
 # `reflex run` (its backend on :8000). REFLEX_API_URL overrides it only
 # for the dockerized deployment, where it needs to be the origin the
 # browser reaches this container's backend through.
-config = rx.Config(app_name="elder_app")
+config = rx.Config(
+    app_name="elder_app",
+    plugins=[
+        rx.plugins.SitemapPlugin(),
+        rx.plugins.TailwindV4Plugin(),
+    ],
+)
 if os.environ.get("REFLEX_API_URL"):
     config.api_url = os.environ["REFLEX_API_URL"]

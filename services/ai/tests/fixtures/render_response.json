@@ -1,0 +1,46 @@
+{
+  "contract_version": "0.1.0",
+  "degraded": {
+    "active": true,
+    "detail": "at least one target language degraded — see per-result detail",
+    "reason": "tts_skipped"
+  },
+  "results": [
+    {
+      "audio": {
+        "duration_ms": 2100,
+        "format": "wav_pcm16",
+        "sample_rate_hz": 22050,
+        "uri": "s3://satsandesh-audio-dev/renders/abc123-hi.wav"
+      },
+      "degraded": {
+        "active": false,
+        "detail": null,
+        "reason": "none"
+      },
+      "duration_ms": 310.5,
+      "language": "hi",
+      "model_version_translate": "indictrans2-distilled@1",
+      "model_version_tts": "indic-tts-vits@1",
+      "text": "नमस्ते, आज सत्संग किस समय है?"
+    },
+    {
+      "audio": {
+        "duration_ms": 2300,
+        "format": "wav_pcm16",
+        "sample_rate_hz": 22050,
+        "uri": "s3://satsandesh-audio-dev/renders/abc123-te.wav"
+      },
+      "degraded": {
+        "active": true,
+        "detail": "VRAM headroom reserved for ASR queue",
+        "reason": "tts_skipped"
+      },
+      "duration_ms": 295.8,
+      "language": "te",
+      "model_version_translate": "indictrans2-distilled@1",
+      "model_version_tts": "indic-tts-vits@1",
+      "text": "నమస్తే, ఈ రోజు సత్సంగం ఎప్పుడు జరుగుతుంది?"
+    }
+  ]
+}

@@ -22,6 +22,7 @@ node_modules/
 
 # OS / editor
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
 *.swp
@@ -39,3 +40,16 @@ docs/server-notes.md
 infra/backups/*.dump
 infra/backups/*.sql
 media/
+pgdata/
+
+# Test/lint caches and coverage output
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Model weights -- never commit these
+models/
+*.gguf
+*.pt
