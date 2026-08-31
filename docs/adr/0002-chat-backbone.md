@@ -1,22 +1,22 @@
 # ADR 0002: Chat Backbone — Matrix (Tuwunel) vs Custom-Lite
 
-**Status:** Proposed (both spikes complete — final decision is the team's, not either spike author's)
-**Date:** 2026-08-01 (opened, Spike B) / 2026-08-28 (Spike A findings added)
+**Status:** Accepted — Option A (Matrix/Tuwunel), confirmed by the whole team
+**Date:** 2026-08-01 (opened, Spike B) / 2026-08-28 (Spike A findings added) / 2026-08-31 (formally accepted)
 **Author(s):** Student 2 (Option B / Spike B); Kshitiz Pratap Singh (Option A / Spike A)
 
-> ### ⚠ Merge note — 2026-08-31
+> ### ✓ Merge note — 2026-08-31
 >
-> A separate branch of this work (Member 2's personal repo) had marked this
-> ADR **Accepted** and built a real Matrix implementation
+> A separate branch of this work (Member 2's personal repo) had marked
+> this ADR Accepted and built a real Matrix implementation
 > (`backbone/spike-matrix-a/circle_service/`) on that basis, with its own
 > Spike A write-up describing the same Conduit-join-bug and E2EE findings
-> as Kshitiz's Spike A below. Merging the two repos surfaced this directly:
-> **that implementation happened ahead of the whole-team decision this
-> document itself says is required**, not after it. Kept here rather than
-> quietly discarded — see "Implementation built ahead of formal
-> acceptance" near the end of this document for what exists and why it
-> isn't presented as settling this ADR. Status stays **Proposed** until
-> the team actually decides together.
+> as Kshitiz's Spike A below. Merging the two repos surfaced that this had
+> happened ahead of the whole-team decision this document itself requires
+> -- flagged rather than silently accepted at merge time. **Since
+> confirmed by the team: Option A is the formal decision.** The
+> implementation section near the end of this document, written while
+> that confirmation was still pending, is kept as-is for the historical
+> record of what was true at merge time.
 
 ## Context
 
@@ -371,37 +371,39 @@ rooms, confirmed working); Option B never had the tension to begin with,
 because encryption was never built, not because it found a way around
 the tradeoff.
 
-**Neither spike's findings by themselves decide this ADR** — that's a
-whole-team call, informed by both spikes, not either spike author's
-recommendation alone. Status stays **Proposed**.
+**Neither spike's findings by themselves decided this ADR on their own**
+— it took a whole-team call, informed by both spikes, not either spike
+author's recommendation alone. **Decision: Option A, confirmed by the
+whole team 2026-08-31.**
 
-## Implementation built ahead of formal acceptance — flagged, not hidden
+## Implementation that predated formal acceptance
 
 A separate branch of this work (Member 2's personal repo, merged into
 this document 2026-08-31) treated Spike A's findings above as sufficient
-to move this ADR to Accepted unilaterally, and built a full production
-implementation on that basis: `backbone/spike-matrix-a/circle_service/`,
-a FastAPI service implementing `CircleBackbone`
-(`backbone/interfaces.py`) against a real Tuwunel instance, with the
-circles feature (`gateway/circles.py`) actually swapped over to it in
-that branch's `docker-compose.yml` default. That branch's own Spike A
-write-up (now superseded by Kshitiz's properly-attributed version above)
-describes the same underlying Conduit-join-bug and E2EE results as this
-document's real Spike A section — almost certainly the same investigation,
-not an independent replication.
+to move this ADR to Accepted before the team's own formal confirmation
+came through, and built a full production implementation on that basis:
+`backbone/spike-matrix-a/circle_service/`, a FastAPI service implementing
+`CircleBackbone` (`backbone/interfaces.py`) against a real Tuwunel
+instance, with the circles feature (`gateway/circles.py`) actually
+swapped over to it in that branch's `docker-compose.yml` default. That
+branch's own Spike A write-up (superseded by Kshitiz's properly-attributed
+version above) describes the same underlying Conduit-join-bug and E2EE
+results as this document's real Spike A section — almost certainly the
+same investigation, not an independent replication.
 
-**This is recorded here rather than quietly dropped, but it does not
-change this ADR's status.** The team has not had the whole-team decision
-conversation this document says is required. If the team does decide on
-Option A, this implementation is a real, substantial head start (verified
-working: circles create/join/post/history all pass against live Tuwunel,
+**Recorded here for the historical record, not because it still needs
+flagging** — the team has since formally confirmed Option A, so the
+sequencing concern this section originally raised is resolved. This
+implementation is now the real head start it was always going to be if
+the team landed on Option A (verified working: circles create/join/post/
+history all pass against live Tuwunel,
 `gateway/circles.py` needed zero changes to swap backbones, and it was
 later deployed and verified end-to-end — client wiring, live multi-user
 messaging, and gateway-restart recovery — against a real staging server,
-see `docs/prompt-journal.md`'s Week 4 entries). If the team decides
-otherwise, or wants changes to how it's built, that work needs revisiting
-before being treated as final — it was built ahead of, not after, the
-process this document itself sets out.
+see `docs/prompt-journal.md`'s Week 4 entries). Worth a team review of
+how it was built regardless of the sequencing — it was implemented ahead
+of, not after, the formal decision — but the decision itself no longer
+needs revisiting.
 
 ## Consequences
 
