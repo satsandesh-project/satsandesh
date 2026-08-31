@@ -12,9 +12,9 @@ earns its keep).
 import asyncio
 
 import psycopg
+from dispatcher import claim_batch
 
 from db import DATABASE_URL
-from dispatcher import claim_batch
 
 
 async def _seed(n: int) -> None:

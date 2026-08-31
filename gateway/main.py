@@ -1,14 +1,13 @@
 import os
 
-import psycopg
-from fastapi import FastAPI, HTTPException, WebSocket
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
 import circles
+import psycopg
 import ws
 from auth import issue_token
 from backbone_client import HttpCircleBackbone
+from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI(title="SatSandesh Gateway")
 
@@ -78,6 +77,8 @@ def db_check():
         raise HTTPException(status_code=503, detail=f"database unreachable: {exc}")
 
     if row is None:
-        raise HTTPException(status_code=500, detail="schema_check table is empty — init did not run")
+        raise HTTPException(
+            status_code=500, detail="schema_check table is empty — init did not run"
+        )
 
     return {"status": "ok", "schema_check": row[0]}

@@ -66,7 +66,12 @@ async def _join_room_as_bot(room_id: str) -> None:
     url = f"{HOMESERVER_URL}/_matrix/client/v3/rooms/{qualified_room_id}/join"
     async with httpx.AsyncClient() as http_client:
         resp = await http_client.post(url, headers={"Authorization": f"Bearer {AS_TOKEN}"})
-        logger.info("join attempt room_id=%s -> HTTP %s: %s", qualified_room_id, resp.status_code, resp.text)
+        logger.info(
+            "join attempt room_id=%s -> HTTP %s: %s",
+            qualified_room_id,
+            resp.status_code,
+            resp.text,
+        )
         resp.raise_for_status()
 
 

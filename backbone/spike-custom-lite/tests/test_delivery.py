@@ -7,9 +7,8 @@ running, polling real Postgres) without needing a separate server process
 or `docker compose --profile spike up`.
 """
 
-from starlette.testclient import TestClient
-
 from app import app
+from starlette.testclient import TestClient
 
 
 def _send(client, **kwargs):
@@ -87,8 +86,10 @@ def test_two_recipients_each_get_their_own_copy(spike_clean_db):
     one send with two recipients writes two outbox rows (one per
     recipient), and both actually receive it."""
     with TestClient(app) as client:
-        with client.websocket_connect("/ws?user_id=bob") as ws_bob, \
-             client.websocket_connect("/ws?user_id=carol") as ws_carol:
+        with (
+            client.websocket_connect("/ws?user_id=bob") as ws_bob,
+            client.websocket_connect("/ws?user_id=carol") as ws_carol,
+        ):
             _send(
                 client,
                 conversation_id="c1",

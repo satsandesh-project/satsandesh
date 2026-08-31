@@ -110,8 +110,7 @@ class OutboxCircleStore(CircleBackbone):
                 # guarantee, reused rather than reimplemented.
                 for recipient_id in recipients:
                     await cur.execute(
-                        "INSERT INTO spike_outbox (message_id, recipient_id) "
-                        "VALUES (%s, %s)",
+                        "INSERT INTO spike_outbox (message_id, recipient_id) VALUES (%s, %s)",
                         (message_id, recipient_id),
                     )
             await conn.commit()

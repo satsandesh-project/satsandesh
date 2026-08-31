@@ -75,7 +75,8 @@ class MatrixClient:
         )
         if resp.status_code == 200:
             return resp.json()["user_id"]
-        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        content_type = resp.headers.get("content-type", "")
+        body = resp.json() if content_type.startswith("application/json") else {}
         if resp.status_code == 400 and body.get("errcode") == "M_USER_IN_USE":
             # The homeserver never gives us the user id in this response
             # (it's a rejection, not a success), so reconstruct it -- Matrix
@@ -202,7 +203,10 @@ class MatrixClient:
             params["from"] = ctx.json()["start"]
 
         resp = await self._request(
-            "GET", f"/_matrix/client/v3/rooms/{room_id}/messages", impersonate=as_user, params=params
+            "GET",
+            f"/_matrix/client/v3/rooms/{room_id}/messages",
+            impersonate=as_user,
+            params=params,
         )
         if resp.status_code != 200:
             raise MatrixError(f"messages failed: {resp.status_code} {resp.text}")

@@ -48,9 +48,7 @@ class HttpCircleBackbone(CircleBackbone):
         return data["circle_id"]
 
     async def add_member(self, circle_id: str, user_id: str) -> None:
-        await self._request(
-            "POST", f"/circles/{circle_id}/members", json={"user_id": user_id}
-        )
+        await self._request("POST", f"/circles/{circle_id}/members", json={"user_id": user_id})
 
     async def remove_member(self, circle_id: str, user_id: str) -> None:
         await self._request("DELETE", f"/circles/{circle_id}/members/{user_id}")

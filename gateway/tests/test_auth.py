@@ -1,7 +1,4 @@
-import time
-
 import pytest
-
 from auth import AuthError, issue_token, verify_token
 
 

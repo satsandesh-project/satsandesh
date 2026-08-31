@@ -35,9 +35,9 @@ def main() -> None:
     _, _, body = template.partition("\nid:")
     rendered = HEADER + "id:" + body
 
-    rendered = rendered.replace(
-        "REPLACE_WITH_AS_TOKEN_FROM_ENV", env["AS_TOKEN"]
-    ).replace("REPLACE_WITH_HS_TOKEN_FROM_ENV", env["HS_TOKEN"])
+    rendered = rendered.replace("REPLACE_WITH_AS_TOKEN_FROM_ENV", env["AS_TOKEN"]).replace(
+        "REPLACE_WITH_HS_TOKEN_FROM_ENV", env["HS_TOKEN"]
+    )
 
     out_path = SERVICE_DIR / "registration.local.yaml"
     out_path.write_text(rendered)

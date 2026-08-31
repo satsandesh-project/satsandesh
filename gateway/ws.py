@@ -31,9 +31,8 @@ deployment.
 import logging
 from typing import Dict, Set
 
-from fastapi import WebSocket, WebSocketDisconnect
-
 from auth import AuthError, verify_token
+from fastapi import WebSocket, WebSocketDisconnect
 from interfaces import BackboneUnavailable
 
 logger = logging.getLogger("gateway.ws")

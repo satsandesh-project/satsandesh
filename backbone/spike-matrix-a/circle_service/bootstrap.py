@@ -33,7 +33,6 @@ either way, just not for the reason the docs state.
 
 import asyncio
 import logging
-import os
 import uuid
 
 import httpx
@@ -65,7 +64,8 @@ async def _register_or_login_admin(client: httpx.AsyncClient, username: str, pas
     if resp.status_code == 200:
         return resp.json()["access_token"]
 
-    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+    content_type = resp.headers.get("content-type", "")
+    body = resp.json() if content_type.startswith("application/json") else {}
     if resp.status_code == 400 and body.get("errcode") == "M_USER_IN_USE":
         resp = await client.post(
             "/_matrix/client/v3/login",
@@ -187,7 +187,9 @@ async def bootstrap_appservice(
     admin_username: str,
     admin_password: str,
 ) -> None:
-    async with httpx.AsyncClient(base_url=homeserver_url.rstrip("/"), timeout=BOOTSTRAP_TIMEOUT) as client:
+    async with httpx.AsyncClient(
+        base_url=homeserver_url.rstrip("/"), timeout=BOOTSTRAP_TIMEOUT
+    ) as client:
         admin_token = await _register_or_login_admin(client, admin_username, admin_password)
         admin_room_id = await _find_admin_room(client, admin_token)
         await _send_and_confirm_registration(

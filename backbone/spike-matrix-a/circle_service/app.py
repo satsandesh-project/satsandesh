@@ -12,12 +12,11 @@ import os
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-
 from bootstrap import BootstrapError, bootstrap_appservice
+from fastapi import FastAPI, HTTPException
 from interfaces import BackboneUnavailable
 from matrix_circle_store import MatrixCircleStore
+from pydantic import BaseModel
 
 HOMESERVER_URL = os.environ.get("HOMESERVER_URL", "http://tuwunel:8008")
 SERVER_NAME = os.environ.get("SERVER_NAME", "localhost")

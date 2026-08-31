@@ -22,9 +22,9 @@ exactly what this design avoids.
 import time
 
 import psycopg
+from app import app
 from starlette.testclient import TestClient
 
-from app import app
 from db import DATABASE_URL
 
 
@@ -75,9 +75,11 @@ def test_announcement_reaches_all_three_members(spike_clean_db):
             "dave",
         ]
 
-        with client.websocket_connect("/ws?user_id=bob") as ws_bob, \
-             client.websocket_connect("/ws?user_id=carol") as ws_carol, \
-             client.websocket_connect("/ws?user_id=dave") as ws_dave:
+        with (
+            client.websocket_connect("/ws?user_id=bob") as ws_bob,
+            client.websocket_connect("/ws?user_id=carol") as ws_carol,
+            client.websocket_connect("/ws?user_id=dave") as ws_dave,
+        ):
             _announce(client, circle_id, "alice", "satsang at 6pm")
 
             for ws in (ws_bob, ws_carol, ws_dave):

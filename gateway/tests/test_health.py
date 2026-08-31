@@ -6,10 +6,9 @@ rather than requiring a live one — that keeps `pytest` runnable without
 http://localhost/db-check described in README.md.
 """
 
+import main
 import psycopg
 from fastapi.testclient import TestClient
-
-import main
 from main import app
 
 client = TestClient(app)
@@ -62,9 +61,7 @@ class _FakeConnection:
 
 def test_db_check_ok(monkeypatch):
     """Seeded row present -> 200, and the note is echoed back."""
-    monkeypatch.setattr(
-        main.psycopg, "connect", lambda *a, **kw: _FakeConnection(("db init ran",))
-    )
+    monkeypatch.setattr(main.psycopg, "connect", lambda *a, **kw: _FakeConnection(("db init ran",)))
 
     response = client.get("/db-check")
 
@@ -74,9 +71,7 @@ def test_db_check_ok(monkeypatch):
 
 def test_db_check_table_empty(monkeypatch):
     """Table exists but is empty -> init did not seed it, so report 500."""
-    monkeypatch.setattr(
-        main.psycopg, "connect", lambda *a, **kw: _FakeConnection(None)
-    )
+    monkeypatch.setattr(main.psycopg, "connect", lambda *a, **kw: _FakeConnection(None))
 
     response = client.get("/db-check")
 

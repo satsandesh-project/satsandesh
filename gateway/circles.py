@@ -14,9 +14,8 @@ add it to the contract instead.
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-
 from interfaces import BackboneUnavailable, CircleBackbone
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/circles", tags=["circles"])
 
@@ -56,9 +55,7 @@ def _unavailable(exc: BackboneUnavailable) -> HTTPException:
 
 
 @router.post("")
-async def create_circle(
-    req: CreateCircleRequest, backbone: CircleBackbone = Depends(get_backbone)
-):
+async def create_circle(req: CreateCircleRequest, backbone: CircleBackbone = Depends(get_backbone)):
     try:
         circle_id = await backbone.create_circle(req.name)
     except BackboneUnavailable as exc:
@@ -91,9 +88,7 @@ async def remove_member(
 
 
 @router.get("/{circle_id}/members")
-async def list_members(
-    circle_id: str, backbone: CircleBackbone = Depends(get_backbone)
-) -> dict:
+async def list_members(circle_id: str, backbone: CircleBackbone = Depends(get_backbone)) -> dict:
     try:
         members: List[str] = await backbone.list_members(circle_id)
     except BackboneUnavailable as exc:

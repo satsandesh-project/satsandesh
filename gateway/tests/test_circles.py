@@ -13,13 +13,12 @@ backbone/spike-custom-lite/tests/test_circles.py.
 from datetime import datetime, timezone
 from typing import List, Optional
 
-import pytest
-from starlette.testclient import TestClient
-
 import circles
+import pytest
 from backbone_client import HttpCircleBackbone
 from interfaces import BackboneUnavailable, CircleBackbone, CircleMessage
 from main import app
+from starlette.testclient import TestClient
 
 
 class FakeBackbone(CircleBackbone):
@@ -127,9 +126,9 @@ def test_create_circle_and_manage_members(client):
     circle_id = client.post("/circles", json={"name": "Sunday Satsang"}).json()["circle_id"]
 
     for user in ("bob", "carol"):
-        assert client.post(
-            f"/circles/{circle_id}/members", json={"user_id": user}
-        ).status_code == 200
+        assert (
+            client.post(f"/circles/{circle_id}/members", json={"user_id": user}).status_code == 200
+        )
 
     assert client.get(f"/circles/{circle_id}/members").json()["members"] == ["bob", "carol"]
 
@@ -162,9 +161,10 @@ def test_backbone_down_returns_503_not_500():
         with TestClient(app) as c:
             assert c.post("/circles", json={"name": "x"}).status_code == 503
             assert c.get("/circles/1/members").status_code == 503
-            assert c.post(
-                "/circles/1/announce", json={"sender_id": "a", "body": "b"}
-            ).status_code == 503
+            assert (
+                c.post("/circles/1/announce", json={"sender_id": "a", "body": "b"}).status_code
+                == 503
+            )
     finally:
         circles.set_backbone(HttpCircleBackbone())
 

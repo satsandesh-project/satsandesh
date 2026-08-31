@@ -69,7 +69,7 @@ def _to_mxid(user_id: str, server_name: str) -> str:
 
 
 def _from_mxid(mxid: str, server_name: str) -> str:
-    prefix = f"@circle_"
+    prefix = "@circle_"
     suffix = f":{server_name}"
     if not (mxid.startswith(prefix) and mxid.endswith(suffix)):
         raise ValueError(f"not a circle-namespace user id: {mxid!r}")

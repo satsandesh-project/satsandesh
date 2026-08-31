@@ -12,13 +12,13 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 
 import psycopg
+from circles import OutboxCircleStore
+from dispatcher import run_forever
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-
-from circles import OutboxCircleStore
-from db import DATABASE_URL, ensure_schema
-from dispatcher import run_forever
 from registry import ConnectionRegistry
+
+from db import DATABASE_URL, ensure_schema
 
 registry = ConnectionRegistry()
 circle_store = OutboxCircleStore()

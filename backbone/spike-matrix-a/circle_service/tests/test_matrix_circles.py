@@ -24,9 +24,6 @@ import uuid
 
 import pytest
 import pytest_asyncio
-
-from bootstrap import bootstrap_appservice
-from matrix_circle_store import MatrixCircleStore
 from app import (
     ADMIN_PASSWORD,
     ADMIN_USERNAME,
@@ -37,6 +34,8 @@ from app import (
     SERVER_NAME,
     _render_registration_yaml,
 )
+from bootstrap import bootstrap_appservice
+from matrix_circle_store import MatrixCircleStore
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

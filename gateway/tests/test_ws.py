@@ -11,15 +11,14 @@ backbone/spike-matrix-a/circle_service/tests/.
 from datetime import datetime, timezone
 from typing import List, Optional
 
-import pytest
-from starlette.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
-
 import circles
+import pytest
 import ws
 from auth import issue_token
 from interfaces import BackboneUnavailable, CircleBackbone, CircleMessage
 from main import app
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 
 class FakeBackbone(CircleBackbone):
@@ -140,8 +139,10 @@ def test_two_clients_broadcast_to_each_other():
     token_b, user_b = issue_token("bob")
 
     with TestClient(app) as client:
-        with client.websocket_connect(f"/ws?token={token_a}") as ws_a, \
-             client.websocket_connect(f"/ws?token={token_b}") as ws_b:
+        with (
+            client.websocket_connect(f"/ws?token={token_a}") as ws_a,
+            client.websocket_connect(f"/ws?token={token_b}") as ws_b,
+        ):
             ws_a.receive_json()  # history
             ws_b.receive_json()  # history
 
@@ -179,8 +180,10 @@ def test_backbone_unavailable_at_connect_still_allows_live_relay():
     token_b, _ = issue_token("bob")
 
     with TestClient(app) as client:
-        with client.websocket_connect(f"/ws?token={token_a}") as ws_a, \
-             client.websocket_connect(f"/ws?token={token_b}") as ws_b:
+        with (
+            client.websocket_connect(f"/ws?token={token_a}") as ws_a,
+            client.websocket_connect(f"/ws?token={token_b}") as ws_b,
+        ):
             history_a = ws_a.receive_json()
             assert history_a["messages"] == []
             assert "warning" in history_a  # told, not silently degraded
