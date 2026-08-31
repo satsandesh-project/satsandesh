@@ -198,6 +198,21 @@ def is_circle_member(session: Session, *, circle_id: uuid.UUID, user_id: uuid.UU
     return existing is not None
 
 
+def get_membership(
+    session: Session, *, circle_id: uuid.UUID, user_id: uuid.UUID
+) -> Membership | None:
+    """Like is_circle_member, but returns the row itself -- for callers
+    that need the caller's own ROLE, not just membership (e.g. whether
+    they're privileged enough to grant an elevated role to someone else),
+    which a bool can't answer. is_circle_member is left as-is rather than
+    rebuilt on top of this, since most call sites only need the bool and
+    fetching a row they then discard would be a needless field to keep in
+    sync if Membership ever grows heavier columns."""
+    return session.execute(
+        select(Membership).where(Membership.circle_id == circle_id, Membership.user_id == user_id)
+    ).scalar_one_or_none()
+
+
 def list_circles_for_user(session: Session, *, user_id: uuid.UUID) -> list[Circle]:
     query = (
         select(Circle)
