@@ -30,13 +30,26 @@ original plan below (see the Week 4 journal entry for full detail):
   system-level Apache). Fixed by making both ports overridable
   (`POSTGRES_HOST_PORT`, `CADDY_HOST_PORT` in `.env` -- see
   `docker-compose.yml`), remapped to `55432` and `8080` here.
-- **`clients/elder-app/Dockerfile`'s `--env prod` never actually started
-  its backend** -- the frontend came up, but port 8000 stayed
-  connection-refused indefinitely and only one process ever existed in
-  the container. Switched to `--env dev`, the mode actually verified
-  working end-to-end during local development. A real, unexplained
-  Reflex behavior in this version, not a config mistake -- worth
-  root-causing before a real (non-college-project) production deploy.
+- **`--env prod`'s "backend never starts" was never a bug -- it's a
+  different port model, fixed for real now.** Root-caused by reading
+  Reflex 0.9.9's own source (`reflex/reflex.py`'s `_run()`/`_run_prod()`):
+  dev mode runs frontend and backend as two separate processes on two
+  separate ports (3000/8000); prod mode unifies BOTH onto one single
+  port (`config._set_persistent(frontend_port=port, backend_port=port)`,
+  defaulting to 3000, with the compiled frontend mounted directly into
+  the one backend process). Port 8000 is never bound in prod mode, by
+  design -- not a version-specific bug, not something to work around.
+  Confirmed directly, not just read: reproduced locally first (`/ping`
+  returned `200 "pong"` on `:3000` while `:8000` stayed
+  connection-refused the whole time), then fixed the Dockerfile
+  (`EXPOSE 3000` only), `docker-compose.yml`'s healthcheck (`:3000/ping`
+  instead of `:8000/ping`), and `infra/caddy/Caddyfile` (the old split
+  routing Reflex's internal paths to `elder-app:8000` was actively wrong
+  in prod mode -- removed, everything now goes to `elder-app:3000`,
+  which is correct since prod mode serves it all from one place anyway).
+  `clients/elder-app/Dockerfile`'s `CMD` is back to `--env prod`, verified
+  end-to-end through the full local stack (join, live message, all
+  through Caddy) before this was called done.
 - **`docker kill` does not trigger `restart: unless-stopped`.** Docker
   treats a manual `kill` the same as a manual `stop` for restart-policy
   purposes -- the container just stays exited until someone runs `docker

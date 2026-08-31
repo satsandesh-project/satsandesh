@@ -808,21 +808,21 @@ certificate error at all, confirming the earlier local-machine build
 blocker really was specific to that dev machine's network (likely a
 TLS-intercepting proxy/antivirus), not the app or the Dockerfile.
 
-**A real, previously-undiscovered bug: `--env prod`'s backend never
-started.** The container reported healthy build, the frontend came up
-and served pages, but `/ping` on port 8000 stayed connection-refused
-indefinitely -- confirmed via the healthcheck's own repeated
-`ConnectionRefusedError` log and, more directly, by listing processes
-inside the container via `/proc` (no `ps` binary in the slim image) and
-finding only the single Reflex CLI process, no separate backend process
-at all. This Dockerfile's `CMD` had used `--env prod`, which was never
-actually tested locally -- all prior verification used `--env dev`. Fixed
-by switching the `CMD` to `--env dev`, the mode with real, verified
-evidence behind it, rather than continuing to debug an unverified
-prod-mode code path under time pressure. Documented as a real gap: dev
-mode's hot-reload overhead isn't what a genuine production deploy should
-want, and the actual root cause of prod mode's backend not binding is
-still unknown.
+**`--env prod`'s backend never started.** The container reported healthy
+build, the frontend came up and served pages, but `/ping` on port 8000
+stayed connection-refused indefinitely -- confirmed via the healthcheck's
+own repeated `ConnectionRefusedError` log and, more directly, by listing
+processes inside the container via `/proc` (no `ps` binary in the slim
+image) and finding only the single Reflex CLI process, no separate
+backend process at all. This Dockerfile's `CMD` had used `--env prod`,
+which was never actually tested locally -- all prior verification used
+`--env dev`. Worked around same-day by switching the `CMD` to `--env
+dev`, the mode with real, verified evidence behind it, rather than
+continuing to debug an unverified prod-mode code path under time
+pressure -- root cause found and fixed properly the next day, see
+2026-08-31 below. Not a Reflex bug, as it turned out: a real, deliberate
+mode difference this project's own Dockerfile/Caddyfile hadn't accounted
+for.
 
 **A second real CORS/origin mismatch, caught by testing, not guessed:**
 `.env` was initially set up with `ALLOWED_ORIGINS`/`PUBLIC_ORIGIN`
@@ -865,7 +865,94 @@ earlier this week (same client code, unchanged).
   up inbound port-forwarding -- outside what either this session or the
   account's own permissions can do. A ready-to-send request for that is
   available if/when it's needed.
-- `--env prod`'s backend-not-starting issue is unresolved, only worked
-  around by using `--env dev` instead.
 - HTTPS remains deferred on purpose, per the original plan, until a real
   domain exists.
+
+## Week 4 (continued) — root-causing the `--env prod` backend bug
+
+**Date:** 2026-08-31
+
+The previous entry worked around `--env prod`'s backend never starting by
+using `--env dev` instead, cause unknown. Asked explicitly to find the
+real cause rather than leave the workaround in place -- done properly
+this time: read Reflex's own source first, formed a hypothesis, then
+verified it by actually reproducing the failure locally before touching
+any file, per this project's standing "verify against the real thing"
+discipline.
+
+**Root cause, from Reflex 0.9.9's own source** (`reflex/reflex.py`):
+`run()` → `_run()` branches on `env`. For `Env.DEV`, frontend and backend
+get independently-allocated ports (3000/8000) and run as two separate
+processes (`_run_dev`). For `Env.PROD` (and `PREVIEW`), there is no such
+branching -- a single `port` is computed once
+(`requested_port = frontend_port or backend_port or config.frontend_port
+or config.backend_port`, falling back to
+`constants.DefaultPorts.FRONTEND_PORT` = 3000 if none of those are set,
+which was the case here -- neither the Dockerfile's `CMD` nor
+`rxconfig.py` ever set one), then `_run_prod()` does
+`config._set_persistent(frontend_port=port, backend_port=port)` --
+literally the same port for both -- and calls
+`run_backend_prod(host, port, loglevel, mount_frontend_compiled_app=True)`,
+which mounts the compiled frontend directly into the one backend ASGI
+process (served by `granian`, prod mode's server, not the `uvicorn` dev
+mode uses). Port 8000 is never bound in prod mode, by design, regardless
+of container or network config -- there is nothing to fix in Reflex
+itself, and no flag (`--single-port` included -- it turns out to only
+gate CLI validation messages, per `run()`'s own code, not actual
+behavior) changes this; prod mode IS single-port, always.
+
+**Reproduced locally before writing any fix**, per instruction: built the
+then-current image, ran it directly with `docker run` overriding the
+`CMD` to `--env prod --backend-host 0.0.0.0`, and got the exact same
+signature as the server -- port 3000 serving `200`, port 8000 returning
+nothing (`000`), only one process in `/proc`. Then confirmed the
+hypothesis directly rather than just trusting the source read: `curl
+http://localhost:<mapped-3000>/ping` returned `200 OK "pong"`, server
+header `granian` -- the backend was there all along, just not on the
+port anything was looking for it on.
+
+**The fix, in the three places that had assumed dev mode's two-port
+model:**
+
+- `clients/elder-app/Dockerfile`: `EXPOSE 3000` only (8000 removed --
+  nothing binds it in prod mode), `CMD` back to `--env prod`.
+- `docker-compose.yml`'s `elder-app` service: healthcheck now hits
+  `http://localhost:3000/ping` (was `:8000`); `expose:` list is just
+  `"3000"`.
+- `infra/caddy/Caddyfile`: the explicit `handle` blocks routing Reflex's
+  own internal paths (`/ping`, `/_event*`, `/_upload*`, `/_health`,
+  `/_all_routes`) to `elder-app:8000` were removed entirely -- they were
+  actively wrong in prod mode (pointing at a dead port), and redundant
+  even if they'd pointed at the right one, since the catch-all already
+  routes everything else to `elder-app:3000` and prod mode serves
+  everything from that one place anyway. One `handle` block does the
+  whole job now.
+
+**A real, separate bug found applying the fix, not a hypothetical:**
+after editing the Caddyfile, `elder-app` reported healthy but `/ping`
+through Caddy still 502'd with `dial tcp ...:8000: connect: connection
+refused` in Caddy's own logs -- Caddy is a long-running container, and
+`docker compose up -d` does not restart a container whose image/env
+didn't change, even though its *mounted config file* did. It was still
+serving the config it loaded at whatever point it last actually started,
+well before this fix. Fixed with an explicit `docker compose restart
+caddy`. Worth remembering for any future Caddyfile edit on the real
+deployment too, not just this local test -- editing the file on disk is
+not enough by itself.
+
+**Verified for real, full loop, not just healthchecks:** brought up the
+complete local stack (base + `matrix` profile) with the fixed images,
+confirmed `elder-app` reached `(healthy)` via the corrected `:3000/ping`
+healthcheck, then did an actual browser pass through Caddy on `:80` --
+loaded the page (prod mode's "Built with Reflex" badge visible, confirming
+this was genuinely the production build, not a stray dev-mode container),
+joined as `prodtest`, sent "hello from prod mode," and watched it render
+in the same tab. `docker compose logs elder-app` shows a clean prod-mode
+boot (`Creating Production Build`, `App running at: http://0.0.0.0:3000/`)
+with no errors.
+
+**Still open, unchanged from before:** the real deployment on the college
+server is still running the `--env dev` version from 2026-08-30 -- this
+fix has only been verified locally so far. Pushing it and re-deploying to
+the actual server, with the same `docker compose restart caddy` step in
+mind, is the next real step whenever that continues.
