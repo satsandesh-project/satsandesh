@@ -47,9 +47,12 @@ original plan below (see the Week 4 journal entry for full detail):
   routing Reflex's internal paths to `elder-app:8000` was actively wrong
   in prod mode -- removed, everything now goes to `elder-app:3000`,
   which is correct since prod mode serves it all from one place anyway).
-  `clients/elder-app/Dockerfile`'s `CMD` is back to `--env prod`, verified
-  end-to-end through the full local stack (join, live message, all
-  through Caddy) before this was called done.
+  `clients/elder-app/Dockerfile`'s `CMD` is back to `--env prod` and this
+  has now been deployed and verified on the real server itself -- not
+  just locally -- including a repeat of the kill/restart reconnect test
+  specifically under `--env prod` (real reconnect-backoff logs captured
+  again, same as the original `--env dev` run). See the 2026-08-31 journal
+  entry for the root cause and both rounds of verification in full.
 - **`docker kill` does not trigger `restart: unless-stopped`.** Docker
   treats a manual `kill` the same as a manual `stop` for restart-policy
   purposes -- the container just stays exited until someone runs `docker

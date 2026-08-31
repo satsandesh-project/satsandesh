@@ -747,11 +747,15 @@ rather than implying otherwise.
   Week 6-7 for microphone access (browsers block `getUserMedia` on
   non-HTTPS origins except `localhost`). Documented in
   `docs/deployment.md`.
-- The containerized build of `clients/elder-app` -- written, and its
+- ~~The containerized build of `clients/elder-app` -- written, and its
   known SSL blocker documented and partially worked around, but not
-  confirmed to actually build successfully in this session.
-- Remote staging deployment itself -- script and docs are real and
-  executable, not yet run against a real server.
+  confirmed to actually build successfully in this session.~~ Resolved
+  the same week: the build succeeded cleanly on the real server with no
+  SSL error at all (see "Week 4 (continued)" below) -- confirms the
+  blocker really was specific to the original dev machine's network.
+- ~~Remote staging deployment itself -- script and docs are real and
+  executable, not yet run against a real server.~~ Resolved the same
+  week -- see "Week 4 (continued)" below.
 
 ## Week 4 (continued) — real staging deployment, done live over chat
 
@@ -951,8 +955,47 @@ in the same tab. `docker compose logs elder-app` shows a clean prod-mode
 boot (`Creating Production Build`, `App running at: http://0.0.0.0:3000/`)
 with no errors.
 
-**Still open, unchanged from before:** the real deployment on the college
-server is still running the `--env dev` version from 2026-08-30 -- this
-fix has only been verified locally so far. Pushing it and re-deploying to
-the actual server, with the same `docker compose restart caddy` step in
-mind, is the next real step whenever that continues.
+**Deployed to the real college server the same day, via direct SSH**
+(key-based auth set up since the previous entry -- `ssh
+satsandesh@10.110.11.31 "<command>"` directly, no more relaying commands
+through chat). `git pull` confirmed landing the right commit (`git log
+-1` showed `30b5d9d`), and the pulled `Dockerfile` was read directly to
+confirm it actually contained `CMD [..., "--env", "prod", ...]` before
+trusting the pull -- not assumed from the commit hash alone.
+
+Rebuilt with `docker compose build elder-app` specifically (a `CMD`
+change is baked into the image at build time, not read at container
+start -- a plain restart would not have picked it up, the same mistake
+already made once this week with an `.env` change), then `docker compose
+--profile matrix up -d elder-app` to recreate just that one container.
+`docker compose ps elder-app` showed `(healthy)`, `COMMAND` column
+confirming `reflex run --env pr…`, `PORTS` showing only `3000/tcp` (no
+`8000`).
+
+**Hit the exact same Caddy-stale-config issue found during local
+verification, for real, on the actual server** -- `/ping` through Caddy
+502'd with `dial tcp ...:8000: connect: connection refused` even though
+`elder-app` itself was healthy, because Caddy is a long-running container
+here too and `docker compose up -d` alone doesn't restart it. Same fix:
+`docker compose restart caddy`. After that, `curl http://localhost:8080/ping`
+returned `200 OK`, body `"pong"`, `Server: granian` -- confirmed on the
+server itself, not inferred.
+
+**Re-ran the full kill/restart regression test against the real server,
+under real `--env prod` this time** -- not a repeat of the `--env dev`
+result from 2026-08-30, a fresh run. Joined as `regtest` through
+`http://10.110.11.31:8080` (reachable directly from this session's own
+browser tool this time, not just relayed through chat). `docker kill
+veerendra-gateway-1` on the server produced the same real backoff
+sequence in the browser's own console (`code=1006`, attempts at
+1246/2021/4277/8263/16224ms), `docker start veerendra-gateway-1` brought
+it back, and the tab recovered to "Connected as regtest" on its own, no
+reload, landing in a fresh circle (`!n9HhtC2tZFMyFweDdK:localhost`) same
+as the documented per-restart-fresh-circle behavior. Sent a message
+post-recovery ("recovered after reconnect, prod mode confirmed") and
+watched it render, confirming the reconnected socket was fully
+functional, not just open.
+
+**Nothing left open from this specific gap.** The real server now runs
+the same `--env prod` build that's verified locally, with real evidence
+gathered directly against it, not inferred from the local result.
