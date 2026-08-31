@@ -109,8 +109,25 @@ async def websocket_endpoint(websocket: WebSocket, token: str, get_backbone):
     try:
         user_id = verify_token(token)
     except AuthError as exc:
-        # Reject before accept() -- an unauthenticated socket should
-        # never see application traffic, not even briefly.
+        # accept() THEN close(4401) -- not close() before accept(), despite
+        # that looking like the more obviously-correct order for rejecting
+        # an unauthenticated socket. Verified wrong the hard way once
+        # already this project (services/gateway/docs/DECISIONS.md, found
+        # by a teammate working the team repo's own gateway in parallel):
+        # uvicorn can only send a real WS close frame once the handshake
+        # completes, so closing before accept() collapses to a bare HTTP
+        # 403 and a real browser reports it as the ambiguous code 1006
+        # (indistinguishable from a dead network) instead of 4401 -- which
+        # is exactly the code clients/elder-app's own reconnect JS checks
+        # for to know "stop retrying, this was a real auth rejection, not
+        # a dropped connection" (see gateway_ws_proof.py's `event.code ===
+        # 4401` check). Closing before accept() would have made that check
+        # silently never fire. The socket is still never added to
+        # `registry` and never reaches the receive loop below, so this
+        # doesn't weaken the "unauthenticated socket sees no application
+        # traffic" guarantee -- only the close-frame delivery mechanics
+        # change.
+        await websocket.accept()
         await websocket.close(code=4401, reason=f"invalid token: {exc}")
         return
 

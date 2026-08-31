@@ -3,8 +3,8 @@ backbone-unavailable degraded path.
 
 Uses a FakeBackbone (same shape as test_circles.py's) rather than a real
 backbone or Postgres/Matrix -- ws.py's own logic (registry, broadcast,
-auth-before-accept, self-healing default circle) is what's under test
-here, not circles delivery semantics, which are already covered in
+accept-then-reject auth, self-healing default circle) is what's under
+test here, not circles delivery semantics, which are already covered in
 backbone/spike-matrix-a/circle_service/tests/.
 """
 
@@ -13,6 +13,7 @@ from typing import List, Optional
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 import circles
 import ws
@@ -96,12 +97,31 @@ def test_connect_without_token_is_rejected():
                 pass
 
 
-def test_connect_with_invalid_token_is_rejected():
+def test_connect_with_invalid_token_is_rejected_with_code_4401():
+    # Asserts the actual close code, not just "some exception happened" --
+    # a generic pytest.raises(Exception) here would pass identically
+    # whether the server sent a real 4401 close frame or collapsed to an
+    # ambiguous rejection, which is exactly the gap that let this
+    # accept()-before-close() ordering bug (see ws.py's own comment on it)
+    # go unnoticed: the client's own reconnect JS checks for this precise
+    # code to know "stop retrying, this was an auth rejection" (see
+    # clients/elder-app/elder_app/gateway_ws_proof.py), so the code value
+    # itself is the thing under test, not merely "did it disconnect."
+    #
+    # accept() THEN close() means the connection itself opens successfully
+    # (websocket_connect() below does not raise) -- the close only
+    # surfaces once something tries to interact with the now-closed
+    # socket, which is why the assertion is on receive_text(), not on
+    # entering the context manager. Confirmed by first writing this test
+    # the more obvious way (pytest.raises around websocket_connect
+    # itself) and watching it fail with "DID NOT RAISE" -- exactly the
+    # TestClient-vs-real-browser discrepancy this whole fix is about.
     circles.set_backbone(FakeBackbone())
     with TestClient(app) as client:
-        with pytest.raises(Exception):
-            with client.websocket_connect("/ws?token=garbage-not-a-real-token"):
-                pass
+        with client.websocket_connect("/ws?token=garbage-not-a-real-token") as websocket:
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                websocket.receive_text()
+        assert exc_info.value.code == 4401
 
 
 def test_connect_with_valid_token_receives_history():
