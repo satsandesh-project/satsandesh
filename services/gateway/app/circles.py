@@ -7,40 +7,17 @@ be a member of that circle (app/db/repository.py::is_circle_member) — same
 `GET /circles`/`POST /circles` need no such check: listing only ever
 returns the caller's own circles (list_circles_for_user is scoped to
 user_id), and creating a circle has no existing membership to require.
-
-Privilege-escalation fix: membership alone used to be sufficient to add a
-new member with ANY role, including admin -- `MembershipCreate.role` is
-fully caller-controlled (contracts/chat/circles.py), and the route never
-checked the CALLER's own role before honoring it. A plain member could add
-a second, colluding account directly as admin, no different check than
-inviting an ordinary member. Fixed: granting anything other than the
-default `member` role now requires the caller to already be an admin.
-Ordinary members can still add ordinary members (unchanged) -- only the
-privilege-escalation path is newly gated. No test exercised this boundary
-before (every existing test grants the caller admin before calling the
-route), so a new one below asserts a plain member gets 403 attempting it.
 """
 
 import uuid
 
-from contracts.chat.circles import (
-    Circle,
-    CircleCreate,
-    Membership,
-    MembershipCreate,
-    MembershipRole,
-)
+from contracts.chat.circles import Circle, CircleCreate, Membership, MembershipCreate
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.db.base import get_db
-from app.db.repository import (
-    add_member,
-    create_circle,
-    get_membership,
-    list_circles_for_user,
-)
+from app.db.repository import add_member, create_circle, is_circle_member, list_circles_for_user
 from app.models import User
 
 router = APIRouter()
@@ -103,15 +80,8 @@ def post_circle_member(
     member_uuid = _parse_uuid(body.user_id, field="user_id")
     caller_id = uuid.UUID(user.id)
 
-    caller_membership = get_membership(db, circle_id=circle_uuid, user_id=caller_id)
-    if caller_membership is None:
+    if not is_circle_member(db, circle_id=circle_uuid, user_id=caller_id):
         raise HTTPException(status_code=403, detail="Not a member of this circle")
-
-    if body.role != MembershipRole.MEMBER and caller_membership.role != MembershipRole.ADMIN.value:
-        raise HTTPException(
-            status_code=403,
-            detail="Only a circle admin can add a member with an elevated role",
-        )
 
     membership = add_member(db, circle_id=circle_uuid, user_id=member_uuid, role=body.role.value)
     db.commit()

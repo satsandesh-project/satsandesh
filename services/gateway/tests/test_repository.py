@@ -17,16 +17,21 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Circle, Conversation, Membership, Message, User
+from app.db.models import Circle, Conversation, Membership, Message, PushSubscription, User
 from app.db.repository import (
     _get_or_create_conversation,
     add_member,
     create_circle,
     create_message,
+    create_message_with_created_flag,
+    delete_push_subscription,
     find_conversation_id,
     get_messages_since,
     is_circle_member,
     list_circles_for_user,
+    list_member_ids_for_circle,
+    list_push_subscriptions_for_user,
+    upsert_push_subscription,
 )
 
 
@@ -87,6 +92,162 @@ def test_create_message_idempotent_on_client_msg_id(db_session):
             select(Message).where(
                 Message.author_id == alice.id,
                 Message.client_msg_id == shared_client_msg_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+
+
+def test_create_message_with_created_flag_reports_fresh_insert(db_session):
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+
+    message, created = create_message_with_created_flag(
+        db_session,
+        author_id=alice.id,
+        target_type="user",
+        target_user_id=bob.id,
+        kind="text",
+        text="hello",
+        client_msg_id=uuid.uuid4(),
+    )
+
+    assert created is True
+    assert message.id is not None
+
+
+def test_create_message_with_created_flag_reports_recovered_row_on_sequential_retry(db_session):
+    # A purely sequential retry — useful, but not sufficient proof of
+    # race-safety on its own: it can't distinguish a correct atomic
+    # implementation from a buggy read-then-act one, since it never
+    # creates the race window
+    # test_create_message_with_created_flag_exactly_one_winner_under_concurrent_race
+    # below forces. Kept for basic contract coverage; the race test is
+    # what actually backs the "exactly one fan-out" guarantee app/ws.py
+    # depends on.
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+    shared_client_msg_id = uuid.uuid4()
+
+    first, first_created = create_message_with_created_flag(
+        db_session,
+        author_id=alice.id,
+        target_type="user",
+        target_user_id=bob.id,
+        kind="text",
+        text="first try",
+        client_msg_id=shared_client_msg_id,
+    )
+    second, second_created = create_message_with_created_flag(
+        db_session,
+        author_id=alice.id,
+        target_type="user",
+        target_user_id=bob.id,
+        kind="text",
+        text="retried send",
+        client_msg_id=shared_client_msg_id,
+    )
+
+    assert first_created is True
+    assert second_created is False
+    assert second.id == first.id
+
+
+def test_create_message_with_created_flag_exactly_one_winner_under_concurrent_race(
+    db_session, engine
+):
+    # Same forced-interleaving technique as
+    # test_get_or_create_conversation_recovers_from_concurrent_insert_race
+    # above: inject a genuinely concurrent second write for the same
+    # (author_id, client_msg_id) exactly at the moment this call reaches
+    # the database, rather than hoping two sequential calls happen to
+    # race. This is the property app/ws.py's fan-out decision actually
+    # depends on: under real concurrent contention (two near-simultaneous
+    # WS message.send frames with the same client_msg_id), exactly one
+    # side must observe created=True — never both (double fan-out), never
+    # neither (silently dropped fan-out).
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+    # Establish the DM's conversation row up front, via an unrelated prior
+    # message, so _get_or_create_conversation takes its fast SELECT-only
+    # path below (no session.add() call) for both this call and the
+    # racer's. Without this, the *first* session.add() in a fresh DM would
+    # be the conversation row, not the message row — misaligning the
+    # sabotage hook below with the actual race window this test means to
+    # force around the message insert specifically.
+    create_message_with_created_flag(
+        db_session,
+        author_id=alice.id,
+        target_type="user",
+        target_user_id=bob.id,
+        kind="text",
+        text="prior message establishing the conversation",
+        client_msg_id=uuid.uuid4(),
+    )
+    db_session.commit()  # visible to the second, independent session below
+
+    shared_client_msg_id = uuid.uuid4()
+
+    racer_session = Session(engine)
+    racer_result: dict = {}
+    original_add = db_session.add
+
+    def add_after_concurrent_racer_commits(instance, *args, **kwargs):
+        # session.add(message) is the first (and, with the conversation
+        # already established above, only) thing _create_message_impl
+        # does once it's committed to the insert path — reached only after
+        # Message(...) construction, so db_session is genuinely about to
+        # attempt its own insert, not being tricked into it. Committing a
+        # colliding (author_id, client_msg_id) row from a wholly separate
+        # session right here, between db_session constructing its row and
+        # flushing it, is the actual race: by the time db_session's own
+        # INSERT reaches Postgres, the racer's row already exists and
+        # committed out from under it.
+        db_session.add = original_add
+        racer_message, racer_created = create_message_with_created_flag(
+            racer_session,
+            author_id=alice.id,
+            target_type="user",
+            target_user_id=bob.id,
+            kind="text",
+            text="racer",
+            client_msg_id=shared_client_msg_id,
+        )
+        racer_session.commit()
+        racer_result["id"] = racer_message.id
+        racer_result["created"] = racer_created
+        return original_add(instance, *args, **kwargs)
+
+    db_session.add = add_after_concurrent_racer_commits
+    try:
+        message, created = create_message_with_created_flag(
+            db_session,
+            author_id=alice.id,
+            target_type="user",
+            target_user_id=bob.id,
+            kind="text",
+            text="original",
+            client_msg_id=shared_client_msg_id,
+        )
+    finally:
+        racer_session.close()
+
+    # Exactly one winner: the racer's own call correctly reports
+    # created=True, this call correctly recovers the racer's row and
+    # reports created=False — not "both saw nothing and both inserted"
+    # (the double-fan-out bug the old read-then-act pre-check in app/ws.py
+    # was vulnerable to), and not "both recovered" (impossible — someone
+    # has to have won).
+    assert racer_result["created"] is True
+    assert created is False
+    assert message.id == racer_result["id"]
+
+    rows = (
+        db_session.execute(
+            select(Message).where(
+                Message.author_id == alice.id, Message.client_msg_id == shared_client_msg_id
             )
         )
         .scalars()
@@ -425,6 +586,27 @@ def test_is_circle_member_false_for_a_non_member(db_session):
     assert is_circle_member(db_session, circle_id=circle.id, user_id=bob.id) is False
 
 
+def test_list_member_ids_for_circle(db_session):
+    # app/ws.py's Phase 5 fan-out target list — the mirror image of
+    # list_circles_for_user above (circles for a user, not members of a
+    # circle). Carol is deliberately never added, so a naive "everyone"
+    # query bug would be caught here the same way
+    # test_get_circles_returns_only_callers_circles catches its mock-server
+    # equivalent bug.
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+    carol = _make_user(db_session, "Carol")
+
+    circle = create_circle(db_session, name="Evening Satsang", created_by=alice.id)
+    add_member(db_session, circle_id=circle.id, user_id=alice.id, role="admin")
+    add_member(db_session, circle_id=circle.id, user_id=bob.id)
+
+    result = list_member_ids_for_circle(db_session, circle_id=circle.id)
+
+    assert set(result) == {alice.id, bob.id}
+    assert carol.id not in result
+
+
 def test_list_circles_for_user(db_session):
     alice = _make_user(db_session, "Alice")
     bob = _make_user(db_session, "Bob")
@@ -440,3 +622,119 @@ def test_list_circles_for_user(db_session):
     result = list_circles_for_user(db_session, user_id=alice.id)
 
     assert {c.id for c in result} == {circle_1.id, circle_2.id}
+
+
+def test_upsert_push_subscription_creates_new_row(db_session):
+    user = _make_user(db_session, "Alice")
+
+    subscription = upsert_push_subscription(
+        db_session,
+        user_id=user.id,
+        endpoint="https://fcm.googleapis.com/fcm/send/abc123",
+        p256dh="p256dh-initial",
+        auth="auth-initial",
+    )
+
+    assert subscription.user_id == user.id
+    assert subscription.endpoint == "https://fcm.googleapis.com/fcm/send/abc123"
+    assert subscription.p256dh == "p256dh-initial"
+    assert subscription.auth == "auth-initial"
+
+    rows = (
+        db_session.execute(select(PushSubscription).where(PushSubscription.user_id == user.id))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+
+
+def test_upsert_push_subscription_updates_keys_on_existing_endpoint(db_session):
+    # A browser can rotate its own keys for the same endpoint — this must
+    # update the existing row in place, not error and not create a second
+    # row for what the Push API still considers the same subscription.
+    user = _make_user(db_session, "Alice")
+    endpoint = "https://fcm.googleapis.com/fcm/send/abc123"
+
+    first = upsert_push_subscription(
+        db_session, user_id=user.id, endpoint=endpoint, p256dh="old-p256dh", auth="old-auth"
+    )
+    second = upsert_push_subscription(
+        db_session, user_id=user.id, endpoint=endpoint, p256dh="new-p256dh", auth="new-auth"
+    )
+
+    assert second.id == first.id
+    assert second.p256dh == "new-p256dh"
+    assert second.auth == "new-auth"
+
+    rows = (
+        db_session.execute(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].p256dh == "new-p256dh"
+    assert rows[0].auth == "new-auth"
+
+
+def test_delete_push_subscription_by_endpoint(db_session):
+    user = _make_user(db_session, "Alice")
+    endpoint = "https://fcm.googleapis.com/fcm/send/abc123"
+    upsert_push_subscription(db_session, user_id=user.id, endpoint=endpoint, p256dh="p", auth="a")
+
+    delete_push_subscription(db_session, endpoint=endpoint, user_id=user.id)
+
+    rows = (
+        db_session.execute(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
+        .scalars()
+        .all()
+    )
+    assert rows == []
+
+
+def test_delete_push_subscription_missing_endpoint_is_a_noop(db_session):
+    # Deleting an endpoint that was never subscribed (or already removed,
+    # e.g. by a prior 404/410 cleanup) must not raise — same
+    # absence-is-a-valid-outcome reasoning as find_conversation_id
+    # returning None rather than erroring.
+    user = _make_user(db_session, "Alice")
+    delete_push_subscription(
+        db_session, endpoint="https://never-subscribed.example/x", user_id=user.id
+    )
+
+
+def test_delete_push_subscription_wrong_user_id_is_a_noop(db_session):
+    # Scoped to WHERE endpoint = :endpoint AND user_id = :user_id — one
+    # caller can never delete another user's subscription by guessing or
+    # replaying their endpoint, even though endpoint alone is unique.
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+    endpoint = "https://fcm.googleapis.com/fcm/send/bobs-endpoint"
+    upsert_push_subscription(db_session, user_id=bob.id, endpoint=endpoint, p256dh="p", auth="a")
+
+    delete_push_subscription(db_session, endpoint=endpoint, user_id=alice.id)
+
+    rows = (
+        db_session.execute(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].user_id == bob.id
+
+
+def test_list_push_subscriptions_for_user(db_session):
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+    upsert_push_subscription(
+        db_session, user_id=alice.id, endpoint="https://a.example/1", p256dh="p1", auth="a1"
+    )
+    upsert_push_subscription(
+        db_session, user_id=alice.id, endpoint="https://a.example/2", p256dh="p2", auth="a2"
+    )
+    upsert_push_subscription(
+        db_session, user_id=bob.id, endpoint="https://b.example/1", p256dh="p3", auth="a3"
+    )
+
+    result = list_push_subscriptions_for_user(db_session, user_id=alice.id)
+
+    assert {s.endpoint for s in result} == {"https://a.example/1", "https://a.example/2"}

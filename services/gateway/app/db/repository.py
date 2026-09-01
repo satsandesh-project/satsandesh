@@ -6,12 +6,13 @@ owns the transaction boundary and this module stays testable without HTTP.
 """
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Circle, Conversation, Membership, Message
+from app.db.models import Circle, Conversation, Membership, Message, PushSubscription
 
 # Exact names Alembic generated for the two UNIQUE constraints this module
 # recovers from (alembic/versions/8761697bd6bb_initial_schema_users_circles_.py,
@@ -87,7 +88,7 @@ def find_conversation_id(
     return existing.id if existing is not None else None
 
 
-def create_message(
+def _create_message_impl(
     session: Session,
     *,
     author_id: uuid.UUID,
@@ -100,7 +101,20 @@ def create_message(
     media_duration_ms: int | None = None,
     source_lang: str | None = None,
     client_msg_id: uuid.UUID,
-) -> Message:
+    undo_expires_at: datetime | None = None,
+) -> tuple[Message, bool]:
+    """The real create-or-recover logic, returning whether *this call*
+    performed the fresh INSERT (`True`) or recovered an existing row via
+    the idempotency SAVEPOINT-recovery path below (`False`). That boolean
+    is decided in exactly one place — inside the same try/except that does
+    the recovery — so it's an atomic fact about what this call did, not a
+    separate check that could race against the insert. `create_message`
+    and `create_message_with_created_flag` below are both thin wrappers
+    over this; the flag exists only because a caller pushing real-time
+    notifications (app/ws.py) needs to know whether to announce a message
+    as new (a genuine first insert) or stay silent (an idempotent retry) —
+    HTTP's POST /messages doesn't care either way, since it returns the
+    same AckOut regardless."""
     if target_type == "circle":
         conversation_id = target_circle_id
     else:
@@ -118,9 +132,14 @@ def create_message(
         media_duration_ms=media_duration_ms,
         source_lang=source_lang,
         client_msg_id=client_msg_id,
-        # undo_expires_at left NULL: Week 4 Phase 8's concern (design
-        # question #7), not this phase's — not an oversight.
+        # Week 4 Phase 8: set by both send paths to now + settings.
+        # UNDO_WINDOW_SECONDS; left NULL by any caller that doesn't pass it
+        # (there are none left, but the default keeps this optional rather
+        # than forcing every existing call site to compute a timestamp it
+        # doesn't otherwise need).
+        undo_expires_at=undo_expires_at,
     )
+    created = True
     try:
         # Idempotency has to be try/insert-then-catch, not check-then-insert:
         # a check-then-insert has a race window between the SELECT and the
@@ -148,7 +167,77 @@ def create_message(
                 Message.author_id == author_id, Message.client_msg_id == client_msg_id
             )
         ).scalar_one()
+        created = False
+    return message, created
+
+
+def create_message(
+    session: Session,
+    *,
+    author_id: uuid.UUID,
+    target_type: str,
+    target_user_id: uuid.UUID | None = None,
+    target_circle_id: uuid.UUID | None = None,
+    kind: str,
+    text: str | None = None,
+    original_media_ref: str | None = None,
+    media_duration_ms: int | None = None,
+    source_lang: str | None = None,
+    client_msg_id: uuid.UUID,
+    undo_expires_at: datetime | None = None,
+) -> Message:
+    message, _created = _create_message_impl(
+        session,
+        author_id=author_id,
+        target_type=target_type,
+        target_user_id=target_user_id,
+        target_circle_id=target_circle_id,
+        kind=kind,
+        text=text,
+        original_media_ref=original_media_ref,
+        media_duration_ms=media_duration_ms,
+        source_lang=source_lang,
+        client_msg_id=client_msg_id,
+        undo_expires_at=undo_expires_at,
+    )
     return message
+
+
+def create_message_with_created_flag(
+    session: Session,
+    *,
+    author_id: uuid.UUID,
+    target_type: str,
+    target_user_id: uuid.UUID | None = None,
+    target_circle_id: uuid.UUID | None = None,
+    kind: str,
+    text: str | None = None,
+    original_media_ref: str | None = None,
+    media_duration_ms: int | None = None,
+    source_lang: str | None = None,
+    client_msg_id: uuid.UUID,
+    undo_expires_at: datetime | None = None,
+) -> tuple[Message, bool]:
+    """Same as create_message, but also reports whether this call actually
+    performed the insert — see _create_message_impl's docstring. Used by
+    app/ws.py to decide whether a `message.send` is a genuine first send
+    (fan out `message.new`) or an idempotent retry (stay silent), without
+    a separate existence check that would race against the insert it's
+    supposed to be checking."""
+    return _create_message_impl(
+        session,
+        author_id=author_id,
+        target_type=target_type,
+        target_user_id=target_user_id,
+        target_circle_id=target_circle_id,
+        kind=kind,
+        text=text,
+        original_media_ref=original_media_ref,
+        media_duration_ms=media_duration_ms,
+        source_lang=source_lang,
+        client_msg_id=client_msg_id,
+        undo_expires_at=undo_expires_at,
+    )
 
 
 def get_messages_since(
@@ -170,6 +259,29 @@ def get_messages_since(
         query = query.where(Message.id > since_id)
     query = query.order_by(Message.id).limit(limit)
     return list(session.execute(query).scalars().all())
+
+
+def get_message_by_id(session: Session, message_id: uuid.UUID) -> Message | None:
+    return session.get(Message, message_id)
+
+
+def set_message_status(
+    session: Session, message_id: uuid.UUID, *, new_status: str, expected: str
+) -> bool:
+    """Atomically set `messages.status` to `new_status`, but only if it's
+    currently `expected` — a WHERE clause, not fetch-then-update, so a
+    concurrent transition (e.g. app/undo.py's scheduled fan-out and a
+    DELETE /messages/{id} undo racing each other) can't have both sides
+    read the old status and both believe they won. Returns True if this
+    call performed the transition, False if the row was already in some
+    other state."""
+    result = session.execute(
+        update(Message)
+        .where(Message.id == message_id, Message.status == expected)
+        .values(status=new_status)
+    )
+    session.flush()
+    return result.rowcount > 0
 
 
 def create_circle(session: Session, *, name: str, created_by: uuid.UUID) -> Circle:
@@ -198,21 +310,6 @@ def is_circle_member(session: Session, *, circle_id: uuid.UUID, user_id: uuid.UU
     return existing is not None
 
 
-def get_membership(
-    session: Session, *, circle_id: uuid.UUID, user_id: uuid.UUID
-) -> Membership | None:
-    """Like is_circle_member, but returns the row itself -- for callers
-    that need the caller's own ROLE, not just membership (e.g. whether
-    they're privileged enough to grant an elevated role to someone else),
-    which a bool can't answer. is_circle_member is left as-is rather than
-    rebuilt on top of this, since most call sites only need the bool and
-    fetching a row they then discard would be a needless field to keep in
-    sync if Membership ever grows heavier columns."""
-    return session.execute(
-        select(Membership).where(Membership.circle_id == circle_id, Membership.user_id == user_id)
-    ).scalar_one_or_none()
-
-
 def list_circles_for_user(session: Session, *, user_id: uuid.UUID) -> list[Circle]:
     query = (
         select(Circle)
@@ -220,3 +317,62 @@ def list_circles_for_user(session: Session, *, user_id: uuid.UUID) -> list[Circl
         .where(Membership.user_id == user_id)
     )
     return list(session.execute(query).scalars().all())
+
+
+def list_member_ids_for_circle(session: Session, *, circle_id: uuid.UUID) -> list[uuid.UUID]:
+    """All member user ids for a circle — the fan-out target list a WS
+    `message.send` to a circle needs (app/ws.py), the mirror image of
+    list_circles_for_user above (circles for a user, not members of a
+    circle)."""
+    return list(
+        session.execute(select(Membership.user_id).where(Membership.circle_id == circle_id))
+        .scalars()
+        .all()
+    )
+
+
+def upsert_push_subscription(
+    session: Session, *, user_id: uuid.UUID, endpoint: str, p256dh: str, auth: str
+) -> PushSubscription:
+    """Create a subscription row for `endpoint`, or, if one already exists
+    (a browser rotating its own keys for the same endpoint — the Push API
+    guarantees `endpoint` is unique per subscription), update its
+    `p256dh`/`auth` in place rather than erroring or creating a second row
+    for what's still the same subscription."""
+    existing = session.execute(
+        select(PushSubscription).where(PushSubscription.endpoint == endpoint)
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.p256dh = p256dh
+        existing.auth = auth
+        session.flush()
+        return existing
+
+    subscription = PushSubscription(user_id=user_id, endpoint=endpoint, p256dh=p256dh, auth=auth)
+    session.add(subscription)
+    session.flush()
+    return subscription
+
+
+def delete_push_subscription(session: Session, *, endpoint: str, user_id: uuid.UUID) -> None:
+    """Scoped delete: only removes a subscription that's both this
+    `endpoint` and owned by this `user_id`. A no-op, not an error, when
+    nothing matches — whether because the endpoint was never subscribed,
+    already removed (e.g. app/push.py's own 404/410 cleanup), or belongs
+    to someone else entirely."""
+    session.execute(
+        delete(PushSubscription).where(
+            PushSubscription.endpoint == endpoint, PushSubscription.user_id == user_id
+        )
+    )
+    session.flush()
+
+
+def list_push_subscriptions_for_user(
+    session: Session, *, user_id: uuid.UUID
+) -> list[PushSubscription]:
+    return list(
+        session.execute(select(PushSubscription).where(PushSubscription.user_id == user_id))
+        .scalars()
+        .all()
+    )

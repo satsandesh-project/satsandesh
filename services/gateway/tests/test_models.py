@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.db.models import Circle, Conversation, Membership, Message, User
+from app.db.models import Circle, Conversation, Membership, Message, PushSubscription, User
 from app.id import generate_uuid7
 
 
@@ -52,6 +52,12 @@ def test_user_roundtrip(db_session):
     assert fetched.tts_on is True
     assert fetched.role == "elder"
     assert fetched.timezone is None
+    # Week 3 Phase 7: unset until a user explicitly configures them — the
+    # application-layer quiet-hours check falls back to a default window
+    # for this state, not a DB server_default (see the column's own
+    # comment in app/db/models.py for why).
+    assert fetched.quiet_hours_start is None
+    assert fetched.quiet_hours_end is None
     assert fetched.created_at is not None
 
 
@@ -76,6 +82,29 @@ def test_circle_and_membership_roundtrip(db_session):
     # No separate `id` column — contracts/chat/circles.py::Membership has
     # no `id` field on the wire, so storage shouldn't invent one either.
     assert not hasattr(Membership, "id")
+
+
+def test_push_subscription_roundtrip(db_session):
+    user = User(name="Lakshmi Devi", preferred_language="te")
+    db_session.add(user)
+    db_session.flush()
+
+    subscription = PushSubscription(
+        user_id=user.id,
+        endpoint="https://fcm.googleapis.com/fcm/send/abc123",
+        p256dh="p256dh-key-value",
+        auth="auth-secret-value",
+    )
+    db_session.add(subscription)
+    db_session.commit()
+
+    fetched = db_session.get(PushSubscription, subscription.id)
+    assert fetched is not None
+    assert fetched.user_id == user.id
+    assert fetched.endpoint == "https://fcm.googleapis.com/fcm/send/abc123"
+    assert fetched.p256dh == "p256dh-key-value"
+    assert fetched.auth == "auth-secret-value"
+    assert fetched.created_at is not None
 
 
 def test_conversation_canonical_ordering(db_session):
