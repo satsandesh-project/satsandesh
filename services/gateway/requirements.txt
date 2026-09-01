@@ -1,0 +1,72 @@
+# Fully-pinned lock file: direct dependencies (see pyproject.toml
+# [project.dependencies] and [project.optional-dependencies].dev for which of
+# these are direct vs. transitive) plus every transitive dependency they pull
+# in, exactly as resolved together in this environment.
+#
+# Regenerate: recreate the venv, `pip install -e .[dev]`, then
+# `pip freeze` (drop the self-referencing "-e ..." editable-install lines).
+#
+# Docker builds should install from this file, not from pyproject.toml, for a
+# fully reproducible image.
+
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+aiosignal==1.4.0
+alembic==1.19.1
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+attrs==26.1.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.4.2
+colorama==0.4.6
+coverage==7.15.4
+cryptography==50.0.0
+ecdsa==0.19.2
+fastapi==0.141.1
+frozenlist==1.8.0
+greenlet==3.5.5
+h11==0.16.0
+http_ece==1.2.1
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.19
+iniconfig==2.3.0
+Mako==1.4.1
+MarkupSafe==3.0.3
+multidict==6.7.1
+packaging==26.3
+pluggy==1.6.0
+propcache==0.5.2
+psycopg2-binary==2.9.12
+py-vapid==1.9.4
+pyasn1==0.6.4
+pycparser==3.0
+pydantic==2.13.4
+pydantic-settings==2.15.0
+pydantic_core==2.46.4
+Pygments==2.21.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+python-dotenv==1.2.3
+python-jose==3.5.0
+pywebpush==2.4.0
+PyYAML==6.0.3
+requests==2.34.2
+rsa==4.9.1
+ruff==0.16.3
+six==1.17.0
+SQLAlchemy==2.0.52
+starlette==1.6.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzdata==2026.2
+urllib3==2.7.0
+uvicorn==0.52.3
+watchfiles==1.2.0
+websockets==17.0.1
+yarl==1.24.5

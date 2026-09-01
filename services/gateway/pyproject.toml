@@ -1,0 +1,62 @@
+[project]
+name = "satsandesh-gateway"
+version = "0.1.0"
+description = "SatSandesh FastAPI gateway — single front door for clients (M3, Month 1 Week 1 skeleton)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.3",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.15.0",
+    "python-jose[cryptography]==3.5.0",
+    "websockets==17.0.1",
+    "sqlalchemy==2.0.52",
+    "psycopg2-binary==2.9.12",
+    "alembic==1.19.1",
+    "pywebpush==2.4.0",
+    # zoneinfo (app/push.py's is_quiet_hours) needs an IANA tz database to
+    # resolve keys like "Asia/Kolkata" — the stdlib falls back to this
+    # package when the OS doesn't ship one itself, which Windows never
+    # does (unlike most Linux distros/containers, where this would be a
+    # silent no-op-but-technically-redundant install).
+    "tzdata==2026.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "httpx==0.28.1",
+    "ruff==0.16.3",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+# Explicit, not automatic discovery: this directory has app/ (the real
+# installable package) alongside alembic/ (Alembic's own migration-script
+# directory, invoked via the `alembic` CLI, never `import`ed as a package)
+# and tests/ (never installed) at the same top level. A recent enough
+# setuptools refuses to guess between multiple top-level directories in a
+# flat layout ("Multiple top-level packages discovered") rather than
+# silently picking one — this makes the one real package explicit instead
+# of relying on that guess.
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's own DI idiom is `= Depends(...)` / `= Security(...)` as a parameter
+# default (see app/auth.py, app/main.py) — bugbear's B008 otherwise flags this
+# as a mutable-default footgun. These calls are safe: FastAPI calls them once
+# per request via its dependency-injection system, not once at import time.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "app.auth.require_role"]

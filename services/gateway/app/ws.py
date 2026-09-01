@@ -1,0 +1,487 @@
+import logging
+import uuid
+from datetime import UTC, datetime, timedelta
+
+from contracts.chat.common import MessageStatus, TargetType
+from contracts.chat.envelope import FrameType, RawFrame, SyncBatch, SyncRequest
+from contracts.chat.errors import ErrorCode, ErrorPayload
+from contracts.chat.messages import AckOut, DeliveredIn, MessageIn, MessageStatusOut
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app import undo
+from app.auth import user_from_token
+from app.config import get_settings
+from app.db.base import SessionLocal, get_db
+from app.db.repository import (
+    create_message_with_created_flag,
+    find_conversation_id,
+    get_message_by_id,
+    get_messages_since,
+    is_circle_member,
+    set_message_status,
+)
+from app.messages import fan_out_message, message_to_out
+from app.models import User
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+class ConnectionManager:
+    # In-memory only — no Redis, no database. Fine for a single gateway
+    # process; won't survive a restart or scale past one instance, which
+    # real message delivery eventually needs to fix.
+    def __init__(self) -> None:
+        self._connections: dict[str, set[WebSocket]] = {}
+
+    async def connect(self, user_id: str, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self._connections.setdefault(user_id, set()).add(websocket)
+
+    def disconnect(self, user_id: str, websocket: WebSocket) -> None:
+        connections = self._connections.get(user_id)
+        if connections is None:
+            return
+        connections.discard(websocket)
+        if not connections:
+            del self._connections[user_id]
+
+    def is_connected(self, user_id: str) -> bool:
+        # A user with zero live sockets has no key in _connections at all
+        # (disconnect() above deletes the key once its set empties out),
+        # not an empty set — .get(user_id) alone would be falsy either way,
+        # but being explicit here documents that both cases are handled,
+        # not just the more obvious "key present with an empty set" one.
+        return bool(self._connections.get(user_id))
+
+    async def send_to_user(
+        self, user_id: str, frame: dict, *, exclude: WebSocket | None = None
+    ) -> None:
+        """Push `frame` to every socket currently connected for `user_id`
+        (zero, one, or several — a user can have more than one device
+        open), skipping `exclude` if given (the originating socket of a
+        send, which already gets a `message.ack` and doesn't need its own
+        `message.new` echoed back).
+
+        Iterates a snapshot list, not the live `self._connections[user_id]`
+        set: `send_json` below is an await point, and another coroutine's
+        `disconnect()` for a different socket of this same user can run
+        during that await (e.g. one of the user's other devices dropping
+        mid-fan-out) — mutating the live set out from under a `for` loop
+        over it raises `RuntimeError: Set changed size during iteration`.
+        A copy sidesteps that; per-socket send failures (a connection that
+        died between the snapshot and the send) are swallowed individually
+        so one dead socket can't stop delivery to the rest.
+        """
+        connections = [ws for ws in self._connections.get(user_id, ()) if ws is not exclude]
+        for websocket in connections:
+            try:
+                await websocket.send_json(frame)
+            except Exception:  # noqa: BLE001 - a socket that died between the
+                # snapshot above and this send can raise almost anything
+                # depending on the ASGI server; one bad send must not stop
+                # delivery to the rest of this fan-out.
+                logger.warning("send_to_user: dropping a stale connection for user_id=%s", user_id)
+                continue
+
+    async def broadcast(
+        self, user_ids: list[str], frame: dict, *, exclude: WebSocket | None = None
+    ) -> None:
+        for user_id in user_ids:
+            await self.send_to_user(user_id, frame, exclude=exclude)
+
+
+manager = ConnectionManager()
+
+
+async def _send_error(
+    websocket: WebSocket, code: ErrorCode, message: str, *, detail: dict | None = None
+) -> None:
+    payload = ErrorPayload(code=code, message=message, detail=detail)
+    await websocket.send_json(
+        {"type": FrameType.ERROR.value, "data": payload.model_dump(mode="json")}
+    )
+
+
+async def _handle_message_send(
+    websocket: WebSocket, db: Session, user: User, raw_data: dict
+) -> None:
+    try:
+        msg = MessageIn.model_validate(raw_data)
+    except ValidationError as exc:
+        await _send_error(
+            websocket,
+            ErrorCode.VALIDATION_FAILED,
+            "invalid message.send payload",
+            detail={"error": str(exc)},
+        )
+        return
+
+    try:
+        target_uuid = uuid.UUID(msg.target_id)
+    except ValueError:
+        await _send_error(websocket, ErrorCode.VALIDATION_FAILED, "target_id must be a valid UUID")
+        return
+
+    caller_id = uuid.UUID(user.id)
+
+    target_user_id: uuid.UUID | None = None
+    target_circle_id: uuid.UUID | None = None
+    if msg.target_type is TargetType.CIRCLE:
+        if not is_circle_member(db, circle_id=target_uuid, user_id=caller_id):
+            await _send_error(websocket, ErrorCode.UNAUTHORIZED, "Not a member of this circle")
+            return
+        target_circle_id = target_uuid
+    else:
+        if target_uuid == caller_id:
+            # Not a supported case: docs/SCHEMA_DRAFT.md design question
+            # #1a's `conversations` table enforces
+            # CHECK (user_a < user_b) — a *strict* inequality, so a
+            # self-pair is structurally impossible at the DB level. Never
+            # discussed anywhere as a "note to self" feature, just ruled
+            # out by the schema. Rejected explicitly here (a clean
+            # VALIDATION_FAILED) rather than left to surface as an opaque
+            # IntegrityError off that CHECK constraint — and before
+            # `recipients` below could ever end up with target_user_id
+            # and caller_id as the same id twice.
+            await _send_error(
+                websocket, ErrorCode.VALIDATION_FAILED, "cannot send a DM to yourself"
+            )
+            return
+        target_user_id = target_uuid
+
+    settings = get_settings()
+    undo_expires_at = datetime.now(UTC) + timedelta(seconds=settings.UNDO_WINDOW_SECONDS)
+
+    try:
+        # create_message_with_created_flag, not create_message: the
+        # `created` flag is decided atomically inside the same
+        # try/except that does the SAVEPOINT recovery (see
+        # app/db/repository.py's _create_message_impl), so it's a single
+        # source of truth about whether *this* call actually inserted —
+        # not a separate existence check racing against the insert it's
+        # supposed to be checking. A pre-check-then-act version of this
+        # (checked before create_message, decided from a plain SELECT)
+        # was tried first and is exactly the double-fan-out bug this
+        # guards against: two near-simultaneous sends of the same
+        # (author_id, client_msg_id) could both see "not yet persisted"
+        # before either finished inserting, and both fan out message.new.
+        message, created = create_message_with_created_flag(
+            db,
+            author_id=caller_id,
+            target_type=msg.target_type.value,
+            target_user_id=target_user_id,
+            target_circle_id=target_circle_id,
+            kind=msg.kind.value,
+            text=msg.text,
+            original_media_ref=msg.media_ref.uri if msg.media_ref is not None else None,
+            media_duration_ms=msg.media_ref.duration_ms if msg.media_ref is not None else None,
+            source_lang=msg.source_lang,
+            client_msg_id=msg.client_msg_id,
+            undo_expires_at=undo_expires_at,
+        )
+    except IntegrityError:
+        # Persist failed (e.g. target_id doesn't reference a real user/
+        # circle) — nothing to push. `db.close()` in the route's finally
+        # block rolls back the failed SAVEPOINT's outer transaction state;
+        # no explicit rollback needed here (same reasoning
+        # tests/test_repository.py's reraise test documents for
+        # create_message's own SAVEPOINT-scoped recovery).
+        await _send_error(websocket, ErrorCode.INTERNAL_ERROR, "message could not be created")
+        return
+
+    # Persist before push: commit only after a successful create_message,
+    # before the ack and before any fan-out, so a failed persist can never
+    # leak a partial delivery to anyone, sender included.
+    db.commit()
+
+    ack = AckOut(client_msg_id=msg.client_msg_id, id=str(message.id), status=message.status)
+    await websocket.send_json(
+        {"type": FrameType.MESSAGE_ACK.value, "data": ack.model_dump(mode="json")}
+    )
+
+    if not created:
+        # A retry of an already-delivered send — the sender gets their ack
+        # (same server id, proving the earlier attempt landed), but its
+        # fan-out was already scheduled by the original call; scheduling a
+        # second one here would either be a harmless no-op (app/undo.py's
+        # own idempotency guard) or leak an unawaited coroutine if
+        # constructed without ever being scheduled.
+        return
+
+    # Week 4 Phase 8: real delivery (message.new + push) is deferred to
+    # app/messages.py's fan_out_message, run by app/undo.py
+    # settings.UNDO_WINDOW_SECONDS from now unless DELETE /messages/{id}
+    # cancels it first — exactly the same scheduling POST /messages uses,
+    # so a WS-sent and an HTTP-sent message share one delivery path.
+    undo.schedule_fan_out(
+        str(message.id),
+        settings.UNDO_WINDOW_SECONDS,
+        fan_out_message(message.id, manager, SessionLocal, exclude=websocket),
+    )
+
+
+async def _handle_message_delivered(
+    websocket: WebSocket, db: Session, user: User, raw_data: dict
+) -> None:
+    """Week 3: the still-missing half of "sent / delivered states" —
+    `sent` (app/undo.py's deferred fan_out_message, above) already existed
+    and only ever meant "the server pushed this out," not "the recipient
+    actually has it." This is the recipient's own confirmation of that,
+    and the resulting notification back to the *sender*.
+
+    DM-scoped only, deliberately: `message.target_type != "user"` below
+    rejects a circle message outright rather than guessing at "delivered
+    to whom" for a multi-recipient target — a separate design question
+    this doesn't try to answer (see tests/test_message_delivered.py's
+    circle-target test).
+
+    Idempotent by construction: set_message_status's WHERE-scoped update
+    (same guard app/undo.py's cancellation and fan_out_message already
+    rely on) means a second ack for an already-`delivered` message is a
+    silent no-op, not an error and not a second redundant push to the
+    sender — a client retry or a second device acking the same message
+    must not look like a problem.
+    """
+    try:
+        delivered = DeliveredIn.model_validate(raw_data)
+    except ValidationError as exc:
+        await _send_error(
+            websocket,
+            ErrorCode.VALIDATION_FAILED,
+            "invalid message.delivered payload",
+            detail={"error": str(exc)},
+        )
+        return
+
+    try:
+        message_uuid = uuid.UUID(delivered.message_id)
+    except ValueError:
+        await _send_error(websocket, ErrorCode.VALIDATION_FAILED, "message_id must be a valid UUID")
+        return
+
+    message = get_message_by_id(db, message_uuid)
+    if message is None:
+        await _send_error(websocket, ErrorCode.NOT_FOUND, "message not found")
+        return
+
+    if message.target_type != "user":
+        await _send_error(
+            websocket,
+            ErrorCode.VALIDATION_FAILED,
+            "message.delivered is only supported for DMs, not circle messages",
+        )
+        return
+
+    caller_id = uuid.UUID(user.id)
+    if message.target_user_id != caller_id:
+        # Covers both "not this message's recipient" (some unrelated third
+        # party) and "the author trying to mark their own sent message
+        # delivered" in one check: target_user_id can never equal author_id
+        # for a real DM (app/ws.py's own can't-DM-yourself check in
+        # _handle_message_send), so an author here always fails this too.
+        await _send_error(
+            websocket,
+            ErrorCode.UNAUTHORIZED,
+            "only the message's recipient can mark it delivered",
+        )
+        return
+
+    updated = set_message_status(
+        db,
+        message_uuid,
+        new_status=MessageStatus.DELIVERED.value,
+        expected=MessageStatus.SENT.value,
+    )
+    db.commit()
+    if not updated:
+        # Already delivered (a duplicate ack, e.g. the recipient's second
+        # device) or some other unexpected state — either way, the caller
+        # didn't do anything wrong by acking a message that isn't (or is no
+        # longer) `sent`, so this is a no-op, not an error.
+        return
+
+    status_frame = {
+        "type": FrameType.MESSAGE_STATUS.value,
+        "data": MessageStatusOut(id=str(message.id), status=MessageStatus.DELIVERED).model_dump(
+            mode="json"
+        ),
+    }
+    await manager.send_to_user(str(message.author_id), status_frame)
+
+
+async def _handle_sync_request(
+    websocket: WebSocket, db: Session, user: User, raw_data: dict
+) -> None:
+    """Week 3 Phase 6, Path 1 (confirmed Step 0): the offline-queue read
+    side, built exactly per the shipped contract — per-conversation,
+    resolving `(target_type, target_id)` -> `conversation_id` the same way
+    `app/messages.py::get_messages` already does (`find_conversation_id`/
+    `is_circle_member`), then calling the existing `get_messages_since`
+    unchanged. No new repository function, no contract change — this is a
+    read path, so no `db.commit()` and no interaction with Phase 5's
+    fan-out/broadcast machinery at all.
+    """
+    try:
+        req = SyncRequest.model_validate(raw_data)
+    except ValidationError as exc:
+        await _send_error(
+            websocket,
+            ErrorCode.VALIDATION_FAILED,
+            "invalid sync.request payload",
+            detail={"error": str(exc)},
+        )
+        return
+
+    try:
+        target_uuid = uuid.UUID(req.target_id)
+    except ValueError:
+        await _send_error(websocket, ErrorCode.VALIDATION_FAILED, "target_id must be a valid UUID")
+        return
+
+    caller_id = uuid.UUID(user.id)
+
+    if req.target_type is TargetType.CIRCLE:
+        if not is_circle_member(db, circle_id=target_uuid, user_id=caller_id):
+            await _send_error(websocket, ErrorCode.UNAUTHORIZED, "Not a member of this circle")
+            return
+        conversation_id: uuid.UUID | None = target_uuid
+    else:
+        # Read-only resolution (find_conversation_id, not
+        # _get_or_create_conversation): a sync of a DM that's never been
+        # messaged must return empty history, not create a conversations
+        # row as a side effect of a sync.
+        conversation_id = find_conversation_id(db, caller_id, target_uuid)
+
+    if conversation_id is None:
+        batch = SyncBatch(
+            target_type=req.target_type, target_id=req.target_id, messages=[], has_more=False
+        )
+        await websocket.send_json(
+            {"type": FrameType.SYNC_BATCH.value, "data": batch.model_dump(mode="json")}
+        )
+        return
+
+    if req.since_id is not None:
+        try:
+            since_uuid = uuid.UUID(req.since_id)
+        except ValueError:
+            await _send_error(
+                websocket, ErrorCode.VALIDATION_FAILED, "since_id must be a valid UUID"
+            )
+            return
+    else:
+        since_uuid = None
+
+    # Fetch one extra row past the page to learn whether more remain,
+    # without a second COUNT query — same trick as
+    # app/messages.py::get_messages.
+    rows = get_messages_since(
+        db, conversation_id=conversation_id, since_id=since_uuid, limit=req.limit + 1
+    )
+    has_more = len(rows) > req.limit
+    page = rows[: req.limit]
+
+    batch = SyncBatch(
+        target_type=req.target_type,
+        target_id=req.target_id,
+        messages=[message_to_out(row) for row in page],
+        has_more=has_more,
+    )
+    await websocket.send_json(
+        {"type": FrameType.SYNC_BATCH.value, "data": batch.model_dump(mode="json")}
+    )
+
+
+async def _process_frame(websocket: WebSocket, db: Session, user: User, raw_data: dict) -> None:
+    try:
+        raw = RawFrame.model_validate(raw_data)
+    except ValidationError as exc:
+        await _send_error(
+            websocket, ErrorCode.VALIDATION_FAILED, "malformed frame", detail={"error": str(exc)}
+        )
+        return
+
+    if raw.type is FrameType.MESSAGE_SEND:
+        await _handle_message_send(websocket, db, user, raw.data)
+    elif raw.type is FrameType.MESSAGE_DELIVERED:
+        await _handle_message_delivered(websocket, db, user, raw.data)
+    elif raw.type is FrameType.SYNC_REQUEST:
+        await _handle_sync_request(websocket, db, user, raw.data)
+    else:
+        await _send_error(
+            websocket,
+            ErrorCode.VALIDATION_FAILED,
+            f"unsupported frame type from a client: {raw.type.value}",
+        )
+
+
+@router.websocket("/ws")
+async def ws_endpoint(websocket: WebSocket, db: Session = Depends(get_db)) -> None:
+    # Browsers cannot set custom headers (e.g. Authorization) on a WebSocket
+    # handshake, so Depends(HTTPBearer) — which reads that header — can't
+    # authenticate this route the way it does /me. The token travels as a
+    # query param instead; user_from_token is the same stub (soon: real JWT
+    # verification) that get_current_user uses, just fed a differently-sourced
+    # token string, so there's one auth implementation, not two.
+    token = websocket.query_params.get("token")
+    try:
+        user = user_from_token(token)
+    except HTTPException:
+        # Deliberately accept() before close(): uvicorn can only send a real
+        # WS close frame after the handshake completes, so closing before
+        # accept() collapses to a bare HTTP 403 and browsers report ambiguous
+        # code 1006 instead of 1008 — see docs/DECISIONS.md for the full
+        # mechanism and why the distinction matters for reconnect logic: a
+        # bad-token client must stop retrying (1008), a dropped-network
+        # client must keep retrying with backoff (1006), and this delivery
+        # path is exactly where a client that can't tell them apart would
+        # hammer the server under the rural-network conditions it serves.
+        await websocket.accept()
+        await websocket.close(code=1008, reason="missing_or_invalid_token")
+        return
+
+    await manager.connect(user.id, websocket)
+    try:
+        while True:
+            try:
+                raw_data = await websocket.receive_json()
+            except WebSocketDisconnect:
+                raise
+            except Exception:  # noqa: BLE001 - a malformed client payload can
+                # raise json.JSONDecodeError, UnicodeDecodeError, or similar;
+                # all of them mean the same thing here (bad frame, not a
+                # connection problem), so this becomes an error frame, not a
+                # close.
+                logger.info("receive_json: dropping a non-JSON frame")
+                await _send_error(
+                    websocket, ErrorCode.VALIDATION_FAILED, "malformed frame: not valid JSON"
+                )
+                continue
+
+            # A failure processing one frame (bad payload, a DB error, an
+            # unexpected bug) must not kill the connection — only an auth
+            # failure, handled above before the loop even starts, closes
+            # it. Reconnect logic needs the two to stay distinguishable.
+            try:
+                await _process_frame(websocket, db, user, raw_data)
+            except WebSocketDisconnect:
+                raise
+            except Exception:
+                # the "any failure -> error frame, never a close" rule for
+                # this route: an unexpected bug here must not look like a
+                # dropped connection to a client's reconnect logic.
+                logger.exception("_process_frame: unexpected failure handling a WS frame")
+                await _send_error(websocket, ErrorCode.INTERNAL_ERROR, "failed to process message")
+    except WebSocketDisconnect:
+        # Normal control flow, not an error: phones sleep, lifts lose signal,
+        # Wi-Fi hands over to 4G. Every one of those looks identical to a
+        # deliberate disconnect from the server's side, so this is not logged
+        # or treated as a failure — it's the expected way a session ends.
+        pass
+    finally:
+        manager.disconnect(user.id, websocket)

@@ -1,0 +1,19 @@
+{
+  "contract_version": "0.1.0",
+  "has_more": false,
+  "messages": [
+    {
+      "author_id": "user-elder-42",
+      "contract_version": "0.1.0",
+      "created_at": "2026-08-17T09:00:00Z",
+      "id": "msg-01H8X5Q7Z1",
+      "kind": "voice",
+      "status": "pending",
+      "target_id": "circle-satsang-evening",
+      "target_type": "circle",
+      "text": null
+    }
+  ],
+  "target_id": "circle-satsang-evening",
+  "target_type": "circle"
+}
