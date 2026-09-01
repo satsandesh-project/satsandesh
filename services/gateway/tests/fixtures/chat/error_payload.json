@@ -1,8 +1,0 @@
-{
-  "code": "NOT_FOUND",
-  "contract_version": "0.1.0",
-  "detail": {
-    "circle_id": "circle-does-not-exist"
-  },
-  "message": "circle 'circle-does-not-exist' does not exist"
-}

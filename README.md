@@ -71,11 +71,18 @@ who's blocked on whom, see `docs/work-breakdown.md`.
 
 ## Repo layout
 
-> **Note:** two parallel trees currently coexist here from independent branches of Week 1-4
-> work — `gateway/`/`backbone/`/`infra/` (Member 2's platform work, Docker-based) and
-> `services/`/`contracts/` (the team's canonical structure, with its own gateway, Alembic-backed
-> DB schema, and WS implementation). This is a known, real overlap, not an oversight — see
-> `docs/prompt-journal.md`'s Week 4 entries for how it happened and what's unreconciled.
+> **Note:** `gateway/` (Member 2's, Docker-based) is the one real gateway going
+> forward. `services/gateway/` (M3's) has been removed from this branch — it had a
+> genuinely well-designed Postgres schema (real Alembic migrations, DM support,
+> idempotency), but its own README described it as a Week 1 skeleton with auth as an
+> explicit stub and its WebSocket route as a plain echo with no persistence or
+> backbone integration at all. `gateway/` has real auth, a real WebSocket relay, and
+> a working Matrix/Tuwunel backbone (ADR 0002), verified end-to-end against a real
+> deployed server. `contracts/chat/` is now unused (it was `services/gateway/`'s
+> only consumer) — left in place rather than also deleted, since it documents real
+> wire-format decisions that could inform future work; worth a team call on whether
+> to keep or remove it separately. Full reasoning and history:
+> `docs/prompt-journal.md`'s Week 4 entries.
 
 ```
 satsandesh/
@@ -89,8 +96,10 @@ satsandesh/
 │   ├── caddy/            # Reverse proxy / HTTPS config
 │   ├── deploy/           # Deploy scripts (college server + personal/team repo sync)
 │   └── backups/          # Backup scripts (pg_dump + restic)
-├── services/              # Team's canonical service layout (gateway, ai) -- see note above
-├── contracts/             # Shared request/response contracts between services
+├── services/
+│   └── ai/                # M3's AI services (unaffected by the gateway note above)
+├── contracts/             # Shared request/response contracts -- contracts/chat/ now
+│                          # unused, see note above; contracts/ai/ still used by services/ai/
 ├── docs/
 │   ├── adr/               # Architecture Decision Records
 │   ├── SRS.md             # Software Requirements Spec
