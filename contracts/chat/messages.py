@@ -60,3 +60,27 @@ class AckOut(VersionedModel):
     client_msg_id: UUID
     id: str
     status: MessageStatus
+
+
+class DeliveredIn(VersionedModel):
+    """`data` for a `message.delivered` WS frame -- the recipient telling
+    the server "I have this message", which moves it `sent` -> `delivered`
+    (services/gateway/app/ws.py's `_handle_message_delivered`). Restored
+    after being lost when PR #18 reverted this file along with the gateway
+    swap -- see contracts.chat.common.MessageStatus's docstring for the
+    same history."""
+
+    message_id: str
+
+
+class MessageStatusOut(VersionedModel):
+    """`data` for a `message.status` WS frame -- pushed to a message's
+    *author* when its status changes (currently: a recipient's delivery
+    ack), so the sender's UI can move a message from "sent" to "delivered"
+    without polling. Deliberately not the full `MessageOut` shape: the
+    author already has the message; only the status actually changed.
+    Restored after being lost when PR #18 reverted this file along with
+    the gateway swap."""
+
+    id: str
+    status: MessageStatus
