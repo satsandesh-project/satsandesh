@@ -1,0 +1,64 @@
+# Code owners — SatSandesh
+#
+# WHY THIS FILE EXISTS
+#
+# docs/CONVENTIONS.md already says "touching a teammate's folder or a
+# shared file -- flag it to them first." That was an honour-system rule,
+# and in Month 1 it failed silently: a merge removed ~4,100 lines of
+# another member's merged, tested code without that member being on the
+# review. Nobody did anything malicious -- the rule just had no teeth.
+#
+# This file gives it teeth. GitHub automatically requests a review from
+# the listed owner on any PR touching their paths. Combined with branch
+# protection's "Require review from Code Owners" (free on this repo --
+# it's public), a PR cannot merge changes to someone's area without
+# that person actually seeing it.
+#
+# HOW TO READ THE OWNERS BELOW
+#
+# These reflect WHO ACTUALLY AUTHORED WHAT IS IN `main` TODAY -- an
+# objective, git-verifiable fact -- NOT a settlement of the open roles
+# question (see docs/OWNERSHIP.md § "The unresolved bit"). Once the team
+# agrees which role table governs, update this file to match and treat
+# THIS file as the enforcement of that decision.
+#
+# An owner is not a gatekeeper. Anyone may open a PR against any path.
+# The owner just has to have seen it before it merges.
+
+# ---------------------------------------------------------------------
+# Fallback: anything not matched below needs a review from someone.
+# ---------------------------------------------------------------------
+*                               @kpspyolo024 @veerendrakosuri @Master-ff @sainathanv
+
+# ---------------------------------------------------------------------
+# Backend platform -- authored by Veerendra (M2), currently in main
+# ---------------------------------------------------------------------
+/gateway/                       @veerendrakosuri
+/backbone/                      @veerendrakosuri
+/infra/                         @veerendrakosuri
+/db/                            @veerendrakosuri
+/docker-compose.yml             @veerendrakosuri
+/.env.example                   @veerendrakosuri
+
+# ---------------------------------------------------------------------
+# Elder client -- authored by Kshitiz (M1)
+# ---------------------------------------------------------------------
+/clients/elder-app/             @kpspyolo024
+
+# ---------------------------------------------------------------------
+# CONTESTED -- see docs/OWNERSHIP.md. Both the README ownership table and
+# the Month 1 schedule assign these, and they do not agree. Listed with
+# BOTH claimants until the team settles it, so neither is surprised.
+# ---------------------------------------------------------------------
+/ai-services/                   @veerendrakosuri @Master-ff
+/.github/workflows/             @sainathanv @kpspyolo024
+
+# ---------------------------------------------------------------------
+# Architecture & shared agreements -- everyone reviews, by design.
+# An ADR that only one person read is how Month 1's two contradictory
+# copies of ADR 0002 happened.
+# ---------------------------------------------------------------------
+/docs/adr/                      @kpspyolo024 @veerendrakosuri @Master-ff @sainathanv
+/docs/CONVENTIONS.md            @kpspyolo024 @veerendrakosuri @Master-ff @sainathanv
+/docs/OWNERSHIP.md              @kpspyolo024 @veerendrakosuri @Master-ff @sainathanv
+/.github/CODEOWNERS             @kpspyolo024 @veerendrakosuri @Master-ff @sainathanv
