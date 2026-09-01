@@ -64,7 +64,6 @@ Two properties this design must preserve:
 | Student 2 | Platform & backbone            | Gateway, Matrix/custom backbone, PostgreSQL, Docker, deployment, push, backups |
 | Student 3 | Speech & language AI           | ASR/MT/TTS services, pipeline latency, GPU serving, voice-search stretch |
 | Student 4 | Stewardship, quality & pilot    | Moderation prompts/classifier, moderator console, tests/CI, red-teaming, pilot logistics |
-| Supervisor | Prof. Korra Sathya Babu        | Weekly reviews, architecture PRs, org-liaison escalation, ethics approval |
 
 This table is the standing/long-term split. For what ships each sprint and
 who's blocked on whom, see `docs/work-breakdown.md`.
