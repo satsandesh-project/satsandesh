@@ -1,7 +1,15 @@
-# Built from THIS directory as context (services/gateway/), not the repo
-# root -- unlike gateway/spike-matrix-a and friends, this service has no
-# dependency on anything outside its own tree (contracts/chat/ is
-# currently unused by it, per docs/OWNERSHIP.md's Week 4 note).
+# Built from the REPO ROOT as context (see docker-compose.yml), not this
+# directory. Corrects an earlier version of this file that assumed
+# contracts/chat/ was unused here -- empirically wrong, caught by
+# actually running the built image, not by re-reading the code more
+# carefully: app/circles.py and app/messages.py both import from
+# contracts.chat.*, which lives outside services/gateway/'s own tree.
+# Locally, tests/conftest.py works around this by manually inserting the
+# repo root onto sys.path -- that trick is pytest-only and does nothing
+# for `uvicorn app.main:app` run directly, which is exactly what a
+# container does. So both services/gateway/ and contracts/ need to be in
+# the image, structured so contracts.* resolves without conftest.py's
+# help.
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -10,10 +18,18 @@ WORKDIR /app
 # see its own header comment. Docker builds install from this, not
 # pyproject.toml, for a reproducible image, matching what
 # docs/DECISIONS.md's "Dependency pinning" note says this file is for.
-COPY requirements.txt .
+COPY services/gateway/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# app/, alembic/, alembic.ini etc. land directly in /app -- so `app.main`
+# resolves the same way it does when running `uvicorn app.main:app` from
+# inside services/gateway/ locally.
+COPY services/gateway/ .
+# contracts/ as a sibling of app/ inside /app, so `from contracts.chat...`
+# resolves via the CWD-on-sys.path behaviour uvicorn/Python already give
+# /app -- no separate PYTHONPATH env var needed, verified by actually
+# running the built image, not assumed.
+COPY contracts/ ./contracts/
 
 EXPOSE 8000
 

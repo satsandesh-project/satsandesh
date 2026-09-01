@@ -39,7 +39,17 @@ services:
   # gateway end-to-end"), deliberately not mixed into this pass.
   gateway:
     build:
-      context: ./services/gateway
+      # Repo root, not ./services/gateway -- it imports from contracts/
+      # (contracts.chat.*, e.g. app/circles.py), which lives outside its
+      # own directory. Found by actually running the built image, not
+      # assumed: a services/gateway-only context built and started fine
+      # until uvicorn tried to import app.main, which raised
+      # ModuleNotFoundError: No module named 'contracts'. Locally,
+      # services/gateway/conftest.py papers over this for tests by
+      # manually adding the repo root to sys.path -- that trick is
+      # pytest-only and does nothing for a real `uvicorn` process.
+      context: .
+      dockerfile: services/gateway/Dockerfile
     restart: unless-stopped
     environment:
       # postgres:5432, not localhost -- see services/gateway/README.md's
