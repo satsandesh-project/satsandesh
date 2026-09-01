@@ -31,23 +31,32 @@ Design principles (Section 7.5 of the project proposal + the handoff):
   - voice-first: a large press-and-hold mic button, reachable without
     navigating anywhere.
 
-M2's gateway-wiring note (added when merging M1's shell with M2's Week 4
-gateway work, see docs/prompt-journal.md): this screen models multiple
-independent per-contact conversation threads (`messages` below, keyed by
-contact id). The gateway's current WebSocket relay (`gateway/ws.py`)
-implements exactly one shared broadcast circle -- there's no per-contact
-routing on the backend at all yet. Wiring this UI's `send_message`/
-`current_messages` to real delivery therefore needs real backend work
-(multiple circles, a contact-to-circle mapping) before it can happen
-honestly, not just a frontend change. `elder_app/gateway_ws_proof.py`
-keeps the actual working connect/auth/reconnect-with-backoff logic
-(verified end-to-end, both locally and against the real deployed
-server) for whoever picks that work up -- see that module's own
-docstring for what to carry forward and why it isn't wired in here yet.
+Backend-reality update (2026-09-01): the team confirmed the gateway/
+backbone in `gateway/` + `backbone/` as final -- it implements exactly
+one shared broadcast circle (see `gateway/ws.py`'s own docstring), not
+per-contact routing, and has no sent/delivered-receipt concept. Rather
+than keep pretending the old per-contact mock threads were real, this
+screen now does genuine live messaging against that real shared circle:
+join with a display name (`POST /session`), then connect
+(`ws://.../ws`), following the exact connect/reconnect-with-backoff
+pattern already verified end-to-end (locally and against the real
+deployed server) in `elder_app/gateway_ws_proof.py` -- credit to that
+module for the hard-won JS wiring details (on_mount + rx.call_script,
+not rx.script; see its docstring for why). The five contacts on the
+Home screen stay as a faces-before-names navigation surface (still the
+real Week 4 design deliverable), but every one of them opens the same
+real shared circle, with an honest bilingual note saying so -- since
+that's genuinely all that exists on the backend right now, showing
+separate private threads would be a UI lie, not a design choice.
 """
+
+import json
+import os
 
 import reflex as rx
 from rxconfig import config
+
+GATEWAY_PUBLIC_URL = os.environ.get("GATEWAY_PUBLIC_URL", "http://localhost")
 
 # ---------------------------------------------------------------------------
 # Design tokens (verbatim from the Claude Design handoff spec)
@@ -108,6 +117,12 @@ TEXTS = {
         "type_placeholder": "Type a message...",
         "send": "Send",
         "no_messages": "No messages yet. Say hello!",
+        "join_prompt": "What should we call you?",
+        "join_placeholder": "Your name",
+        "join_button": "Join",
+        "shared_circle_note": "This is a shared circle — "
+        "everyone connected can see these messages.",
+        "connecting": "Connecting...",
     },
     "te": {
         "app_name": "సత్‌సందేశ్",
@@ -130,6 +145,11 @@ TEXTS = {
         "type_placeholder": "సందేశం టైప్ చేయండి...",
         "send": "పంపండి",
         "no_messages": "ఇంకా సందేశాలు లేవు. హలో చెప్పండి!",
+        "join_prompt": "మిమ్మల్ని ఏమని పిలవాలి?",
+        "join_placeholder": "మీ పేరు",
+        "join_button": "చేరండి",
+        "shared_circle_note": "ఇది ఒక భాగస్వామ్య వర్గం — కనెక్ట్ అయిన అందరూ ఈ సందేశాలను చూడగలరు.",
+        "connecting": "కనెక్ట్ అవుతోంది...",
     },
 }
 
@@ -186,20 +206,171 @@ CONTACTS = [
     },
 ]
 
-INITIAL_MESSAGES = {
-    "1": [
-        {"from": "them", "text": "Amma, did you take your morning tablets?", "time": "9:02 AM"},
-        {"from": "me", "text": "Yes, just now.", "time": "9:05 AM"},
-    ],
-    "2": [
-        {"from": "them", "text": "Calling you this evening, be free.", "time": "8:40 AM"},
-    ],
-    "3": [
-        {"from": "them", "text": "Your BP reading looks good this week.", "time": "Yesterday"},
-    ],
-    "4": [],
-    "5": [],
+# ---------------------------------------------------------------------------
+# Client-side JS: real session join + WebSocket chat against the shared
+# circle. Pattern lifted from elder_app/gateway_ws_proof.py -- on_mount +
+# rx.call_script (not rx.script, which doesn't fire in this Reflex/React
+# combination; see that module's docstring for the three ruled-out
+# attempts). The live message feed is rendered by this JS directly into a
+# plain DOM node (id="live-chat-messages"), not through Reflex state --
+# same reasoning as the proof module: a persistent socket pushing many
+# async updates doesn't fit rx.call_script's one-shot call/callback shape,
+# and wrapping it as a proper Reflex component wasn't verifiable against
+# stable documented usage without risking a subtly wrong implementation.
+# ---------------------------------------------------------------------------
+
+JOIN_JS_TEMPLATE = """
+(async () => {
+    try {
+        const resp = await fetch(%(gateway_url)s + "/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ display_name: %(name)s }),
+        });
+        if (!resp.ok) return "error:HTTP " + resp.status;
+        const data = await resp.json();
+        window.__satToken = data.token;
+        window.__satUserId = data.user_id;
+        return JSON.stringify({ token: data.token, user_id: data.user_id });
+    } catch (err) {
+        return "error:" + (err && err.message ? err.message : "unreachable");
+    }
+})()
+"""
+
+CHAT_CONNECT_JS_TEMPLATE = """
+if (window.__satsandeshWsInit) {
+  console.log("[satsandesh-ws] already initialized, skipping");
+} else {
+window.__satsandeshWsInit = true;
+(function () {
+  const GATEWAY_URL = %(gateway_url)s;
+  const WS_URL = GATEWAY_URL.replace(/^http/, "ws");
+  const MY_ID = window.__satUserId;
+  const token = window.__satToken;
+
+  const messagesEl = document.getElementById("live-chat-messages");
+  const statusEl = document.getElementById("live-chat-status");
+  if (!messagesEl || !token) return;
+
+  let ws = null;
+  let backoffMs = 1000;
+  const MAX_BACKOFF_MS = 30000;
+  let reconnectAttempt = 0;
+  let intentionalClose = false;
+
+  function setStatus(text) {
+    if (statusEl) statusEl.textContent = text;
+    console.log("[satsandesh-ws] status:", text);
+  }
+
+  function appendMessage(senderId, body, isOwn) {
+    const row = document.createElement("div");
+    row.style.margin = "10px 0";
+    row.style.display = "flex";
+    row.style.justifyContent = isOwn ? "flex-end" : "flex-start";
+    const bubble = document.createElement("div");
+    bubble.style.maxWidth = "80%%";
+    bubble.style.padding = "12px 16px";
+    bubble.style.borderRadius = isOwn ? "16px 16px 4px 16px" : "16px 16px 16px 4px";
+    bubble.style.background = isOwn ? "#EAF1EC" : "#FFFCF6";
+    bubble.style.border = isOwn ? "none" : "1px solid #EADCC4";
+    bubble.style.fontFamily = "Mulish, 'Noto Sans Telugu', system-ui, sans-serif";
+    const who = document.createElement("div");
+    who.style.fontSize = "13px";
+    who.style.fontWeight = "700";
+    who.style.color = "#6E6047";
+    who.style.marginBottom = "2px";
+    who.textContent = isOwn ? "You" : senderId;
+    const text = document.createElement("div");
+    text.style.fontSize = "20px";
+    text.style.color = "#2A2118";
+    text.textContent = body;
+    bubble.appendChild(who);
+    bubble.appendChild(text);
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function appendSystemLine(text) {
+    const row = document.createElement("div");
+    row.style.margin = "8px 0";
+    row.style.fontSize = "14px";
+    row.style.color = "#B4531A";
+    row.style.fontStyle = "italic";
+    row.textContent = text;
+    messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function scheduleReconnect() {
+    reconnectAttempt += 1;
+    const jitter = Math.random() * 300;
+    const delay = backoffMs + jitter;
+    setStatus("Reconnecting... (attempt " + reconnectAttempt + ")");
+    setTimeout(connect, delay);
+    backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+  }
+
+  function connect() {
+    setStatus("Connecting...");
+    ws = new WebSocket(WS_URL + "/ws?token=" + encodeURIComponent(token));
+    window.__satWs = ws;
+
+    ws.onopen = function () {
+      setStatus("Connected");
+      backoffMs = 1000;
+      reconnectAttempt = 0;
+    };
+
+    ws.onmessage = function (event) {
+      const data = JSON.parse(event.data);
+      if (data.type === "history") {
+        messagesEl.innerHTML = "";
+        for (const m of data.messages) {
+          appendMessage(m.sender_id, m.body, m.sender_id === MY_ID);
+        }
+        if (data.warning) appendSystemLine(data.warning);
+      } else if (data.type === "message") {
+        appendMessage(data.sender_id, data.body, data.sender_id === MY_ID);
+      } else if (data.type === "error") {
+        appendSystemLine(data.detail);
+      }
+    };
+
+    ws.onclose = function (event) {
+      if (intentionalClose) return;
+      if (event.code === 4401) {
+        setStatus("Session expired -- please rejoin");
+        return;
+      }
+      scheduleReconnect();
+    };
+
+    ws.onerror = function () {};
+  }
+
+  connect();
+
+  window.addEventListener("beforeunload", function () {
+    intentionalClose = true;
+    if (ws) ws.close();
+  });
+})();
 }
+"""
+
+CHAT_SEND_JS = """
+(() => {
+  const input = document.getElementById("live-chat-input");
+  const body = (input.value || "").trim();
+  if (!body || !window.__satWs || window.__satWs.readyState !== WebSocket.OPEN) return "";
+  window.__satWs.send(JSON.stringify({ body: body }));
+  input.value = "";
+  return "sent";
+})()
+"""
 
 # ---------------------------------------------------------------------------
 # Client-side JS for real MediaRecorder-backed voice capture
@@ -248,10 +419,18 @@ STOP_RECORDING_JS = """
 class State(rx.State):
     language: str = "en"
     current_contact_id: str = ""
-    draft_text: str = ""
     active_tab: str = "people"
     contacts: list[dict[str, str]] = CONTACTS
-    messages: dict[str, list[dict[str, str]]] = INITIAL_MESSAGES
+
+    # Real gateway session -- POST /session -> a token, then the WS
+    # connect in CHAT_CONNECT_JS_TEMPLATE. No password, no account:
+    # the gateway's own auth.py issues a token for whatever display name
+    # is given (see that file's docstring -- not final auth, a real step
+    # up from a bare client-asserted string on every message).
+    display_name_input: str = ""
+    joined: bool = False
+    join_error: str = ""
+    my_display_name: str = ""
 
     mic_recording: bool = False
     mic_permission_denied: bool = False
@@ -268,16 +447,11 @@ class State(rx.State):
                 return c
         return {}
 
-    @rx.var
-    def current_messages(self) -> list[dict[str, str]]:
-        return self.messages.get(self.current_contact_id, [])
-
     def open_chat(self, contact_id: str):
         self.current_contact_id = contact_id
 
     def go_home(self):
         self.current_contact_id = ""
-        self.draft_text = ""
 
     def toggle_language(self):
         self.language = "te" if self.language == "en" else "en"
@@ -285,17 +459,43 @@ class State(rx.State):
     def set_active_tab(self, tab: str):
         self.active_tab = tab
 
-    def set_draft(self, value: str):
-        self.draft_text = value
+    def set_display_name_input(self, value: str):
+        self.display_name_input = value
 
-    def send_message(self):
-        text = self.draft_text.strip()
-        if not text:
+    def join_circle(self):
+        self.join_error = ""
+        name = self.display_name_input.strip()
+        if not name:
+            return None
+        js = JOIN_JS_TEMPLATE % {
+            "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
+            "name": json.dumps(name),
+        }
+        return rx.call_script(js, callback=State.on_joined)
+
+    def on_joined(self, result: str):
+        if result.startswith("error:"):
+            self.join_error = result[len("error:") :]
             return
-        existing = self.messages.get(self.current_contact_id, [])
-        updated = existing + [{"from": "me", "text": text, "time": "now"}]
-        self.messages = {**self.messages, self.current_contact_id: updated}
-        self.draft_text = ""
+        # window.__satToken/__satUserId (set by JOIN_JS_TEMPLATE) are all
+        # the JS side needs -- CHAT_CONNECT_JS_TEMPLATE reads them
+        # directly, no need to round-trip the user_id through Python state.
+        self.my_display_name = self.display_name_input.strip()
+        self.joined = True
+
+    def connect_chat(self):
+        if not self.joined:
+            return None
+        js = CHAT_CONNECT_JS_TEMPLATE % {"gateway_url": json.dumps(GATEWAY_PUBLIC_URL)}
+        return rx.call_script(js)
+
+    def send_live_message(self):
+        return rx.call_script(CHAT_SEND_JS)
+
+    def handle_chat_key_down(self, key: str):
+        if key == "Enter":
+            return rx.call_script(CHAT_SEND_JS)
+        return None
 
     def start_recording(self):
         self.mic_permission_denied = False
@@ -795,41 +995,67 @@ def home_screen() -> rx.Component:
     )
 
 
-def message_bubble(msg: rx.Var[dict]) -> rx.Component:
-    is_me = msg["from"] == "me"
-    return rx.box(
-        rx.text(msg["text"], style={"font_size": "20px", "line_height": "1.4"}),
-        rx.text(
-            msg["time"],
-            style={"font_size": "13px", "color": COLOR["muted_ink"], "margin_top": "4px"},
+def join_screen() -> rx.Component:
+    """Shown once, before Home. The gateway needs a display name to
+    issue a session token (POST /session) -- there's no other identity
+    source yet (see auth.py's own docstring: not final auth)."""
+    return rx.center(
+        rx.vstack(
+            rx.text(
+                State.t["app_name"],
+                style={
+                    "font_family": FONT_SERIF,
+                    "font_weight": "600",
+                    "font_size": "2rem",
+                    "color": COLOR["ink"],
+                },
+            ),
+            rx.text(
+                State.t["join_prompt"],
+                style={"font_size": "1.05rem", "color": COLOR["muted_ink"], "text_align": "center"},
+            ),
+            rx.input(
+                placeholder=State.t["join_placeholder"],
+                value=State.display_name_input,
+                on_change=State.set_display_name_input,
+                style={
+                    "min_height": "60px",
+                    "font_size": "20px",
+                    "padding": "0 16px",
+                    "border_radius": "12px",
+                    "border": f"1px solid {COLOR['warm_border']}",
+                    "width": "100%",
+                },
+            ),
+            rx.button(
+                State.t["join_button"],
+                on_click=State.join_circle,
+                style={
+                    "min_height": "60px",
+                    "width": "100%",
+                    "font_size": "20px",
+                    "font_weight": "700",
+                    "border_radius": "12px",
+                    "background": COLOR["deep_green"],
+                    "color": COLOR["card_cream"],
+                    "border": "none",
+                    "cursor": "pointer",
+                },
+            ),
+            rx.cond(
+                State.join_error != "",
+                rx.text(State.join_error, style={"color": "#8A3E0F", "font_weight": "600"}),
+                rx.fragment(),
+            ),
+            spacing="4",
+            width="100%",
+            style={"max_width": "420px", "padding": "24px"},
         ),
-        style=rx.cond(
-            is_me,
-            {
-                "align_self": "flex-end",
-                "background": COLOR["green_tint"],
-                "border_radius": "16px 16px 4px 16px",
-                "padding": "12px 16px",
-                "max_width": "80%",
-            },
-            {
-                "align_self": "flex-start",
-                "background": COLOR["card_cream"],
-                "border": f"1px solid {COLOR['warm_border']}",
-                "border_radius": "16px 16px 16px 4px",
-                "padding": "12px 16px",
-                "max_width": "80%",
-            },
-        ),
+        style={"min_height": "100vh", "background": COLOR["cream_canvas"]},
     )
 
 
 def chat_screen() -> rx.Component:
-    name = rx.cond(
-        State.language == "en",
-        State.current_contact["name_en"],
-        State.current_contact["name_te"],
-    )
     return rx.vstack(
         rx.hstack(
             rx.button(
@@ -846,34 +1072,48 @@ def chat_screen() -> rx.Component:
                     "cursor": "pointer",
                 },
             ),
-            rx.text(name, style={"font_size": "24px", "font_weight": "700", "color": COLOR["ink"]}),
+            rx.text(
+                State.my_display_name,
+                style={"font_size": "18px", "font_weight": "600", "color": COLOR["muted_ink"]},
+            ),
             rx.spacer(),
             language_toggle(),
             width="100%",
             align="center",
             spacing="3",
         ),
-        rx.cond(
-            State.current_messages.length() > 0,
-            rx.vstack(
-                rx.foreach(State.current_messages, message_bubble),
-                spacing="3",
-                width="100%",
-                align_items="stretch",
-                style={"padding": "16px 4px", "min_height": "50vh"},
+        rx.box(
+            rx.text(
+                State.t["shared_circle_note"],
+                style={"font_size": "0.9rem", "color": "#8A5B12"},
             ),
-            rx.center(
-                rx.text(
-                    State.t["no_messages"], style={"font_size": "20px", "color": COLOR["muted_ink"]}
-                ),
-                style={"min_height": "50vh"},
-            ),
+            style={
+                "background": COLOR["gold_sand"],
+                "border": "1px solid #EFD9A8",
+                "border_radius": "14px",
+                "padding": "10px 14px",
+                "margin_bottom": "8px",
+            },
+        ),
+        rx.text(
+            State.t["connecting"],
+            id="live-chat-status",
+            style={"font_size": "0.85rem", "color": COLOR["muted_ink"]},
+        ),
+        rx.box(
+            id="live-chat-messages",
+            style={
+                "min_height": "45vh",
+                "max_height": "50vh",
+                "overflow_y": "auto",
+                "padding": "12px 4px",
+            },
         ),
         rx.hstack(
             rx.input(
+                id="live-chat-input",
                 placeholder=State.t["type_placeholder"],
-                value=State.draft_text,
-                on_change=State.set_draft,
+                on_key_down=State.handle_chat_key_down,
                 style={
                     "flex": "1",
                     "min_height": "60px",
@@ -885,7 +1125,7 @@ def chat_screen() -> rx.Component:
             ),
             rx.button(
                 State.t["send"],
-                on_click=State.send_message,
+                on_click=State.send_live_message,
                 style={
                     "min_height": "60px",
                     "min_width": "100px",
@@ -909,6 +1149,7 @@ def chat_screen() -> rx.Component:
         ),
         spacing="3",
         width="100%",
+        on_mount=State.connect_chat,
         style={
             "max_width": "560px",
             "margin": "0 auto",
@@ -922,7 +1163,11 @@ def chat_screen() -> rx.Component:
 
 def index() -> rx.Component:
     return rx.box(
-        rx.cond(State.current_contact_id == "", home_screen(), chat_screen()),
+        rx.cond(
+            State.joined,
+            rx.cond(State.current_contact_id == "", home_screen(), chat_screen()),
+            join_screen(),
+        ),
         style={"background": COLOR["cream_canvas"], "font_family": FONT_LATIN},
     )
 
