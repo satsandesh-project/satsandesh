@@ -999,3 +999,79 @@ functional, not just open.
 **Nothing left open from this specific gap.** The real server now runs
 the same `--env prod` build that's verified locally, with real evidence
 gathered directly against it, not inferred from the local result.
+
+## Week 1 correction — Compose skeleton now boots M3's gateway, not mine
+
+**Date:** 2026-09-01
+
+Real, consequential event, not a normal week: my `merge-team-main` branch
+had already been merged into `main` as PR #18 -- not by me, not something
+I was told about -- and it deleted M3's `services/gateway/` (~4,100
+lines, merged, tested, CI-green) in the process. M3 restored it (PR #22).
+The team then wrote `docs/OWNERSHIP.md` + `.github/CODEOWNERS`, which
+settled something this project's own planning documents had silently
+disagreed about the whole month: `README.md`/`work-breakdown.md` (the
+proposal's roles) say gateway is M2's; the real
+`SatSandesh_Month1_Schedule.docx` -- which explicitly states proposal
+roles were "set aside as agreed" -- assigns the Week 1 gateway skeleton
+and Week 2 data model to M3. Both M2 and M3 built a real, working gateway
+in good faith, each correct under a different document. Read the actual
+schedule doc directly rather than continue guessing (extracted via
+`python-docx`, since it's a local `.docx`, not in the repo) before
+touching anything further.
+
+**Under that real schedule, M2's actual Week 1 task was never "build a
+gateway"** -- it was "Docker Compose skeleton (postgres, gateway,
+ai-services stub, caddy) + .env handling." This corrects
+`docker-compose.yml` to match: the `gateway` service now builds
+`services/gateway/` (M3's), not `gateway/` (mine). `gateway/` itself is
+untouched, still CODEOWNERS'd to me, not deleted -- only what the
+skeleton boots changed.
+
+**Two real bugs found getting it to actually boot, neither guessed:**
+
+1. `services/gateway/` had no `Dockerfile` at all -- wrote one. First
+   version built from `services/gateway/` alone as context and crashed
+   uvicorn on startup: `ModuleNotFoundError: No module named
+   'contracts'`. `app/circles.py`/`app/ws.py` import
+   `contracts.chat.*`, which lives outside that directory entirely;
+   locally, `tests/conftest.py` papers over this by manually adding the
+   repo root to `sys.path`, a trick that does nothing for a real
+   `uvicorn app.main:app` process. Fixed by building from the repo root
+   as context (matching how `gateway/spike-matrix-a` already do this for
+   `backbone/interfaces.py`) and copying both trees into the image.
+2. With that fixed, a second, different crash: `ImportError: cannot
+   import name 'DeliveredIn' from 'contracts.chat.messages'` -- exactly
+   the bug M1 (Kshitiz) had already reported directly: PR #18 reverted
+   `contracts/chat/common.py`/`messages.py`/`envelope.py` to an older
+   state along with the gateway swap, silently dropping
+   `MessageStatus.SENT`/`CANCELLED`, the `DeliveredIn`/`MessageStatusOut`
+   classes, and their `FrameType` entries. Confirmed independently (not
+   just trusted secondhand) by hitting the identical failure myself, then
+   restored all of it matching real usage in `app/ws.py`/`app/messages.py`
+   exactly, not guessed shapes. All 26 existing `contracts/chat/` tests
+   still pass.
+
+**Verified for real on the server's rootless Docker**, not assumed:
+`docker compose ps` shows `gateway` reaching `(healthy)` off a clean
+build, and a direct in-container check
+(`docker exec ... urlopen('http://localhost:8000/health/ready')`)
+returned `{"status":"ok","checks":{"postgres":"ok"}}` -- genuine Postgres
+connectivity through the real Alembic-migrated schema, not a stub.
+Brought up the full base stack (postgres, gateway, ai-services, caddy)
+together and confirmed all reach healthy.
+
+**Deliberately not touched, stated plainly:** `infra/caddy/Caddyfile` and
+`clients/elder-app/` still assume `gateway/`'s old routes (`/session`,
+`/db-check`) -- `services/gateway/` has neither (`/circles`, `/messages`,
+`/ws`, `/me` instead, Bearer-token auth, no session-issuing endpoint at
+all yet). Real, visible right now as a 404-serving-the-elder-app-shell
+when hitting Caddy on `:8080` instead of the gateway. That mismatch is
+Week 4's task ("wire client -> gateway end-to-end"), not mixed into this
+Week 1 pass.
+
+Week 2's actual M2 task under the real schedule -- "Backbone spike B:
+custom-lite (FastAPI WS + PostgreSQL outbox)" -- already exists,
+unchanged, in `backbone/spike-custom-lite/`, built earlier this project
+before the schedule-vs-proposal conflict was known. Nothing further
+needed there to move forward into Week 2.
