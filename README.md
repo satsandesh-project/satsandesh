@@ -71,18 +71,20 @@ who's blocked on whom, see `docs/work-breakdown.md`.
 
 ## Repo layout
 
-> **Note:** `gateway/` (Member 2's, Docker-based) is the one real gateway going
-> forward. `services/gateway/` (M3's) has been removed from this branch — it had a
-> genuinely well-designed Postgres schema (real Alembic migrations, DM support,
-> idempotency), but its own README described it as a Week 1 skeleton with auth as an
-> explicit stub and its WebSocket route as a plain echo with no persistence or
-> backbone integration at all. `gateway/` has real auth, a real WebSocket relay, and
-> a working Matrix/Tuwunel backbone (ADR 0002), verified end-to-end against a real
-> deployed server. `contracts/chat/` is now unused (it was `services/gateway/`'s
-> only consumer) — left in place rather than also deleted, since it documents real
-> wire-format decisions that could inform future work; worth a team call on whether
-> to keep or remove it separately. Full reasoning and history:
-> `docs/prompt-journal.md`'s Week 4 entries.
+> **Note:** `services/gateway/` (M3's) is the intended real gateway going forward —
+> restored after briefly being removed from this branch (see git history / the
+> prompt journal for both sides of that back-and-forth). **Not yet actually
+> functional as the running system**, though: it has a genuinely well-designed
+> Postgres schema (real Alembic migrations, DM support, idempotency) but its own
+> README describes it as a Week 1 skeleton — auth is an explicit stub (any
+> non-empty token accepted), and its WebSocket route is a plain echo with no
+> persistence, broadcast, or backbone integration at all. It also has no
+> Dockerfile/compose entry — never containerized. `gateway/` (Member 2's) is what's
+> actually deployed and running on the real staging server right now, with real
+> auth, WS relay, and Matrix/Tuwunel integration (ADR 0002). Making
+> `services/gateway/` the real running system needs that gap closed first — see
+> `docs/prompt-journal.md`'s Week 4 entries for the specifics and the open
+> question of whether that keeps Matrix (ADR 0002) or not.
 
 ```
 satsandesh/
@@ -96,10 +98,8 @@ satsandesh/
 │   ├── caddy/            # Reverse proxy / HTTPS config
 │   ├── deploy/           # Deploy scripts (college server + personal/team repo sync)
 │   └── backups/          # Backup scripts (pg_dump + restic)
-├── services/
-│   └── ai/                # M3's AI services (unaffected by the gateway note above)
-├── contracts/             # Shared request/response contracts -- contracts/chat/ now
-│                          # unused, see note above; contracts/ai/ still used by services/ai/
+├── services/              # Team's canonical service layout (gateway, ai) -- see note above
+├── contracts/             # Shared request/response contracts between services
 ├── docs/
 │   ├── adr/               # Architecture Decision Records
 │   ├── SRS.md             # Software Requirements Spec

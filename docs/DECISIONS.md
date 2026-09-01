@@ -1,12 +1,5 @@
 # Repo-wide notes
 
-> **On this branch (`merge-team-main`), `services/gateway/` described below has
-> been removed** in favor of `gateway/` (Member 2's) — see the README's "Repo
-> layout" note for the reasoning. This section is left as-is rather than rewritten,
-> since it's M3's own record of their decisions; it now describes a directory that
-> no longer exists on this branch specifically, not a correction to what actually
-> happened when it was written.
-
 ## Two workstreams, one person, two project documents
 
 This repository intentionally contains two separate workstreams, both belonging
