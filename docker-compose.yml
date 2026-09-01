@@ -1,0 +1,228 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Scripts here run once, only against a fresh (empty) data dir.
+      - ./db/init:/docker-entrypoint-initdb.d
+    ports:
+      # Overridable -- a shared host may already have something else bound
+      # to 5432 (e.g. another project's own Postgres). Nothing else in
+      # this stack reaches Postgres via the host port; every other
+      # service talks to it over the compose-internal network by service
+      # name, so remapping this is always safe.
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    build:
+      # Repo root, so the image can include backbone/interfaces.py — the
+      # contract the gateway's backbone client implements. See
+      # .dockerignore for what's kept out of the context.
+      context: .
+      dockerfile: gateway/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      # Where the gateway reaches the backbone. ADR 0002 is decided
+      # (Option A, Matrix/Tuwunel) -- points at matrix-circle-service,
+      # which only actually exists when the "matrix" profile is up.
+      # Swapping backbones is exactly this line plus a client
+      # implementation (see gateway/backbone_client.py); no change to
+      # gateway/circles.py, verified by an AST check every time it's
+      # touched (see docs/adr/0002-chat-backbone.md).
+      BACKBONE_URL: ${BACKBONE_URL:-http://matrix-circle-service:8000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ai-services:
+    build:
+      context: ./ai-services
+    restart: unless-stopped
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Week 4: placeholder elder client (see clients/elder-app/README.md --
+  # not Member 1's real UI shell). In the base stack, not a profile: it's
+  # core client wiring, not an exploratory spike. Degrades gracefully if
+  # no backbone profile is up (the gateway's own /circles routes 503
+  # cleanly; this client surfaces that as an inline warning rather than
+  # failing to load).
+  elder-app:
+    build:
+      context: ./clients/elder-app
+    restart: unless-stopped
+    environment:
+      # Both need the ONE public origin the browser actually reaches --
+      # Caddy serves the elder-app page and the gateway's routes from the
+      # same origin (see infra/caddy/Caddyfile), so both read the same
+      # variable rather than risking two independently-configured values
+      # drifting apart.
+      REFLEX_API_URL: ${PUBLIC_ORIGIN:-http://localhost}
+      GATEWAY_PUBLIC_URL: ${PUBLIC_ORIGIN:-http://localhost}
+    depends_on:
+      gateway:
+        condition: service_healthy
+    # Only 3000 -- the Dockerfile runs --env prod, which unifies frontend
+    # and backend onto ONE port (see the Dockerfile's own comment for the
+    # full reasoning). There is no separate 8000 to expose in this mode.
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3000/ping', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # Spike B (Week 2): custom-lite chat backbone, FastAPI WebSockets +
+  # Postgres outbox. Exploratory, not part of the Week 1 shell — only
+  # starts with `docker compose --profile spike up`, never with a plain
+  # `docker compose up`. Reuses the existing postgres service; its schema
+  # (spike_messages/spike_outbox) is applied by the app itself on startup,
+  # separate from db/init/. See backbone/spike-custom-lite/ and
+  # docs/adr/0002-chat-backbone.md.
+  spike-backbone:
+    profiles: ["spike"]
+    build:
+      # Repo root, so the image can include backbone/interfaces.py (the
+      # contract this service implements), which lives outside this
+      # service's own directory.
+      context: .
+      dockerfile: backbone/spike-custom-lite/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Published directly (not routed through Caddy this week) so it's
+      # reachable for manual poking during the spike without joining the
+      # compose network.
+      - "8100:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Matrix backend (ADR 0002, Option A): Tuwunel homeserver + the
+  # FastAPI service implementing CircleBackbone against it. Separate
+  # "matrix" profile so it never starts with a plain `docker compose up`
+  # or with `--profile spike` -- the two backbone implementations don't
+  # run against each other's rooms/outbox. See backbone/spike-matrix-a/.
+  tuwunel:
+    profiles: ["matrix"]
+    image: ghcr.io/matrix-construct/tuwunel:latest
+    restart: unless-stopped
+    environment:
+      TUWUNEL_SERVER_NAME: localhost
+      TUWUNEL_DATABASE_PATH: /var/lib/tuwunel
+      TUWUNEL_ALLOW_REGISTRATION: "true"
+      # Confirmed by actually starting the container and reading its own
+      # refusal, not by guessing from docs: without a registration_token,
+      # Tuwunel hard-refuses to start with allow_registration on unless
+      # this exact flag says so explicitly. Fine for a local dev spike --
+      # this is exactly the abuse case the flag exists to gate.
+      TUWUNEL_YES_I_AM_VERY_VERY_SURE_I_WANT_AN_OPEN_REGISTRATION_SERVER_PRONE_TO_ABUSE: "true"
+      # Also confirmed by reading the container's own startup warning:
+      # it defaults to binding 127.0.0.1/[::1], which is unreachable from
+      # another container (matrix-circle-service needs to reach this one
+      # by service name over the compose network).
+      TUWUNEL_ADDRESS: "0.0.0.0"
+      # Single-node dev setup -- Spike A's own findings note federation
+      # was irrelevant to the join bug it found, and we have no second
+      # server to federate with here anyway.
+      TUWUNEL_ALLOW_FEDERATION: "false"
+    volumes:
+      - tuwunel_data:/var/lib/tuwunel
+    ports:
+      # Published for the bootstrap/registration script and manual
+      # poking. 8448 (federation) is exposed by the image but unused
+      # with federation off.
+      - "8008:8008"
+    # The image ships its own healthcheck binary flag -- confirmed by
+    # inspecting the image directly (`docker inspect`) rather than
+    # assuming curl/wget/python exist in what turned out to be a
+    # shell-less minimal image. Declared explicitly here to shorten the
+    # interval for faster dev feedback than the image's 30s default.
+    healthcheck:
+      test: ["CMD", "tuwunel", "--health-check"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  matrix-circle-service:
+    profiles: ["matrix"]
+    build:
+      # Repo root, same reason as gateway/spike-backbone: needs
+      # backbone/interfaces.py, which lives outside this service's own
+      # directory.
+      context: .
+      dockerfile: backbone/spike-matrix-a/circle_service/Dockerfile
+    restart: unless-stopped
+    environment:
+      HOMESERVER_URL: http://tuwunel:8008
+      SERVER_NAME: localhost
+    depends_on:
+      tuwunel:
+        condition: service_healthy
+    ports:
+      - "8101:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      # Overridable -- a shared host may already have something bound to
+      # 80 (e.g. a system-level Apache/Nginx a student has no permission
+      # to touch). If you change this, ALLOWED_ORIGINS and PUBLIC_ORIGIN
+      # must include the same non-default port -- browsers only omit the
+      # port from the Origin header for a protocol's actual default (80
+      # for http), not for whatever this happens to be set to.
+      - "${CADDY_HOST_PORT:-80}:80"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile
+    # Wait for both upstreams to be *healthy*, not merely started — otherwise
+    # Caddy can accept traffic and 502 while uvicorn is still booting.
+    depends_on:
+      gateway:
+        condition: service_healthy
+      ai-services:
+        condition: service_healthy
+      elder-app:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  tuwunel_data:

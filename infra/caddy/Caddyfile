@@ -1,0 +1,49 @@
+:80 {
+	# Most specific matches first -- a catch-all further down would
+	# otherwise swallow everything ahead of it.
+
+	# AI services.
+	handle_path /ai/* {
+		reverse_proxy ai-services:8001
+	}
+
+	# Gateway's own routes. `handle` (not `handle_path`) preserves the
+	# path -- gateway's handlers expect the full path (e.g. `/health`),
+	# not a stripped one.
+	handle /health {
+		reverse_proxy gateway:8000
+	}
+	handle /db-check {
+		reverse_proxy gateway:8000
+	}
+	handle /session {
+		reverse_proxy gateway:8000
+	}
+	handle /ws {
+		reverse_proxy gateway:8000
+	}
+	handle /circles* {
+		reverse_proxy gateway:8000
+	}
+
+	# Everything else -- both the elder-app frontend itself (compiled
+	# pages, JS bundles) AND Reflex's own internal backend paths (/ping,
+	# /_event*, /_upload*, /_health, /_all_routes -- its state sync, not
+	# the SatSandesh gateway). These used to be split across two ports
+	# (elder-app:3000 vs :8000) because Reflex's DEV mode runs frontend
+	# and backend as separate processes on separate ports. The
+	# Dockerfile runs --env prod, which unifies both onto ONE port
+	# (confirmed by reading Reflex's own source -- see the Dockerfile's
+	# comment) -- so every elder-app path, internal or not, now genuinely
+	# goes to the same place, and the split was actively wrong (pointing
+	# at a port nothing binds in prod mode) until fixed here.
+	handle {
+		reverse_proxy elder-app:3000
+	}
+}
+
+# Local dev / early staging only -- plain HTTP on port 80, proxying by
+# Docker Compose's internal service-name DNS. HTTPS via Let's Encrypt
+# needs a real domain (see docs/deployment.md) and is deliberately
+# deferred until before Week 6-7, when microphone access starts requiring
+# it (browsers block getUserMedia on non-HTTPS origins except localhost).

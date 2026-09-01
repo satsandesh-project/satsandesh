@@ -30,6 +30,20 @@ Design principles (Section 7.5 of the project proposal + the handoff):
     and contact names/metadata. Free-typed message text is left as typed.
   - voice-first: a large press-and-hold mic button, reachable without
     navigating anywhere.
+
+M2's gateway-wiring note (added when merging M1's shell with M2's Week 4
+gateway work, see docs/prompt-journal.md): this screen models multiple
+independent per-contact conversation threads (`messages` below, keyed by
+contact id). The gateway's current WebSocket relay (`gateway/ws.py`)
+implements exactly one shared broadcast circle -- there's no per-contact
+routing on the backend at all yet. Wiring this UI's `send_message`/
+`current_messages` to real delivery therefore needs real backend work
+(multiple circles, a contact-to-circle mapping) before it can happen
+honestly, not just a frontend change. `elder_app/gateway_ws_proof.py`
+keeps the actual working connect/auth/reconnect-with-backoff logic
+(verified end-to-end, both locally and against the real deployed
+server) for whoever picks that work up -- see that module's own
+docstring for what to carry forward and why it isn't wired in here yet.
 """
 
 import reflex as rx

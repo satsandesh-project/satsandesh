@@ -53,3 +53,130 @@ Two properties this design must preserve:
 2. **Over-blocking is a first-class defect.** An elder's message about a sick spouse vanishing without
    explanation is worse than a dispute getting through. False-hold rate is a tracked metric, not an
    afterthought.
+
+---
+
+## Team & ownership
+
+| Member    | Role                          | Owns                                                                 |
+|-----------|--------------------------------|-----------------------------------------------------------------------|
+| Student 1 | Product & elder experience     | Reflex elder client, onboarding flows, accessibility, synced-lyrics UI |
+| Student 2 | Platform & backbone            | Gateway, Matrix/custom backbone, PostgreSQL, Docker, deployment, push, backups |
+| Student 3 | Speech & language AI           | ASR/MT/TTS services, pipeline latency, GPU serving, voice-search stretch |
+| Student 4 | Stewardship, quality & pilot    | Moderation prompts/classifier, moderator console, tests/CI, red-teaming, pilot logistics |
+| Supervisor | Prof. Korra Sathya Babu        | Weekly reviews, architecture PRs, org-liaison escalation, ethics approval |
+
+This table is the standing/long-term split. For what ships each sprint and
+who's blocked on whom, see `docs/work-breakdown.md`.
+
+## Repo layout
+
+> **Note:** `gateway/` (Member 2's, Docker-based) is the one real gateway going
+> forward. `services/gateway/` (M3's) has been removed from this branch — it had a
+> genuinely well-designed Postgres schema (real Alembic migrations, DM support,
+> idempotency), but its own README described it as a Week 1 skeleton with auth as an
+> explicit stub and its WebSocket route as a plain echo with no persistence or
+> backbone integration at all. `gateway/` has real auth, a real WebSocket relay, and
+> a working Matrix/Tuwunel backbone (ADR 0002), verified end-to-end against a real
+> deployed server. `contracts/chat/` is now unused (it was `services/gateway/`'s
+> only consumer) — left in place rather than also deleted, since it documents real
+> wire-format decisions that could inform future work; worth a team call on whether
+> to keep or remove it separately. Full reasoning and history:
+> `docs/prompt-journal.md`'s Week 4 entries.
+
+```
+satsandesh/
+├── gateway/              # FastAPI gateway — auth, routing, WebSocket fan-out
+├── backbone/             # Chat backbone — Matrix bot (Option A) or custom FastAPI+Postgres (Option B)
+├── ai-services/          # ASR / MT / TTS / moderation services
+├── clients/
+│   ├── elder-app/        # Reflex elder PWA
+│   └── admin-console/    # Reflex admin/moderator console
+├── infra/
+│   ├── caddy/            # Reverse proxy / HTTPS config
+│   ├── deploy/           # Deploy scripts (college server + personal/team repo sync)
+│   └── backups/          # Backup scripts (pg_dump + restic)
+├── services/
+│   └── ai/                # M3's AI services (unaffected by the gateway note above)
+├── contracts/             # Shared request/response contracts -- contracts/chat/ now
+│                          # unused, see note above; contracts/ai/ still used by services/ai/
+├── docs/
+│   ├── adr/               # Architecture Decision Records
+│   ├── SRS.md             # Software Requirements Spec
+│   └── policy-taxonomy.md # Content stewardship taxonomy
+└── .github/workflows/     # CI pipelines
+```
+
+## Process
+
+- Scrum-lite, 16 fortnightly sprints, demo every second Friday.
+- Definition of Done: code + tests + docs + deployed to staging + demoed.
+- AI writes code, humans own it — nothing merges unread. Tests first. Small PRs.
+- Every student keeps a prompt journal (prompts + corrections behind each feature).
+- Security checklist run every sprint.
+
+## Status
+
+Month 1 — foundations. Backbone architecture spike (Matrix/Conduit vs custom-lite)
+resolved (Option A, Matrix/Tuwunel — see `docs/adr/0002-chat-backbone.md`). Member 2's
+platform work (gateway, deployment, Week 1-4) is complete and deployed to a real staging
+host; see `docs/prompt-journal.md` for the full history.
+
+## How to run locally (Member 2's `gateway`/`docker-compose.yml` tree)
+
+### Prerequisites
+
+- Docker Desktop (Windows/Mac) or Docker Engine + Compose plugin (Linux)
+
+### Run & Verify
+
+```bash
+# 1. Copy the env template and fill in real dev values (never commit .env)
+cp .env.example .env
+
+# 2. Build and start everything
+docker compose up --build
+```
+
+Wait until `docker compose ps` shows `postgres`, `gateway`, `ai-services`, and
+`caddy` all as `healthy`, then check each route (all go through Caddy on
+port 80 — no other ports need to be open):
+
+```bash
+curl http://localhost/health      # -> {"status":"ok"}                gateway
+curl http://localhost/ai/health   # -> {"status":"ok","service":...}  ai-services
+curl http://localhost/db-check    # -> {"status":"ok","schema_check":"db init ran"}
+```
+
+`db-check` confirms `db/init/001_init.sql` ran on first Postgres boot and
+seeded the `schema_check` table.
+
+Data persists across restarts via the named `pgdata` volume:
+
+```bash
+docker compose down     # stop containers, keep the volume
+docker compose up       # data from before is still there
+```
+
+To wipe the database and re-run init from scratch:
+
+```bash
+docker compose down -v  # removes the named volume too
+```
+
+The Matrix backbone profile (ADR 0002's chosen option) starts alongside the base stack with:
+
+```bash
+docker compose --profile matrix up -d
+```
+
+### Running tests
+
+Each service has its own `pytest` suite. Run these locally (in a venv or
+just directly) — not inside the container: `.dockerignore` excludes
+`tests/` from the image, so the tests aren't there to run.
+
+```bash
+cd gateway && pip install -r requirements.txt -r requirements-dev.txt && pytest
+cd ai-services && pip install -r requirements.txt -r requirements-dev.txt && pytest
+```

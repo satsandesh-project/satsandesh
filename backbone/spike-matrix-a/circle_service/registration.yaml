@@ -1,0 +1,22 @@
+# Application Service registration template for the circles Matrix
+# backbone. Structure copied from Spike A's registration.yaml (same
+# fields, same PLACEHOLDER-token pattern) -- tokens and namespace are
+# fresh, not reused from Spike A's own appservice, which claims a
+# different namespace (@spike_.*) for a different purpose.
+#
+# Real tokens are substituted from environment variables at bootstrap
+# time (see bootstrap.py) -- this file with placeholders is what's
+# committed; nothing here is a real secret.
+
+id: "REPLACE_WITH_AS_ID_FROM_ENV"
+url: http://matrix-circle-service:8000
+as_token: "REPLACE_WITH_AS_TOKEN_FROM_ENV"
+hs_token: "REPLACE_WITH_HS_TOKEN_FROM_ENV"
+sender_localpart: "REPLACE_WITH_BOT_LOCALPART_FROM_ENV"
+rate_limited: false
+namespaces:
+  users:
+    - exclusive: true
+      regex: "@circle_.*:localhost"
+  aliases: []
+  rooms: []

@@ -1,26 +1,55 @@
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
-.venv/
+.eggs/
 venv/
+.venv/
+env/
+*.env
+.env.*
+!.env.example
+
+# Reflex
+.web/
+*.db
+
+# Node (if any JS tooling creeps in)
+node_modules/
+
+# Docker
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Secrets
+secrets/
+*.pem
+*.key
+
+# Real server details (IP, hostnames) -- never committed, see
+# docs/deployment.md.
+docs/server-notes.md
+
+# Backups / media (never commit real data)
+infra/backups/*.dump
+infra/backups/*.sql
+media/
+pgdata/
+
+# Test/lint caches and coverage output
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .coverage
 htmlcov/
 
-.env
-.env.*
-!.env.example
-
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-
-pgdata/
-*.log
-
+# Model weights -- never commit these
 models/
 *.gguf
 *.pt
