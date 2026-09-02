@@ -779,9 +779,30 @@ before the real cause was obvious.
 
 **No `sudo` on this account.** `infra/deploy/deploy.sh`'s firewall setup
 needs root and can't run here. Skipped it and ran the underlying `docker
-compose` commands directly -- Docker itself didn't need `sudo` (the
-account was already in the `docker` group), so this only cost the
-firewall-hardening step, not the deployment itself.
+compose` commands directly -- Docker itself didn't need `sudo`, so this
+only cost the firewall-hardening step, not the deployment itself.
+
+**Correction (2026-09-02):** the reason given above -- "the account was
+already in the `docker` group" -- was never actually checked and turned
+out to be wrong. `groups` on this account today shows no `docker` group
+membership at all. The real reason no `sudo` was needed is the one the
+Week 1 correction entry below states correctly: this account runs
+**genuine rootless Docker**, not rootful Docker with group-based access.
+Confirmed directly, not inferred: `docker context ls` shows `rootless *`
+as this account's active context; `docker info` reports `Context:
+rootless`, lists `rootless` under Security Options, and warns "Running in
+rootless-mode without cgroups"; `ps` shows the actual `dockerd` this
+account's `docker` CLI talks to running as `satsandesh` via `rootlesskit`
+(PID owned by `satsandesh`, not `root`); `systemctl --user status docker`
+shows an active user-level "Docker Application Container Engine
+(Rootless)" service. A separate, unrelated **rootful** `dockerd` (PID
+1553, `root`, system `docker.service`, running since 2026-06-17) also
+exists on this box -- likely installed for/by another user or purpose --
+but it is not this account's default context and nothing in this project
+talks to it. Rootless Docker needs no `sudo` and no `docker` group by
+design (the daemon itself runs unprivileged); the original entry observed
+a true fact (no `sudo` needed) and reached for a plausible-sounding but
+unverified and incorrect explanation for it.
 
 **Two host-port conflicts, both from other real things already running
 on this shared server:** a teammate's own Postgres container already had
@@ -1075,3 +1096,157 @@ custom-lite (FastAPI WS + PostgreSQL outbox)" -- already exists,
 unchanged, in `backbone/spike-custom-lite/`, built earlier this project
 before the schedule-vs-proposal conflict was known. Nothing further
 needed there to move forward into Week 2.
+
+## Month 1 close-out — three real, open items
+
+**Date:** 2026-09-02
+
+Three genuinely open pieces remained after the Week 1 correction above:
+whether `services/gateway/` could now be wired to the Matrix backbone
+this project actually decided on (ADR 0002), whether today's client
+rewiring to `services/gateway/` (several same-day fix commits, none
+journaled yet) actually works end to end, and a real contradiction
+between this file's own entries about rootless vs. rootful Docker. Taking
+each in turn.
+
+### Rootless vs. rootful Docker, resolved with real evidence
+
+The "Week 4 (continued) — real staging deployment" entry above originally
+explained "no `sudo` needed for Docker" as "the account was already in
+the `docker` group" — never actually checked. The Week 1 correction entry
+above it separately asserted "rootless Docker" without new evidence. Two
+different explanations for the same observation, never reconciled.
+
+Checked directly rather than guessed: `groups` on the deployment account
+shows no `docker` group membership at all — that explanation was simply
+wrong. `docker context ls` shows `rootless *` as this account's active
+context; `docker info` reports `Context: rootless`, lists `rootless`
+under Security Options, and warns "Running in rootless-mode without
+cgroups"; `ps` shows the actual `dockerd` process this account's CLI
+talks to running as `satsandesh` (not `root`) via `rootlesskit`;
+`systemctl --user status docker` shows an active user-level "Docker
+Application Container Engine (Rootless)" service. A separate, unrelated
+**rootful** `dockerd` also runs on this box as a system service (PID
+owned by `root`, up since 2026-06-17) — but it is not this account's
+context and nothing here talks to it.
+
+**Real answer: rootless Docker, confirmed by `docker info` and process
+ownership, not group membership.** The original entry's explanation has
+been corrected in place (see the "Correction (2026-09-02)" paragraph
+above, left next to the claim it corrects rather than as a disconnected
+new entry).
+
+### Wiring the Matrix backbone into `services/gateway/`
+
+Investigated whether `services/gateway/app/circles.py` (currently talking
+directly to Postgres via `app/db/repository.py`, no relationship to
+`backbone/interfaces.py` at all) could now be wired to the
+`CircleBackbone` contract and its Matrix implementation
+(`backbone/spike-matrix-a/circle_service/matrix_circle_store.py`), now
+that both are real and working.
+
+**Read the actual code before deciding anything, not assumed to look
+like the removed `gateway/circles.py` did.** Two concrete, code-level
+findings made this a real architectural migration, not a same-session
+wiring task:
+
+1. `services/gateway/`'s `messages.target_circle_id` is a Postgres `UUID`
+   column with a real foreign key to `circles.id` (also `UUID`), plus a
+   `CHECK` constraint requiring `conversation_id = target_circle_id` for
+   circle messages (`app/db/models.py`). `CircleBackbone.circle_id` is an
+   opaque `str` — confirmed live: creating a circle against
+   `matrix-circle-service` right now returns
+   `"!MPnY6xWrSQtECZ5nkZ:localhost"`, not a UUID. Swapping the real
+   backend means either a schema migration on that FK's type (cascading
+   through `memberships.circle_id` and every query built on it) or a
+   shadow mapping table, not a drop-in swap.
+2. `CircleBackbone.post_announcement`/`list_messages` post and read
+   circle messages *through the backbone itself* — confirmed by reading
+   `matrix_circle_store.py`'s actual behavior (bot-posts-with-recorded-
+   sender, Matrix's own `history_visibility` for offline delivery).
+   `services/gateway/` doesn't work that way: circle and DM messages
+   already share *one* delivery path — `create_message_with_created_flag`
+   /`get_messages_since`, the WS `ConnectionManager` fan-out, the undo
+   window, offline sync, and Web Push targeting (real, working, M3-built
+   Week 3/4 work). Routing circle messages through `CircleBackbone`
+   instead means forking them onto a second path with none of that, or
+   writing real glue code to bridge Matrix events back into it.
+
+**Decision, recorded in `docs/adr/0002-chat-backbone.md`'s own "Update
+(2026-09-02)" section (not just here — this is exactly the kind of call
+that document exists to track):** `services/gateway/` keeps direct
+Postgres for circles for now. ADR 0002's actual decision (Option A,
+Matrix/Tuwunel) is unchanged; the integration is explicitly scoped out as
+real future work, not silently dropped, with the two migration paths
+above named as the first thing whoever picks it up needs to choose
+between.
+
+**Verified the deferred path still genuinely works, live, so the
+deferral is "this is real work," not "this is broken":** against
+`matrix-circle-service` directly (not mocked) —
+`POST /circles` → `{"circle_id":"!MPnY6xWrSQtECZ5nkZ:localhost"}`;
+`POST /circles/{id}/members` → `{"status":"ok"}`;
+`POST /circles/{id}/announce` → a real Matrix event id
+(`$vQr_jw4NYhVtWbZWzcIwwDx27qI4KFgmmcjHg_WW9l8`);
+`GET /circles/{id}/messages` → the posted message back, with the right
+sender, body, and timestamp.
+
+### Verifying and journaling today's client rewiring
+
+Today's commits (`82d4066` through `2979529`) rewired `clients/elder-app/`
+to `services/gateway/`'s real protocol and fixed, in order: token
+generation not producing a valid UUID (crashing the auth stub's
+per-user-identity path), `crypto.randomUUID()` requiring a secure context
+this plain-HTTP deploy doesn't have, `services/gateway/`'s auth stub
+never provisioning a `users` row for a fresh UUID token (a
+`ForeignKeyViolation` on `POST /circles`, fixed by M3 after being handed
+a reproduction + patch, then merged in), and two duplicate `MessageStatus`
+enum members introduced by that merge (both sides had independently
+restored the same values, in different positions — Python enums reject a
+redefined name). None of this had a journal entry until now.
+
+**Full stack brought up fresh** (`docker compose down` + `docker compose
+up --build -d`, base stack — `matrix` profile left running, untouched):
+`postgres`, `gateway`, `ai-services`, `elder-app` all reach `(healthy)`;
+`caddy` has no healthcheck defined (confirmed by reading
+`docker-compose.yml` — not an oversight in this pass) so its health was
+instead confirmed by real traffic: `curl http://localhost:8080/health` →
+`{"status":"ok"}`, `/ai/health` → `{"status":"ok","service":"ai-services"}`,
+`/` → real `200`.
+
+**Two real, different users, two browser tabs — the same bar as every
+previous week, not lowered for a fix pass.** Joined as "Alice" (tab A)
+and "Bob" (tab B) against the live deploy. Both joined cleanly (the fixed
+crash is gone), each got a real, distinct UUID identity, each connected
+over WS. Alice sent "hello from Alice" — rendered in her own tab
+immediately. **Bob's tab never showed it.** Checked why rather than
+assumed: `window.__satToken`/`window.__satCircleId` read directly from
+each tab confirmed Alice and Bob hold two different circle ids
+(`...3455` vs. `...54f7`) — `GET /circles` is scoped to the caller, and
+since each is now a genuinely distinct user (the token fix's whole
+point), a second real user joining fresh creates their *own* circle
+instead of finding the first's. This is the self-join gap already flagged
+in the fix handoff to M3, reproduced here live, not a new bug from
+today's work.
+
+**Isolated whether the underlying fan-out itself still works, separate
+from that UI-level gap:** used Alice's own token (she's admin of her
+circle) to `POST /circles/{alice_circle}/members` with Bob's real user id
+— `200 OK`, a genuine membership row. Pointed Bob's already-open tab at
+Alice's circle id (`window.__satCircleId` set directly, same value the
+client's own JS already reads) and sent from Bob's tab through the real
+UI send box. It did not appear on Alice's tab within a couple of seconds
+— **not a failure**, remembered and confirmed rather than mistaken for
+one: `app/undo.py` deliberately delays `message.new` fan-out by
+`UNDO_WINDOW_SECONDS` (30s default) for sender-side undo. Waited the real
+window out — Bob's message ("hello from Bob (now sharing Alice's
+circle)") appeared on Alice's tab labeled with Bob's real UUID as sender.
+**The delivery mechanism itself is correct for two different real users
+once they share a circle; the two-tab test's initial failure is
+precisely the known self-join gap, isolated with evidence, not a defect
+in today's rewiring.**
+
+**Redeploy status:** the staging server (`10.110.11.31`) was already on
+today's latest commit before this verification pass (pulled and rebuilt
+repeatedly while chasing the fixes above) — no separate redeploy needed
+to bring it current.
