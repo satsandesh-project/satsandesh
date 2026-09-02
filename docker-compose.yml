@@ -28,15 +28,15 @@ services:
   # (SatSandesh_Month1_Schedule.docx), the gateway itself is M3's Week 1
   # task; M2's Week 1 task is this Compose skeleton, wiring together
   # whichever gateway/ai-services/postgres/caddy exist, not building the
-  # gateway's own logic. gateway/ (M2's) stays in the repo, CODEOWNERS'd
-  # and untouched, but is not what this stack boots going forward.
+  # gateway's own logic.
   #
-  # Scope note: this only covers Week 1's actual deliverable ("docker
-  # compose up boots the skeleton"). It does NOT yet update
-  # infra/caddy/Caddyfile or clients/elder-app/ to match
-  # services/gateway/'s real route set (/circles, /messages, /ws, /me --
-  # no /session, no /db-check) -- that's Week 4's task ("wire client ->
-  # gateway end-to-end"), deliberately not mixed into this pass.
+  # gateway/ (M2's) removed from the repo entirely (2026-09-02): the team
+  # confirmed services/gateway/ as the one gateway going forward, so the
+  # parallel implementation was redundant. Its Matrix backbone
+  # (backbone/spike-matrix-a/circle_service/ + tuwunel, "matrix" profile
+  # below) stays -- it's ADR 0002's actual decided chat backbone and
+  # services/gateway/ doesn't use it yet; that integration is separate,
+  # not-yet-done work, not something this removal answers.
   gateway:
     build:
       # Repo root, not ./services/gateway -- it imports from contracts/
