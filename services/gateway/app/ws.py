@@ -430,7 +430,7 @@ async def ws_endpoint(websocket: WebSocket, db: Session = Depends(get_db)) -> No
     # token string, so there's one auth implementation, not two.
     token = websocket.query_params.get("token")
     try:
-        user = user_from_token(token)
+        user = user_from_token(token, db)
     except HTTPException:
         # Deliberately accept() before close(): uvicorn can only send a real
         # WS close frame after the handshake completes, so closing before

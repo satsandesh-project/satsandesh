@@ -139,7 +139,7 @@ def ws_login_as(monkeypatch):
 
     tokens: dict[str, WireUser] = {}
 
-    def _fake_user_from_token(token):
+    def _fake_user_from_token(token, db):
         from fastapi import HTTPException
 
         if token is None or token not in tokens:
