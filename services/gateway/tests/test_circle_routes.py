@@ -83,6 +83,36 @@ def test_post_circles_creates_circle(client, db_session, login_as):
     assert membership.role == "admin"
 
 
+def test_post_circles_with_real_uuid_token_provisions_a_users_row(client, db_session):
+    # Deliberately not using the login_as fixture -- that overrides
+    # get_current_user directly, bypassing app.auth.user_from_token
+    # entirely, so it can't reproduce this bug. This sends a real
+    # Authorization header instead, exercising the actual stub: app/auth.py's
+    # "Week 3 Phase 7 widening" turns a UUID-shaped token into that user's
+    # real per-user id, but (before get_or_create_user) never persisted a
+    # matching `users` row for it -- so the FK on circles.created_by
+    # rejected the INSERT with a real ForeignKeyViolation the first time a
+    # fresh token actually got used to write. Reproduced live via elder-app:
+    # join with a freshly generated UUID token, then POST /circles 500ed
+    # with exactly that constraint violation (docker logs veerendra-gateway-1).
+    token = str(uuid.uuid4())
+
+    response = client.post(
+        "/circles",
+        json={"name": "General"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["created_by"] == token
+
+    from app.db.models import User as DbUser
+
+    provisioned = db_session.get(DbUser, uuid.UUID(token))
+    assert provisioned is not None
+    assert str(provisioned.id) == token
+
+
 def test_post_circles_members_adds_member(client, db_session, login_as):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")

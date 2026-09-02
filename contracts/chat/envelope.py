@@ -5,7 +5,13 @@ from pydantic import BaseModel, Field
 
 from contracts.chat.common import TargetType, VersionedModel
 from contracts.chat.errors import ErrorPayload
-from contracts.chat.messages import AckOut, DeliveredIn, MessageIn, MessageOut, MessageStatusOut
+from contracts.chat.messages import (
+    AckOut,
+    DeliveredIn,
+    MessageIn,
+    MessageOut,
+    MessageStatusOut,
+)
 
 DataT = TypeVar("DataT", bound=BaseModel)
 
@@ -14,12 +20,6 @@ class FrameType(str, Enum):
     MESSAGE_SEND = "message.send"
     MESSAGE_ACK = "message.ack"
     MESSAGE_NEW = "message.new"
-    # MESSAGE_DELIVERED (client -> server) and MESSAGE_STATUS (server ->
-    # client) restored after being lost when PR #18 reverted this file
-    # along with the gateway swap -- see
-    # contracts.chat.common.MessageStatus's docstring for the same
-    # history. services/gateway/app/ws.py's frame dispatch
-    # (_process_frame) already assumes both exist.
     MESSAGE_DELIVERED = "message.delivered"
     MESSAGE_STATUS = "message.status"
     SYNC_REQUEST = "sync.request"

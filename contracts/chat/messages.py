@@ -63,24 +63,19 @@ class AckOut(VersionedModel):
 
 
 class DeliveredIn(VersionedModel):
-    """`data` for a `message.delivered` WS frame -- the recipient telling
-    the server "I have this message", which moves it `sent` -> `delivered`
-    (services/gateway/app/ws.py's `_handle_message_delivered`). Restored
-    after being lost when PR #18 reverted this file along with the gateway
-    swap -- see contracts.chat.common.MessageStatus's docstring for the
-    same history."""
+    """`data` for a `message.delivered` WS frame — the recipient confirming
+    actual receipt of a `message.new`, not just that the server attempted a
+    push. DM-scoped only (see app/ws.py's `_handle_message_delivered`);
+    there is deliberately no equivalent for circle messages yet."""
 
     message_id: str
 
 
 class MessageStatusOut(VersionedModel):
-    """`data` for a `message.status` WS frame -- pushed to a message's
-    *author* when its status changes (currently: a recipient's delivery
-    ack), so the sender's UI can move a message from "sent" to "delivered"
-    without polling. Deliberately not the full `MessageOut` shape: the
-    author already has the message; only the status actually changed.
-    Restored after being lost when PR #18 reverted this file along with
-    the gateway swap."""
+    """`data` for a `message.status` WS frame — pushed to the *sender's*
+    connected devices when a message's status changes after the initial
+    ack (currently: `sent` -> `delivered`), so their UI can move off
+    whatever it showed for the ack without polling."""
 
     id: str
     status: MessageStatus

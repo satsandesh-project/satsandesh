@@ -2,19 +2,23 @@ import uuid
 
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
 
+from app.db.base import get_db
+from app.db.repository import get_or_create_user
 from app.models import User
 
 bearer = HTTPBearer(auto_error=False)
 
 
-def user_from_token(token: str | None) -> User:
+def user_from_token(token: str | None, db: Session) -> User:
     # STUB: replace body with real JWT verification (Week 2/3). Signature must
-    # not change. This is the single place that turns a raw token string into
-    # a User — both get_current_user (HTTP, token from the Authorization
-    # header) and app/ws.py (WebSocket, token from a ?token= query param,
-    # since browsers can't set custom headers on a WS handshake) call through
-    # here rather than each having their own copy of the verification logic.
+    # not change beyond the `db` param added below. This is the single place
+    # that turns a raw token string into a User — both get_current_user (HTTP,
+    # token from the Authorization header) and app/ws.py (WebSocket, token
+    # from a ?token= query param, since browsers can't set custom headers on
+    # a WS handshake) call through here rather than each having their own
+    # copy of the verification logic.
     #
     # Week 3 Phase 7 widening: still zero real verification (no signature, no
     # expiry — still very much a stub), but a token that happens to parse as
@@ -29,19 +33,31 @@ def user_from_token(token: str | None) -> User:
     # distinct from the recipient). Any token that isn't a valid UUID falls
     # back to the exact old hardcoded stub, unchanged, so this is additive,
     # not a behavior change for existing callers.
+    #
+    # `db` param added: the widening above returns a UUID as `user.id` but
+    # never persisted a matching `users` row for it, so any write with a FK
+    # to `users.id` (circles.created_by first among them) 500ed with a
+    # ForeignKeyViolation the first time a fresh UUID token actually got
+    # used — reproduced live via a real join + POST /circles. get_or_create_user
+    # provisions that row before returning, same "additive, not a behavior
+    # change" reasoning as the widening it completes.
     if token is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
-        uuid.UUID(token)
+        parsed = uuid.UUID(token)
     except ValueError:
         return User(id="stub-user-1", name="Test Elder", preferred_language="te", role="elder")
+    get_or_create_user(
+        db, user_id=parsed, name="Test Elder", preferred_language="te", role="elder"
+    )
     return User(id=token, name="Test Elder", preferred_language="te", role="elder")
 
 
 async def get_current_user(
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
+    db: Session = Depends(get_db),
 ) -> User:
-    return user_from_token(creds.credentials if creds is not None else None)
+    return user_from_token(creds.credentials if creds is not None else None, db)
 
 
 def require_role(*allowed_roles: str):

@@ -12,7 +12,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Circle, Conversation, Membership, Message, PushSubscription
+from app.db.models import Circle, Conversation, Membership, Message, PushSubscription, User
 
 # Exact names Alembic generated for the two UNIQUE constraints this module
 # recovers from (alembic/versions/8761697bd6bb_initial_schema_users_circles_.py,
@@ -282,6 +282,30 @@ def set_message_status(
     )
     session.flush()
     return result.rowcount > 0
+
+
+def get_or_create_user(
+    session: Session, *, user_id: uuid.UUID, name: str, preferred_language: str, role: str
+) -> User:
+    """Provisions a `users` row for a token-derived id if one doesn't exist
+    yet. app/auth.py's user_from_token stub (its "Week 3 Phase 7 widening")
+    fabricates a wire-layer User purely from the token -- a UUID-shaped
+    token becomes that user's real per-user id with no corresponding DB
+    row ever inserted. That's fine for routes that only read `user.id`,
+    but anything with a FK to `users.id` (circles.created_by,
+    memberships.user_id, messages.author_id, ...) hits a ForeignKeyViolation
+    the first time a fresh token is actually used to write -- reproduced via
+    POST /circles 500ing with exactly that constraint violation. Called
+    from user_from_token itself so both call sites (HTTP's get_current_user
+    and app/ws.py) are covered from the one place, matching that stub's own
+    "single swap point" reasoning."""
+    existing = session.get(User, user_id)
+    if existing is not None:
+        return existing
+    user = User(id=user_id, name=name, preferred_language=preferred_language, role=role)
+    session.add(user)
+    session.flush()
+    return user
 
 
 def create_circle(session: Session, *, name: str, created_by: uuid.UUID) -> Circle:
