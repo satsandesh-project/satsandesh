@@ -123,6 +123,41 @@ def test_post_messages_dm_creates_message(client, db_session, login_as):
     assert isinstance(body["id"], str) and body["id"]
 
 
+def test_post_messages_dm_to_never_authenticated_target_provisions_a_users_row(
+    client, db_session, login_as
+):
+    # PR #23 review: get_or_create_user only ran for the authenticating
+    # caller (app/auth.py's user_from_token) — but a 1:1 message's *target*
+    # hits the exact same ForeignKeyViolation if it's a UUID that's never
+    # authenticated, since _get_or_create_conversation and Message.
+    # target_user_id both FK to users.id too. Alice is a real seeded user
+    # (so her own FK is already satisfied); Bob is a bare UUID that has
+    # never made a request and has no users row at all — not a fixture
+    # that pre-creates both sides, since that would silently skip past the
+    # exact gap this test exists to cover.
+    alice = _make_db_user(db_session, "Alice")
+    login_as(alice)
+    bob_id = uuid.uuid4()
+
+    response = client.post(
+        "/messages",
+        json={
+            "client_msg_id": str(uuid.uuid4()),
+            "target_type": "user",
+            "target_id": str(bob_id),
+            "kind": "text",
+            "text": "hi Bob, we've never met",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"]
+
+    provisioned = db_session.get(DbUser, bob_id)
+    assert provisioned is not None
+    assert provisioned.id == bob_id
+
+
 def test_post_messages_dm_to_self_is_rejected(client, db_session, login_as):
     # Not a supported case (see app/ws.py's identical check, added
     # alongside this one, for the full reasoning): docs/SCHEMA_DRAFT.md's

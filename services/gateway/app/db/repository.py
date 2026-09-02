@@ -118,6 +118,24 @@ def _create_message_impl(
     if target_type == "circle":
         conversation_id = target_circle_id
     else:
+        # Same ForeignKeyViolation as app/auth.py's user_from_token stub
+        # (get_or_create_user's own docstring), just triggered from the
+        # other side of a DM: _get_or_create_conversation's Conversation
+        # row and this Message row both FK target_user_id to users.id, and
+        # nothing has provisioned that row if the *target* has never
+        # authenticated (only the sender is guaranteed a row, via that
+        # same auth-side fix) — reachable the moment Alice messages a
+        # UUID Bob has never used to log in. Provisioned here, the one
+        # place both send paths (HTTP's POST /messages and WS's
+        # message.send) funnel through, rather than duplicated at each
+        # call site.
+        get_or_create_user(
+            session,
+            user_id=target_user_id,
+            name="Test Elder",
+            preferred_language="te",
+            role="elder",
+        )
         conversation_id = _get_or_create_conversation(session, author_id, target_user_id).id
 
     message = Message(
