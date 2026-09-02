@@ -1250,3 +1250,31 @@ in today's rewiring.**
 today's latest commit before this verification pass (pulled and rebuilt
 repeatedly while chasing the fixes above) — no separate redeploy needed
 to bring it current.
+
+### Privilege-escalation fix, regressed and reapplied
+
+While reading `services/gateway/app/circles.py` for the Matrix-wiring
+investigation above, found the privilege-escalation fix from earlier this
+project (`36f5976`, Aug 31 — a plain circle member could grant admin to a
+colluding account, since `POST /circles/{id}/members` only checked that
+the caller was *a* member, any role, before honoring whatever role
+`MembershipCreate.role` asked for) was gone from the current file. The
+commit itself is still in git history, but `a0bf71a`'s restoration of
+`services/gateway/` (recovering it after PR #18 deleted it) pulled from a
+snapshot that predated the fix, silently reintroducing the vulnerable
+version — an accidental side effect of a legitimate restoration, not a
+new bug anyone wrote on purpose.
+
+`git cherry-pick -n 36f5976` applied cleanly, no conflicts, onto all
+three files it originally touched (`app/circles.py`,
+`app/db/repository.py`, `tests/test_circle_routes.py`). Verified for
+real, not assumed clean just because the cherry-pick had no conflicts:
+rebuilt the gateway image from scratch, ran the full suite in the actual
+container against a real Postgres test DB — 175 passed, the same single
+pre-existing, unrelated `test_config.py` environment-isolation failure as
+every other run this session, no new failures. Ran the three
+privilege-escalation tests by name directly: `test_ordinary_member_can_-
+still_add_an_ordinary_member`, `test_ordinary_member_cannot_grant_-
+admin_to_a_new_member`, `test_admin_can_grant_admin_to_a_new_member` —
+all three pass, confirming the fix is back, the ordinary-invite path
+still works, and the legitimate admin-grants-admin path still works.
