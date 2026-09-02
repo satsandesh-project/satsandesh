@@ -434,7 +434,9 @@ window.__satsandeshWsInit = true;
   function upsertMessage(contactId, msg) {
     const thread = threadFor(contactId);
     const idx = thread.findIndex(
-      (m) => (msg.id && m.id === msg.id) || (msg.client_msg_id && m.client_msg_id === msg.client_msg_id)
+      (m) =>
+        (msg.id && m.id === msg.id) ||
+        (msg.client_msg_id && m.client_msg_id === msg.client_msg_id)
     );
     if (idx === -1) {
       thread.push(msg);
@@ -485,9 +487,14 @@ window.__satsandeshWsInit = true;
   function handleFrame(frame) {
     if (frame.type === "message.ack") {
       const data = frame.data;
-      const contactId = window.__satPendingSendTarget && window.__satPendingSendTarget[data.client_msg_id];
+      const contactId =
+        window.__satPendingSendTarget && window.__satPendingSendTarget[data.client_msg_id];
       if (contactId) {
-        upsertMessage(contactId, { client_msg_id: data.client_msg_id, id: data.id, status: data.status });
+        upsertMessage(contactId, {
+          client_msg_id: data.client_msg_id,
+          id: data.id,
+          status: data.status,
+        });
         scheduleSentTransition(contactId, data.id);
         delete window.__satPendingSendTarget[data.client_msg_id];
       }
