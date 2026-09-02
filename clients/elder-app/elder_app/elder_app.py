@@ -233,15 +233,19 @@ JOIN_JS_TEMPLATE = """
     try {
         // No /session endpoint on services/gateway/ (Week 1 correction,
         // 2026-09-01: the skeleton now boots services/gateway/, M3's, not
-        // gateway/) -- auth is HTTPBearer, and app/auth.py's
-        // user_from_token stub accepts any non-empty string, returning
-        // the SAME hardcoded user for all of them ("stub-user-1"). There
-        // is genuinely nothing to fetch a real per-user token from yet --
-        // real auth isn't any Week 1-4 task in the schedule (closest is
-        // M4's Week 2 "Auth + onboarding"). This generates a
-        // client-side placeholder token instead of pretending a real
-        // issuance step exists.
-        const token = "elder-" + %(name)s.replace(/[^a-zA-Z0-9]/g, "") + "-" + Date.now();
+        // gateway/) -- auth is HTTPBearer, real per-user issuance isn't
+        // built yet (closest task is M4's Week 2 "Auth + onboarding").
+        // BUT app/auth.py's user_from_token stub (his own "Week 3 Phase 7
+        // widening") already has a real, documented, intended path for
+        // this: a token that happens to parse as a UUID is used AS that
+        // user's real id -- only a non-UUID token collapses to the old
+        // broken hardcoded "stub-user-1" (not a valid UUID, 500s on any
+        // uuid.UUID(user.id) call, i.e. almost every route). Generating a
+        // real random UUID per session, not an arbitrary string, is what
+        // actually engages that path -- confirmed by hitting exactly the
+        // 500 his own comment describes before this fix, then confirming
+        // it's gone after switching to crypto.randomUUID().
+        const token = crypto.randomUUID();
         window.__satToken = token;
 
         // Find-or-create the one shared circle every contact opens (see
