@@ -149,3 +149,74 @@ def test_post_circles_members_requires_authorization(client, db_session, login_a
 
     membership = db_session.get(Membership, (circle.id, bob.id))
     assert membership is None
+
+
+def test_ordinary_member_can_still_add_an_ordinary_member(client, db_session, login_as):
+    # The fix below (plain member cannot grant an elevated role) must not
+    # regress the existing, intended "any member can invite" behaviour for
+    # the default (member) role -- this is the case the privilege-
+    # escalation fix must NOT break.
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")
+    carol = _make_db_user(db_session, "Carol")
+    circle = create_circle(db_session, name="Evening Satsang", created_by=alice.id)
+    add_member(db_session, circle_id=circle.id, user_id=alice.id, role="admin")
+    add_member(db_session, circle_id=circle.id, user_id=bob.id, role="member")
+    login_as(bob)
+
+    response = client.post(f"/circles/{circle.id}/members", json={"user_id": str(carol.id)})
+
+    assert response.status_code == 200
+    membership = db_session.get(Membership, (circle.id, carol.id))
+    assert membership is not None
+    assert membership.role == "member"
+
+
+def test_ordinary_member_cannot_grant_admin_to_a_new_member(client, db_session, login_as):
+    # The actual vulnerability: MembershipCreate.role is fully
+    # caller-controlled and the route previously checked only that the
+    # caller was A member, any role, before honoring whatever role they
+    # asked to grant someone else -- so a plain member could add a
+    # second, colluding account directly as admin. No test exercised this
+    # boundary before this one: every other test either grants the caller
+    # admin first, or only ever requests the default (member) role.
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")
+    mallory = _make_db_user(db_session, "Mallory")
+    circle = create_circle(db_session, name="Evening Satsang", created_by=alice.id)
+    add_member(db_session, circle_id=circle.id, user_id=alice.id, role="admin")
+    add_member(db_session, circle_id=circle.id, user_id=bob.id, role="member")
+    login_as(bob)
+
+    response = client.post(
+        f"/circles/{circle.id}/members",
+        json={"user_id": str(mallory.id), "role": "admin"},
+    )
+
+    assert response.status_code == 403
+    # Not just the right status code -- confirm the escalation genuinely
+    # did not happen, since a 403 returned AFTER a commit would be a much
+    # worse bug than the endpoint just being slow to reject.
+    membership = db_session.get(Membership, (circle.id, mallory.id))
+    assert membership is None
+
+
+def test_admin_can_grant_admin_to_a_new_member(client, db_session, login_as):
+    # The fix's other side: an actual admin granting an elevated role is
+    # legitimate and must keep working -- this isn't "nobody can ever
+    # grant admin," only "a non-admin member can't."
+    alice = _make_db_user(db_session, "Alice")
+    dora = _make_db_user(db_session, "Dora")
+    circle = create_circle(db_session, name="Evening Satsang", created_by=alice.id)
+    add_member(db_session, circle_id=circle.id, user_id=alice.id, role="admin")
+    login_as(alice)
+
+    response = client.post(
+        f"/circles/{circle.id}/members",
+        json={"user_id": str(dora.id), "role": "admin"},
+    )
+
+    assert response.status_code == 200
+    membership = db_session.get(Membership, (circle.id, dora.id))
+    assert membership is not None
+    assert membership.role == "admin"
