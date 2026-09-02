@@ -7,22 +7,29 @@
 		reverse_proxy ai-services:8001
 	}
 
-	# Gateway's own routes. `handle` (not `handle_path`) preserves the
-	# path -- gateway's handlers expect the full path (e.g. `/health`),
-	# not a stripped one.
+	# Gateway's own routes -- services/gateway/'s real route set (Week 1
+	# correction, 2026-09-01: the skeleton now boots services/gateway/,
+	# not gateway/). No /session, no /db-check -- neither exists on this
+	# gateway; auth is HTTPBearer (any non-empty token, still a stub) and
+	# there's no separate schema-check endpoint. `handle` (not
+	# `handle_path`) preserves the path -- the handlers expect the full
+	# path (e.g. `/health`), not a stripped one.
 	handle /health {
 		reverse_proxy gateway:8000
 	}
-	handle /db-check {
+	handle /health/ready {
 		reverse_proxy gateway:8000
 	}
-	handle /session {
+	handle /me {
 		reverse_proxy gateway:8000
 	}
 	handle /ws {
 		reverse_proxy gateway:8000
 	}
 	handle /circles* {
+		reverse_proxy gateway:8000
+	}
+	handle /messages* {
 		reverse_proxy gateway:8000
 	}
 

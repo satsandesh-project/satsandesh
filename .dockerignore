@@ -1,8 +1,10 @@
-# Root build context, used by services that need backbone/interfaces.py
-# copied into their image (gateway, spike-backbone). Docker only reads a
-# .dockerignore from the *context root*, so this file is what applies to
-# those builds -- the per-service ones they used to have are gone, since
-# they'd have looked active while being silently ignored.
+# Root build context, used by services that need something outside their
+# own directory copied into their image: services/gateway/ needs
+# contracts/, spike-backbone and matrix-circle-service need
+# backbone/interfaces.py. Docker only reads a .dockerignore from the
+# *context root*, so this file is what applies to those builds -- the
+# per-service ones they used to have are gone, since they'd have looked
+# active while being silently ignored.
 #
 # ai-services still builds from its own directory as its context, so
 # ai-services/.dockerignore is still the live file for that one.
@@ -10,7 +12,7 @@
 .git/
 .env
 
-# Virtualenvs -- gateway/venv alone is ~36MB of build context
+# Virtualenvs -- a committed venv can be tens of MB of build context
 **/venv/
 **/.venv/
 

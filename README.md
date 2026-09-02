@@ -61,7 +61,7 @@ Two properties this design must preserve:
 | Member    | Role                          | Owns                                                                 |
 |-----------|--------------------------------|-----------------------------------------------------------------------|
 | Student 1 | Product & elder experience     | Reflex elder client, onboarding flows, accessibility, synced-lyrics UI |
-| Student 2 | Platform & backbone            | Gateway, Matrix/custom backbone, PostgreSQL, Docker, deployment, push, backups |
+| Student 2 | Platform & backbone            | Matrix/custom backbone, PostgreSQL, Docker, deployment, push, backups |
 | Student 3 | Speech & language AI           | ASR/MT/TTS services, pipeline latency, GPU serving, voice-search stretch |
 | Student 4 | Stewardship, quality & pilot    | Moderation prompts/classifier, moderator console, tests/CI, red-teaming, pilot logistics |
 
@@ -70,23 +70,25 @@ who's blocked on whom, see `docs/work-breakdown.md`.
 
 ## Repo layout
 
-> **Note:** `gateway/` (Member 2's, Docker-based) is the one real gateway going
-> forward. `services/gateway/` (M3's) has been removed from this branch — it had a
-> genuinely well-designed Postgres schema (real Alembic migrations, DM support,
-> idempotency), but its own README described it as a Week 1 skeleton with auth as an
-> explicit stub and its WebSocket route as a plain echo with no persistence or
-> backbone integration at all. `gateway/` has real auth, a real WebSocket relay, and
-> a working Matrix/Tuwunel backbone (ADR 0002), verified end-to-end against a real
-> deployed server. `contracts/chat/` is now unused (it was `services/gateway/`'s
-> only consumer) — left in place rather than also deleted, since it documents real
-> wire-format decisions that could inform future work; worth a team call on whether
-> to keep or remove it separately. Full reasoning and history:
-> `docs/prompt-journal.md`'s Week 4 entries.
+> **Note (2026-09-02):** `services/gateway/` (M3's) is the one gateway going
+> forward — the team confirmed this after an earlier branch had gone the other
+> way (see git history / `docs/prompt-journal.md` for that back-and-forth).
+> `gateway/` (Member 2's own FastAPI gateway, with real auth, a WebSocket
+> relay, and a working Matrix/Tuwunel backbone integration, verified
+> end-to-end against a real deployed server) has been removed as redundant.
+> Its Matrix backbone — `backbone/spike-matrix-a/circle_service/` + Tuwunel,
+> ADR 0002's actual decided option — stays in the repo and still runs (the
+> `matrix` Compose profile), but `services/gateway/` doesn't use it yet;
+> `services/gateway/` has its own separate, Postgres-only circles
+> implementation with no relationship to ADR 0002's decision. Reconciling
+> that is open, not-yet-scheduled work. Full reasoning and history:
+> `docs/prompt-journal.md`'s Week 4 entries and `docs/adr/0002-chat-backbone.md`.
 
 ```
 satsandesh/
-├── gateway/              # FastAPI gateway — auth, routing, WebSocket fan-out
-├── backbone/             # Chat backbone — Matrix bot (Option A) or custom FastAPI+Postgres (Option B)
+├── services/
+│   └── gateway/          # FastAPI gateway (M3's) — auth, circles, messages, WebSocket
+├── backbone/             # Chat backbone — Matrix bot (Option A, decided) or custom FastAPI+Postgres (Option B, spiked)
 ├── ai-services/          # ASR / MT / TTS / moderation services
 ├── clients/
 │   ├── elder-app/        # Reflex elder PWA
@@ -95,10 +97,8 @@ satsandesh/
 │   ├── caddy/            # Reverse proxy / HTTPS config
 │   ├── deploy/           # Deploy scripts (college server + personal/team repo sync)
 │   └── backups/          # Backup scripts (pg_dump + restic)
-├── services/
-│   └── ai/                # M3's AI services (unaffected by the gateway note above)
-├── contracts/             # Shared request/response contracts -- contracts/chat/ now
-│                          # unused, see note above; contracts/ai/ still used by services/ai/
+├── contracts/             # Shared request/response contracts -- contracts/chat/ is
+│                          # services/gateway/'s wire format; contracts/ai/ is services/ai/'s
 ├── docs/
 │   ├── adr/               # Architecture Decision Records
 │   ├── SRS.md             # Software Requirements Spec
@@ -118,10 +118,12 @@ satsandesh/
 
 Month 1 — foundations. Backbone architecture spike (Matrix/Conduit vs custom-lite)
 resolved (Option A, Matrix/Tuwunel — see `docs/adr/0002-chat-backbone.md`). Member 2's
-platform work (gateway, deployment, Week 1-4) is complete and deployed to a real staging
-host; see `docs/prompt-journal.md` for the full history.
+platform deliverables (Docker Compose skeleton, backbone spikes, deployment, Week 1-4)
+are complete — see `docs/prompt-journal.md` for the full history — though the currently
+deployed gateway is `services/gateway/` (M3's), not the Matrix-backed `gateway/` that
+history describes; see the Repo layout note above.
 
-## How to run locally (Member 2's `gateway`/`docker-compose.yml` tree)
+## How to run locally
 
 ### Prerequisites
 
@@ -137,18 +139,15 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Wait until `docker compose ps` shows `postgres`, `gateway`, `ai-services`, and
-`caddy` all as `healthy`, then check each route (all go through Caddy on
-port 80 — no other ports need to be open):
+Wait until `docker compose ps` shows `postgres`, `gateway`, `ai-services`,
+`elder-app`, and `caddy` all as `healthy`, then check each route (all go
+through Caddy on port 80 — no other ports need to be open):
 
 ```bash
-curl http://localhost/health      # -> {"status":"ok"}                gateway
-curl http://localhost/ai/health   # -> {"status":"ok","service":...}  ai-services
-curl http://localhost/db-check    # -> {"status":"ok","schema_check":"db init ran"}
+curl http://localhost/health         # -> {"status":"ok"}               gateway
+curl http://localhost/health/ready   # -> {"status":"ok","checks":...}  gateway, confirms Postgres reachable
+curl http://localhost/ai/health      # -> {"status":"ok","service":...} ai-services
 ```
-
-`db-check` confirms `db/init/001_init.sql` ran on first Postgres boot and
-seeded the `schema_check` table.
 
 Data persists across restarts via the named `pgdata` volume:
 
@@ -176,6 +175,6 @@ just directly) — not inside the container: `.dockerignore` excludes
 `tests/` from the image, so the tests aren't there to run.
 
 ```bash
-cd gateway && pip install -r requirements.txt -r requirements-dev.txt && pytest
+cd services/gateway && pip install -r requirements.txt && pytest
 cd ai-services && pip install -r requirements.txt -r requirements-dev.txt && pytest
 ```

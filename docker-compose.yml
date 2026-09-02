@@ -23,34 +23,59 @@ services:
       timeout: 5s
       retries: 5
 
+  # Week 1 correction (2026-09-01): boots M3's services/gateway/, not
+  # gateway/ (M2's) -- per docs/OWNERSHIP.md and the real Month 1 schedule
+  # (SatSandesh_Month1_Schedule.docx), the gateway itself is M3's Week 1
+  # task; M2's Week 1 task is this Compose skeleton, wiring together
+  # whichever gateway/ai-services/postgres/caddy exist, not building the
+  # gateway's own logic.
+  #
+  # gateway/ (M2's) removed from the repo entirely (2026-09-02): the team
+  # confirmed services/gateway/ as the one gateway going forward, so the
+  # parallel implementation was redundant. Its Matrix backbone
+  # (backbone/spike-matrix-a/circle_service/ + tuwunel, "matrix" profile
+  # below) stays -- it's ADR 0002's actual decided chat backbone and
+  # services/gateway/ doesn't use it yet; that integration is separate,
+  # not-yet-done work, not something this removal answers.
   gateway:
     build:
-      # Repo root, so the image can include backbone/interfaces.py — the
-      # contract the gateway's backbone client implements. See
-      # .dockerignore for what's kept out of the context.
+      # Repo root, not ./services/gateway -- it imports from contracts/
+      # (contracts.chat.*, e.g. app/circles.py), which lives outside its
+      # own directory. Found by actually running the built image, not
+      # assumed: a services/gateway-only context built and started fine
+      # until uvicorn tried to import app.main, which raised
+      # ModuleNotFoundError: No module named 'contracts'. Locally,
+      # services/gateway/conftest.py papers over this for tests by
+      # manually adding the repo root to sys.path -- that trick is
+      # pytest-only and does nothing for a real `uvicorn` process.
       context: .
-      dockerfile: gateway/Dockerfile
+      dockerfile: services/gateway/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      # Where the gateway reaches the backbone. ADR 0002 is decided
-      # (Option A, Matrix/Tuwunel) -- points at matrix-circle-service,
-      # which only actually exists when the "matrix" profile is up.
-      # Swapping backbones is exactly this line plus a client
-      # implementation (see gateway/backbone_client.py); no change to
-      # gateway/circles.py, verified by an AST check every time it's
-      # touched (see docs/adr/0002-chat-backbone.md).
-      BACKBONE_URL: ${BACKBONE_URL:-http://matrix-circle-service:8000}
+      # postgres:5432, not localhost -- see services/gateway/README.md's
+      # own "Docker gotcha" note, written in advance of this exact step.
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      JWT_SECRET: ${GATEWAY_JWT_SECRET}
+      VAPID_PRIVATE_KEY: ${GATEWAY_VAPID_PRIVATE_KEY}
+      VAPID_PUBLIC_KEY: ${GATEWAY_VAPID_PUBLIC_KEY}
+      VAPID_SUBJECT: ${GATEWAY_VAPID_SUBJECT:-mailto:dev@example.com}
+      CORS_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
+      LOG_LEVEL: INFO
     depends_on:
       postgres:
         condition: service_healthy
     expose:
       - "8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      # /health/ready, not /health -- confirms Postgres is actually
+      # reachable (and, since the Dockerfile runs migrations before
+      # uvicorn starts, that they applied), not just that the process
+      # is up. See app/main.py's own comment on why the two are split.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
 
   ai-services:
     build:

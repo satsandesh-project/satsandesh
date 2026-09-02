@@ -33,7 +33,6 @@
 # ---------------------------------------------------------------------
 # Backend platform -- authored by Veerendra (M2), currently in main
 # ---------------------------------------------------------------------
-/gateway/                       @veerendrakosuri
 /backbone/                      @veerendrakosuri
 /infra/                         @veerendrakosuri
 /db/                            @veerendrakosuri

@@ -405,6 +405,60 @@ how it was built regardless of the sequencing — it was implemented ahead
 of, not after, the formal decision — but the decision itself no longer
 needs revisiting.
 
+## Update (2026-09-02): services/gateway/ does not use this decision yet
+
+After the team standardized on `services/gateway/` (M3's) as the one
+gateway going forward and `gateway/` (M2's, the implementation described
+above) was removed as redundant, `services/gateway/`'s own circles
+implementation (`app/circles.py` + `app/db/repository.py`) was
+investigated for whether it could now be wired to `backbone/interfaces.py`'s
+`CircleBackbone` — i.e. whether this ADR's actual decision (Option A,
+Matrix/Tuwunel) could finally be made real in the gateway that's actually
+deployed.
+
+**Finding: this is not a same-session wiring task — it's a real
+architectural migration, for two independent, concrete reasons found by
+reading the code, not assumed:**
+
+1. **Schema mismatch.** `services/gateway/`'s `messages.target_circle_id`
+   is a Postgres `UUID` column with a real foreign key to `circles.id`
+   (also `UUID`), plus a `CHECK` constraint requiring
+   `conversation_id = target_circle_id` for circle messages
+   (`app/db/models.py`). `CircleBackbone.circle_id` is an opaque `str` —
+   Matrix room ids look like `!abc123:servername`, not UUIDs. Making
+   Matrix the real circle store means either a schema migration changing
+   that FK's type (cascading through `memberships.circle_id` and every
+   query built on it) or a shadow mapping table (Matrix room id ↔ a
+   locally-generated UUID) — not a drop-in swap.
+
+2. **`CircleBackbone` owns message delivery, not just membership.**
+   `post_announcement`/`list_messages` post and read circle messages
+   *through the backbone itself* — that's how `gateway/circles.py` (the
+   removed implementation) used it, and how `matrix_circle_store.py`
+   actually behaves (bot-posts-with-recorded-sender, Matrix's own
+   `history_visibility` for offline delivery — see the Week 4 section
+   above). `services/gateway/` doesn't work that way: circle-targeted and
+   DM messages already flow through *one* unified path —
+   `create_message_with_created_flag`/`get_messages_since`, the
+   WS `ConnectionManager` fan-out, the undo window, offline sync via
+   `GET /messages`, and Web Push targeting (`app/messages.py`, `app/ws.py`,
+   `app/push.py`, `app/undo.py` — all real, working, M3-built Week 3/4
+   deliverables). Routing circle messages through `CircleBackbone` instead
+   means either forking them onto a second delivery path with none of
+   that machinery, or writing substantial new glue code to bridge Matrix
+   room events back into it. Either is real, multi-day work — not
+   something to force into an unrelated bug-fix session.
+
+**Decision: `services/gateway/` keeps direct Postgres for circles for
+now.** This ADR's actual decision (Option A) is unchanged — Tuwunel and
+`matrix-circle-service` stay running (the `matrix` Compose profile,
+`backbone/spike-matrix-a/circle_service/`), and remain the correct target
+for a real integration. That integration is explicitly scoped out as
+future work, not silently dropped: whoever picks it up next should read
+this section first, and will need to decide between the schema-migration
+path and the shadow-mapping path above before writing any code — that
+choice, not the wiring itself, is the actual first step.
+
 ## Consequences
 
 Whichever option is chosen becomes the foundation every other student's
@@ -412,3 +466,8 @@ service depends on (AI services read/write through it, moderation acts on
 it, live audio may share auth with it). Getting this decision right early
 matters more than getting it fast — hence the deliberate two-week box
 rather than picking on day one.
+
+`services/gateway/` not yet implementing this decision (see the Update
+above) is exactly this consequence arriving late: the team is currently
+running a gateway whose circles have no relationship to the backbone this
+document decided on.

@@ -41,15 +41,28 @@ class MessageKind(str, Enum):
 class MessageStatus(str, Enum):
     """Chat-level delivery lifecycle, not a moderation label — see
     DECISIONS.md #6 for why this is a separate enum from anything in
-    contracts/ai/moderation.py."""
+    contracts/ai/moderation.py.
+
+    SENT and CANCELLED restored here after being lost when PR #18 swapped
+    the active gateway and reverted this file to an older state along
+    with it -- see docs/OWNERSHIP.md and docs/BACKBONE_DECISION_BRIEF.md.
+    Both are real states services/gateway/app/messages.py and app/undo.py
+    already assume: PENDING -> SENT happens when app/undo.py's 30-second
+    window elapses and the message actually fans out (see
+    schedule_fan_out); PENDING -> CANCELLED is the undo path itself. The
+    Postgres CHECK constraint on messages.status (migration
+    ee7195a99a19) already includes both values -- this enum not matching
+    the DB is exactly the kind of drift that made the app crash with an
+    AttributeError deep inside a background task, silently, per M1's
+    report."""
 
     PENDING = "pending"
+    SENT = "sent"
     DELIVERED = "delivered"
+    CANCELLED = "cancelled"
     HELD = "held"
     BLOCKED = "blocked"
     FAILED = "failed"
-    SENT = "sent"
-    CANCELLED = "cancelled"
 
 
 class MediaRef(BaseModel):
