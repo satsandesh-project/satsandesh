@@ -244,16 +244,41 @@ JOIN_JS_TEMPLATE = """
         // real random UUID per session, not an arbitrary string, is what
         // actually engages that path -- confirmed by hitting exactly the
         // 500 his own comment describes before this fix, then confirming
-        // it's gone after switching to crypto.randomUUID().
-        const token = crypto.randomUUID();
+        // it's gone after switching to a real UUID.
+        //
+        // crypto.randomUUID() itself is gated behind a secure context
+        // (HTTPS or localhost) -- confirmed live against this deploy,
+        // which is plain HTTP on an IP (see the Caddyfile's own note:
+        // HTTPS is deliberately deferred past this point). getRandomValues
+        // has no such gate, so build a v4 UUID from it by hand instead.
+        const randUuid = () => {
+            const b = crypto.getRandomValues(new Uint8Array(16));
+            b[6] = (b[6] & 0x0f) | 0x40;
+            b[8] = (b[8] & 0x3f) | 0x80;
+            const h = [...b].map((x) => x.toString(16).padStart(2, "0"));
+            return h.slice(0, 4).join("") + "-" + h.slice(4, 6).join("") + "-" +
+                h.slice(6, 8).join("") + "-" + h.slice(8, 10).join("") + "-" +
+                h.slice(10, 16).join("");
+        };
+        const token = randUuid();
         window.__satToken = token;
 
-        // Find-or-create the one shared circle every contact opens (see
-        // this module's own "Backend-reality update" docstring for why
-        // there's exactly one). GET /circles is scoped server-side to
-        // the caller's own circles -- since every token maps to the same
-        // stub user, this genuinely lists every circle ever created by
-        // any session, not just this one.
+        // Find-or-create a circle for this session's real, distinct user.
+        // GET /circles is scoped server-side to the caller's own circles --
+        // now that each session's token maps to a genuinely different
+        // user (previous comment here, describing every token as mapping
+        // to the same stub user, stopped being true once this function
+        // started emitting real UUIDs above), this lists only what THIS
+        // user has created or been added to, not every circle ever
+        // created. A second, different real user joining fresh gets an
+        // empty list here and creates their OWN separate circle -- there
+        // is no self-service join endpoint on services/gateway/ to
+        // discover and join an existing one instead (POST
+        // /circles/{id}/members requires the caller to already be a
+        // member). Out of scope to build here (that's new gateway
+        // functionality, not wiring); two real users sharing one circle
+        // for verification currently requires an existing member adding
+        // the other's id by hand.
         const authHeaders = {
             "Authorization": "Bearer " + token,
             "Content-Type": "application/json",
