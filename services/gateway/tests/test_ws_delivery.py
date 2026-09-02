@@ -20,6 +20,7 @@ import time
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import Message
@@ -120,16 +121,72 @@ def test_dm_message_send_persists_and_delivers_to_recipient(
     assert row.text == "hi Bob"
 
 
-def test_message_send_failure_does_not_fan_out(client, db_session, ws_login_as, _instant_fan_out):
+def test_dm_message_send_to_never_authenticated_target_provisions_a_users_row(
+    client, db_session, ws_login_as, _instant_fan_out
+):
+    # WS mirror of tests/test_message_routes.py's
+    # test_post_messages_dm_to_never_authenticated_target_provisions_a_users_row
+    # — the same target-side provisioning gap, reached via the other send
+    # path. Bob is a bare UUID, never logged in via ws_login_as and never
+    # given a `users` row, so there's nothing but the target-provisioning
+    # fix standing between this send and a ForeignKeyViolation.
+    alice = _make_db_user(db_session, "Alice")
+    alice_token = ws_login_as(alice)
+    bob_id = uuid.uuid4()
+
+    client_msg_id = str(uuid.uuid4())
+
+    with client.websocket_connect(f"/ws?token={alice_token}") as alice_ws:
+        alice_ws.send_json(
+            _send_frame(
+                client_msg_id=client_msg_id,
+                target_type="user",
+                target_id=str(bob_id),
+                text="hi Bob, we've never met",
+            )
+        )
+
+        ack = alice_ws.receive_json()
+        assert ack["type"] == "message.ack"
+        assert ack["data"]["client_msg_id"] == client_msg_id
+
+    provisioned = db_session.get(DbUser, bob_id)
+    assert provisioned is not None
+    assert provisioned.id == bob_id
+
+
+def test_message_send_failure_does_not_fan_out(
+    client, db_session, ws_login_as, _instant_fan_out, monkeypatch
+):
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     alice_token = ws_login_as(alice)
     bob_token = ws_login_as(bob)
 
-    # A syntactically valid UUID with no `users` row behind it — fails at
-    # the repository layer (target_user_id's FK), not at MessageIn's own
-    # validation, so this exercises create_message's failure path
-    # specifically, not a contract-shape rejection.
+    # Used to be reproduced organically by sending to a syntactically valid
+    # UUID with no `users` row behind it (a real target_user_id FK
+    # violation). That path is exactly what this session's target-side
+    # provisioning fix closed (app/db/repository.py's _create_message_impl
+    # now calls get_or_create_user for the target before the
+    # conversation/message insert), so it can no longer fail that way —
+    # simulated instead, to keep exercising _handle_message_send's
+    # `except IntegrityError` branch (still real: a dangling target FK is
+    # not the only way create_message_with_created_flag can raise one, e.g.
+    # a CHECK constraint bypassing MessageIn's own validator) independently
+    # of which specific constraint trips it.
+    import app.ws as ws_module
+
+    real_create_message = ws_module.create_message_with_created_flag
+    call_count = {"n": 0}
+
+    def _fail_once_then_delegate(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise IntegrityError("INSERT", {}, Exception("simulated constraint violation"))
+        return real_create_message(*args, **kwargs)
+
+    monkeypatch.setattr(ws_module, "create_message_with_created_flag", _fail_once_then_delegate)
+
     nonexistent_target = str(uuid.uuid4())
     failed_client_msg_id = str(uuid.uuid4())
 

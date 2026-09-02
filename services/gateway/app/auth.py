@@ -47,9 +47,7 @@ def user_from_token(token: str | None, db: Session) -> User:
         parsed = uuid.UUID(token)
     except ValueError:
         return User(id="stub-user-1", name="Test Elder", preferred_language="te", role="elder")
-    get_or_create_user(
-        db, user_id=parsed, name="Test Elder", preferred_language="te", role="elder"
-    )
+    get_or_create_user(db, user_id=parsed, name="Test Elder", preferred_language="te", role="elder")
     return User(id=token, name="Test Elder", preferred_language="te", role="elder")
 
 
