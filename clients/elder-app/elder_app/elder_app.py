@@ -31,28 +31,19 @@ Design principles (Section 7.5 of the project proposal + the handoff):
   - voice-first: a large press-and-hold mic button, reachable without
     navigating anywhere.
 
-Backend-reality update (2026-09-01, twice): first wired against
-`gateway/` (M2's), the only gateway that existed on `main` for a window
-after PR #18 briefly deleted `services/gateway/`. Corrected again the
-same day once `services/gateway/` (M3's) was restored and the real Month
-1 schedule (`SatSandesh_Month1_Schedule.docx`, extracted via
-`python-docx` -- see `docs/prompt-journal.md`'s Week 1 correction entry)
-confirmed the Compose skeleton boots `services/gateway/`, not `gateway/`
--- see `docker-compose.yml`. Now wired against the real thing: connect
-finds-or-creates one shared circle (`GET`/`POST /circles`, scoped
-server-side to the caller, which is every session right now -- see
-`app/auth.py`'s stub), then WS `/ws?token=...` using the real typed
-frame envelope (`contracts/chat/envelope.py`'s `FrameType`), not the old
-plain `{type, sender_id, body}` shape. A real, load-bearing difference
-from the old gateway worth knowing before testing: a sent message's
-`message.new` fan-out is deliberately delayed up to
-`UNDO_WINDOW_SECONDS` (30s by default, `app/undo.py`) so the sender can
-cancel -- slow-looking delivery during testing is that window, not a
-bug. Reconnect logic (on_mount + rx.call_script, exponential backoff)
-still follows the pattern verified end-to-end in
-`elder_app/gateway_ws_proof.py`, adjusted for this gateway's real close
-code (1008, not 4401 -- see `docs/DECISIONS.md`). The five contacts on
-the Home screen stay as a faces-before-names navigation surface (the
+Backend-reality update (2026-09-01): the team confirmed the gateway/
+backbone in `gateway/` + `backbone/` as final -- it implements exactly
+one shared broadcast circle (see `gateway/ws.py`'s own docstring), not
+per-contact routing, and has no sent/delivered-receipt concept. Rather
+than keep pretending the old per-contact mock threads were real, this
+screen now does genuine live messaging against that real shared circle:
+join with a display name (`POST /session`), then connect
+(`ws://.../ws`), following the exact connect/reconnect-with-backoff
+pattern already verified end-to-end (locally and against the real
+deployed server) in `elder_app/gateway_ws_proof.py` -- credit to that
+module for the hard-won JS wiring details (on_mount + rx.call_script,
+not rx.script; see its docstring for why). The five contacts on the
+Home screen stay as a faces-before-names navigation surface (still the
 real Week 4 design deliverable), but every one of them opens the same
 real shared circle, with an honest bilingual note saying so -- since
 that's genuinely all that exists on the backend right now, showing
@@ -231,82 +222,16 @@ CONTACTS = [
 JOIN_JS_TEMPLATE = """
 (async () => {
     try {
-        // No /session endpoint on services/gateway/ (Week 1 correction,
-        // 2026-09-01: the skeleton now boots services/gateway/, M3's, not
-        // gateway/) -- auth is HTTPBearer, real per-user issuance isn't
-        // built yet (closest task is M4's Week 2 "Auth + onboarding").
-        // BUT app/auth.py's user_from_token stub (his own "Week 3 Phase 7
-        // widening") already has a real, documented, intended path for
-        // this: a token that happens to parse as a UUID is used AS that
-        // user's real id -- only a non-UUID token collapses to the old
-        // broken hardcoded "stub-user-1" (not a valid UUID, 500s on any
-        // uuid.UUID(user.id) call, i.e. almost every route). Generating a
-        // real random UUID per session, not an arbitrary string, is what
-        // actually engages that path -- confirmed by hitting exactly the
-        // 500 his own comment describes before this fix, then confirming
-        // it's gone after switching to a real UUID.
-        //
-        // crypto.randomUUID() itself is gated behind a secure context
-        // (HTTPS or localhost) -- confirmed live against this deploy,
-        // which is plain HTTP on an IP (see the Caddyfile's own note:
-        // HTTPS is deliberately deferred past this point). getRandomValues
-        // has no such gate, so build a v4 UUID from it by hand instead.
-        const randUuid = () => {
-            const b = crypto.getRandomValues(new Uint8Array(16));
-            b[6] = (b[6] & 0x0f) | 0x40;
-            b[8] = (b[8] & 0x3f) | 0x80;
-            const h = [...b].map((x) => x.toString(16).padStart(2, "0"));
-            return h.slice(0, 4).join("") + "-" + h.slice(4, 6).join("") + "-" +
-                h.slice(6, 8).join("") + "-" + h.slice(8, 10).join("") + "-" +
-                h.slice(10, 16).join("");
-        };
-        const token = randUuid();
-        window.__satToken = token;
-
-        // Find-or-create a circle for this session's real, distinct user.
-        // GET /circles is scoped server-side to the caller's own circles --
-        // now that each session's token maps to a genuinely different
-        // user (previous comment here, describing every token as mapping
-        // to the same stub user, stopped being true once this function
-        // started emitting real UUIDs above), this lists only what THIS
-        // user has created or been added to, not every circle ever
-        // created. A second, different real user joining fresh gets an
-        // empty list here and creates their OWN separate circle -- there
-        // is no self-service join endpoint on services/gateway/ to
-        // discover and join an existing one instead (POST
-        // /circles/{id}/members requires the caller to already be a
-        // member). Out of scope to build here (that's new gateway
-        // functionality, not wiring); two real users sharing one circle
-        // for verification currently requires an existing member adding
-        // the other's id by hand.
-        const authHeaders = {
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json",
-        };
-        const listResp = await fetch(%(gateway_url)s + "/circles", { headers: authHeaders });
-        if (!listResp.ok) {
-            return "error:HTTP " + listResp.status + " listing circles";
-        }
-        const circles = await listResp.json();
-
-        let circleId;
-        if (circles.length > 0) {
-            circleId = circles[0].id;
-        } else {
-            const createResp = await fetch(%(gateway_url)s + "/circles", {
-                method: "POST",
-                headers: authHeaders,
-                body: JSON.stringify({ name: "General" }),
-            });
-            if (!createResp.ok) {
-                return "error:HTTP " + createResp.status + " creating the shared circle";
-            }
-            const created = await createResp.json();
-            circleId = created.id;
-        }
-        window.__satCircleId = circleId;
-
-        return JSON.stringify({ token: token, circle_id: circleId });
+        const resp = await fetch(%(gateway_url)s + "/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ display_name: %(name)s }),
+        });
+        if (!resp.ok) return "error:HTTP " + resp.status;
+        const data = await resp.json();
+        window.__satToken = data.token;
+        window.__satUserId = data.user_id;
+        return JSON.stringify({ token: data.token, user_id: data.user_id });
     } catch (err) {
         return "error:" + (err && err.message ? err.message : "unreachable");
     }
@@ -321,12 +246,12 @@ window.__satsandeshWsInit = true;
 (function () {
   const GATEWAY_URL = %(gateway_url)s;
   const WS_URL = GATEWAY_URL.replace(/^http/, "ws");
+  const MY_ID = window.__satUserId;
   const token = window.__satToken;
-  const circleId = window.__satCircleId;
 
   const messagesEl = document.getElementById("live-chat-messages");
   const statusEl = document.getElementById("live-chat-status");
-  if (!messagesEl || !token || !circleId) return;
+  if (!messagesEl || !token) return;
 
   let ws = null;
   let backoffMs = 1000;
@@ -339,7 +264,7 @@ window.__satsandeshWsInit = true;
     console.log("[satsandesh-ws] status:", text);
   }
 
-  function appendMessage(authorId, body, isOwn) {
+  function appendMessage(senderId, body, isOwn) {
     const row = document.createElement("div");
     row.style.margin = "10px 0";
     row.style.display = "flex";
@@ -356,13 +281,7 @@ window.__satsandeshWsInit = true;
     who.style.fontWeight = "700";
     who.style.color = "#6E6047";
     who.style.marginBottom = "2px";
-    // "You" only for messages this tab itself just sent (optimistic
-    // render on send, below) -- a live message.new frame is always
-    // rendered as incoming, even if it technically came from another tab
-    // of the same stub user, since the gateway's own auth stub gives us
-    // no real way to tell "another device of mine" from "someone else"
-    // (see JOIN_JS_TEMPLATE's comment on user_from_token).
-    who.textContent = isOwn ? "You" : authorId;
+    who.textContent = isOwn ? "You" : senderId;
     const text = document.createElement("div");
     text.style.fontSize = "20px";
     text.style.color = "#2A2118";
@@ -385,26 +304,6 @@ window.__satsandeshWsInit = true;
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  async function loadHistory() {
-    try {
-      const params = "target_type=circle&target_id=" + encodeURIComponent(circleId);
-      const url = GATEWAY_URL + "/messages?" + params;
-      const resp = await fetch(url, { headers: { "Authorization": "Bearer " + token } });
-      if (!resp.ok) {
-        appendSystemLine("Could not load message history: HTTP " + resp.status);
-        return;
-      }
-      const batch = await resp.json();
-      messagesEl.innerHTML = "";
-      for (const m of batch.messages) {
-        appendMessage(m.author_id, m.text, false);
-      }
-    } catch (err) {
-      const reason = err && err.message ? err.message : "unreachable";
-      appendSystemLine("Could not load message history: " + reason);
-    }
-  }
-
   function scheduleReconnect() {
     reconnectAttempt += 1;
     const jitter = Math.random() * 300;
@@ -423,43 +322,27 @@ window.__satsandeshWsInit = true;
       setStatus("Connected");
       backoffMs = 1000;
       reconnectAttempt = 0;
-      loadHistory();
     };
 
     ws.onmessage = function (event) {
-      // Real envelope shape ({"type": FrameType, "data": {...}}), not the
-      // old plain {type, sender_id, body} -- see contracts/chat/envelope.py.
-      const frame = JSON.parse(event.data);
-      if (frame.type === "message.new") {
-        // Arrives up to UNDO_WINDOW_SECONDS (30s by default) after the
-        // sender's own message.ack, by design -- app/undo.py's undo
-        // window, not a bug or a slow network. Never rendered for the
-        // tab that sent it (fan_out_message excludes the sending
-        // socket); a second tab of the SAME stub user does receive it,
-        // which is exactly how multi-tab testing demonstrates delivery.
-        appendMessage(frame.data.author_id, frame.data.text, false);
-      } else if (frame.type === "message.ack") {
-        // No text in AckOut -- just client_msg_id/id/status. The sent
-        // bubble itself was already rendered optimistically at send
-        // time (CHAT_SEND_JS below); this only confirms persistence.
-        console.log("[satsandesh-ws] message.ack:", frame.data);
-      } else if (frame.type === "message.status") {
-        console.log("[satsandesh-ws] message.status:", frame.data);
-      } else if (frame.type === "error") {
-        appendSystemLine(frame.data.message || "server error");
+      const data = JSON.parse(event.data);
+      if (data.type === "history") {
+        messagesEl.innerHTML = "";
+        for (const m of data.messages) {
+          appendMessage(m.sender_id, m.body, m.sender_id === MY_ID);
+        }
+        if (data.warning) appendSystemLine(data.warning);
+      } else if (data.type === "message") {
+        appendMessage(data.sender_id, data.body, data.sender_id === MY_ID);
+      } else if (data.type === "error") {
+        appendSystemLine(data.detail);
       }
     };
 
     ws.onclose = function (event) {
       if (intentionalClose) return;
-      // 1008, not 4401 -- services/gateway/'s own close code for a
-      // rejected token (docs/DECISIONS.md's accept()-then-close(1008)
-      // decision), different from gateway/'s custom 4401. Stop retrying
-      // on either signal-of-real-rejection code, keep retrying on
-      // anything else (1006 and friends -- a dropped connection, not a
-      // rejected one).
-      if (event.code === 1008) {
-        setStatus("Session rejected -- please rejoin");
+      if (event.code === 4401) {
+        setStatus("Session expired -- please rejoin");
         return;
       }
       scheduleReconnect();
@@ -481,60 +364,9 @@ window.__satsandeshWsInit = true;
 CHAT_SEND_JS = """
 (() => {
   const input = document.getElementById("live-chat-input");
-  const messagesEl = document.getElementById("live-chat-messages");
   const body = (input.value || "").trim();
   if (!body || !window.__satWs || window.__satWs.readyState !== WebSocket.OPEN) return "";
-
-  const clientMsgId = (crypto.randomUUID ? crypto.randomUUID() :
-    "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
-      const r = Math.random() * 16 | 0;
-      return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
-    }));
-
-  window.__satWs.send(JSON.stringify({
-    type: "message.send",
-    data: {
-      client_msg_id: clientMsgId,
-      target_type: "circle",
-      target_id: window.__satCircleId,
-      kind: "text",
-      text: body,
-    },
-  }));
-
-  // Optimistic render: AckOut carries no text, and message.new is
-  // deliberately excluded from the sending socket (see
-  // CHAT_CONNECT_JS_TEMPLATE's onmessage comment) -- without this, the
-  // sender would never see their own message appear at all, let alone
-  // within the up-to-30s undo window.
-  if (messagesEl) {
-    const row = document.createElement("div");
-    row.style.margin = "10px 0";
-    row.style.display = "flex";
-    row.style.justifyContent = "flex-end";
-    const bubble = document.createElement("div");
-    bubble.style.maxWidth = "80%%";
-    bubble.style.padding = "12px 16px";
-    bubble.style.borderRadius = "16px 16px 4px 16px";
-    bubble.style.background = "#EAF1EC";
-    bubble.style.fontFamily = "Mulish, 'Noto Sans Telugu', system-ui, sans-serif";
-    const who = document.createElement("div");
-    who.style.fontSize = "13px";
-    who.style.fontWeight = "700";
-    who.style.color = "#6E6047";
-    who.style.marginBottom = "2px";
-    who.textContent = "You";
-    const text = document.createElement("div");
-    text.style.fontSize = "20px";
-    text.style.color = "#2A2118";
-    text.textContent = body;
-    bubble.appendChild(who);
-    bubble.appendChild(text);
-    row.appendChild(bubble);
-    messagesEl.appendChild(row);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
-
+  window.__satWs.send(JSON.stringify({ body: body }));
   input.value = "";
   return "sent";
 })()
@@ -590,10 +422,11 @@ class State(rx.State):
     active_tab: str = "people"
     contacts: list[dict[str, str]] = CONTACTS
 
-    # Real gateway session: a client-side placeholder token (see
-    # JOIN_JS_TEMPLATE's comment -- services/gateway/'s auth is still a
-    # stub, no real per-user issuance exists yet), find-or-create the
-    # shared circle, then the WS connect in CHAT_CONNECT_JS_TEMPLATE.
+    # Real gateway session -- POST /session -> a token, then the WS
+    # connect in CHAT_CONNECT_JS_TEMPLATE. No password, no account:
+    # the gateway's own auth.py issues a token for whatever display name
+    # is given (see that file's docstring -- not final auth, a real step
+    # up from a bare client-asserted string on every message).
     display_name_input: str = ""
     joined: bool = False
     join_error: str = ""
@@ -644,9 +477,9 @@ class State(rx.State):
         if result.startswith("error:"):
             self.join_error = result[len("error:") :]
             return
-        # window.__satToken/__satCircleId (set by JOIN_JS_TEMPLATE) are
-        # all the JS side needs -- CHAT_CONNECT_JS_TEMPLATE reads them
-        # directly, no need to round-trip either through Python state.
+        # window.__satToken/__satUserId (set by JOIN_JS_TEMPLATE) are all
+        # the JS side needs -- CHAT_CONNECT_JS_TEMPLATE reads them
+        # directly, no need to round-trip the user_id through Python state.
         self.my_display_name = self.display_name_input.strip()
         self.joined = True
 
@@ -1163,10 +996,9 @@ def home_screen() -> rx.Component:
 
 
 def join_screen() -> rx.Component:
-    """Shown once, before Home. The display name only labels this
-    session locally (window.__satToken in JOIN_JS_TEMPLATE) -- there's
-    no real per-user identity yet, services/gateway/'s auth is still a
-    stub (see app/auth.py's own docstring)."""
+    """Shown once, before Home. The gateway needs a display name to
+    issue a session token (POST /session) -- there's no other identity
+    source yet (see auth.py's own docstring: not final auth)."""
     return rx.center(
         rx.vstack(
             rx.text(
