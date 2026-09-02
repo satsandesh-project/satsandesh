@@ -1,15 +1,10 @@
-"""SatSandesh elder chat UI shell (Week 4 M1).
+"""SatSandesh elder chat UI shell (Week 3/4 M1).
 
 Visual design lifted from a Claude Design handoff (see
 docs/design/satsandesh-home-screen-design/ for the source spec): warm
 devotional palette, Mulish/Noto Sans Telugu/Lora type system on a 20px
 rem root (so a 200% OS text setting scales the whole screen), and named
 interaction states with documented WCAG contrast ratios.
-
-Placeholder/mock data only, deliberately — wiring this screen to the real
-gateway backend is M2's separate Week 4 task ("Wire client -> gateway
-end-to-end + staging deploy"), which depends on this screen existing, not
-the other way around.
 
 The mic button does real browser-side recording (MediaRecorder via
 navigator.mediaDevices.getUserMedia, wired through rx.call_script) --
@@ -31,23 +26,54 @@ Design principles (Section 7.5 of the project proposal + the handoff):
   - voice-first: a large press-and-hold mic button, reachable without
     navigating anywhere.
 
-Backend-reality update (2026-09-01): the team confirmed the gateway/
-backbone in `gateway/` + `backbone/` as final -- it implements exactly
-one shared broadcast circle (see `gateway/ws.py`'s own docstring), not
-per-contact routing, and has no sent/delivered-receipt concept. Rather
-than keep pretending the old per-contact mock threads were real, this
-screen now does genuine live messaging against that real shared circle:
-join with a display name (`POST /session`), then connect
-(`ws://.../ws`), following the exact connect/reconnect-with-backoff
-pattern already verified end-to-end (locally and against the real
-deployed server) in `elder_app/gateway_ws_proof.py` -- credit to that
-module for the hard-won JS wiring details (on_mount + rx.call_script,
-not rx.script; see its docstring for why). The five contacts on the
-Home screen stay as a faces-before-names navigation surface (still the
-real Week 4 design deliverable), but every one of them opens the same
-real shared circle, with an honest bilingual note saying so -- since
-that's genuinely all that exists on the backend right now, showing
-separate private threads would be a UI lie, not a design choice.
+Backend-reality update (2026-09-02): the team's real backend is now
+`services/gateway/` (M3's), restored to `main` and, as of PR #23, fully
+functional -- true per-contact 1:1 messaging (`target_type: "user"`),
+not one shared broadcast circle, with real pending -> delivered status.
+This screen is rewired to that real protocol, replacing the earlier
+shared-circle-only version:
+
+  - Identity: `services/gateway`'s own auth stub (app/auth.py) has no
+    login step at all -- any token that parses as a UUID *is* that
+    user's permanent id (a DB row is lazily provisioned for it on first
+    use). So "join" no longer POSTs anywhere; it generates a UUID once,
+    persists it in localStorage, and that's the elder's identity for
+    every future visit. The display name typed at join is local-only
+    cosmetic labelling ("You" in the chat feed) -- the gateway's `/me`
+    always reports the same hardcoded "Test Elder" for every identity
+    (see auth.py's own docstring: real per-user profile data is not
+    part of the stub yet), so there is nothing to send it to.
+
+  - Contacts: there is no user directory or invite-link service yet
+    (only a QR-onboarding branch, not merged, is heading that
+    direction), so a "contact" here is a locally-stored (name, id)
+    pair the elder builds by exchanging raw ids out of band -- share
+    "Your ID" from Home, paste someone else's into "+ Add someone".
+    This is an honest stand-in for a future pairing flow, not a design
+    choice: showing invented contacts backed by fake threads would be
+    the UI lie the Week 4 version of this file explicitly called out
+    and avoided for the shared circle case.
+
+  - Messaging: one persistent WebSocket connection (established once,
+    right after identity is ready, not per-contact) carries every
+    frame -- `message.send` / `message.ack` / `message.new` /
+    `message.delivered` / `message.status` / `sync.request` /
+    `sync.batch`, per contracts/chat/envelope.py's FrameType. Opening a
+    contact's chat screen sends `sync.request` for that
+    (target_type=user, target_id) pair to catch up on history,
+    including anything that arrived while the elder was elsewhere.
+
+  - Status UI reflects the real, and only the real, wire signals: a
+    sent message shows "Sending..." (with a genuine Undo / DELETE
+    /messages/{id} button) while it's still within the server's real
+    undo window, then "Sent" once that window would have elapsed
+    server-side (settings.UNDO_WINDOW_SECONDS -- mirrored here as a
+    client-side timer since the server pushes no explicit
+    pending->sent event to the sender's own socket, only the eventual
+    `message.status` on delivery), then "Delivered" the moment a real
+    `message.status` frame confirms the recipient's own
+    `message.delivered` ack. No status is ever synthesized past what
+    the gateway actually confirmed.
 """
 
 import json
@@ -57,6 +83,19 @@ import reflex as rx
 from rxconfig import config
 
 GATEWAY_PUBLIC_URL = os.environ.get("GATEWAY_PUBLIC_URL", "http://localhost")
+
+# Mirrors services/gateway/app/config.py's Settings.UNDO_WINDOW_SECONDS
+# default exactly -- the server never pushes a "now sent" event to the
+# sender's own socket (message.new fan-out explicitly excludes the
+# originating websocket; see app/messages.py::fan_out_message's
+# `exclude` param), so the client times the same real window itself to
+# move a message from "Sending... (cancelable)" to "Sent" once the
+# server-side window would genuinely have closed. If this constant ever
+# drifts from the server's, the only symptom is the Undo button staying
+# enabled a little too long or too briefly right at the boundary -- the
+# server's own DELETE /messages/{id} 409 response is still the actual
+# authority, not this timer.
+UNDO_WINDOW_SECONDS = 30
 
 # ---------------------------------------------------------------------------
 # Design tokens (verbatim from the Claude Design handoff spec)
@@ -119,10 +158,26 @@ TEXTS = {
         "no_messages": "No messages yet. Say hello!",
         "join_prompt": "What should we call you?",
         "join_placeholder": "Your name",
-        "join_button": "Join",
-        "shared_circle_note": "This is a shared circle — "
-        "everyone connected can see these messages.",
+        "join_button": "Continue",
         "connecting": "Connecting...",
+        "your_id_label": "Your ID -- share this with family so they can add you",
+        "copy_id": "Copy",
+        "copied_id": "Copied!",
+        "add_person": "+ Add someone",
+        "add_person_title": "Add someone",
+        "add_person_name_placeholder": "Their name",
+        "add_person_id_placeholder": "Their ID (ask them to share it)",
+        "add_button": "Add",
+        "cancel_add_button": "Cancel",
+        "add_error_invalid_id": "That doesn't look like a valid ID. Ask them to copy it exactly.",
+        "add_error_self": "That's your own ID.",
+        "add_error_duplicate": "Already added.",
+        "no_contacts_yet": 'No one added yet. Tap "+ Add someone" and enter their ID.',
+        "tap_to_chat": "Tap to open chat",
+        "status_pending": "Sending... (tap to cancel)",
+        "status_sent": "Sent",
+        "status_delivered": "Delivered",
+        "status_cancelled": "Cancelled",
     },
     "te": {
         "app_name": "సత్‌సందేశ్",
@@ -147,97 +202,143 @@ TEXTS = {
         "no_messages": "ఇంకా సందేశాలు లేవు. హలో చెప్పండి!",
         "join_prompt": "మిమ్మల్ని ఏమని పిలవాలి?",
         "join_placeholder": "మీ పేరు",
-        "join_button": "చేరండి",
-        "shared_circle_note": "ఇది ఒక భాగస్వామ్య వర్గం — కనెక్ట్ అయిన అందరూ ఈ సందేశాలను చూడగలరు.",
+        "join_button": "కొనసాగించు",
         "connecting": "కనెక్ట్ అవుతోంది...",
+        "your_id_label": "మీ ఐడీ — కుటుంబంతో పంచుకోండి, వారు మిమ్మల్ని చేర్చుకోవచ్చు",
+        "copy_id": "కాపీ చేయి",
+        "copied_id": "కాపీ అయ్యింది!",
+        "add_person": "+ ఎవరినైనా చేర్చు",
+        "add_person_title": "ఎవరినైనా చేర్చు",
+        "add_person_name_placeholder": "వారి పేరు",
+        "add_person_id_placeholder": "వారి ఐడీ (వారిని పంచుకోమని అడగండి)",
+        "add_button": "చేర్చు",
+        "cancel_add_button": "రద్దు చేయి",
+        "add_error_invalid_id": "ఇది సరైన ఐడీలా లేదు. సరిగ్గా కాపీ చేయమని అడగండి.",
+        "add_error_self": "అది మీ స్వంత ఐడీ.",
+        "add_error_duplicate": "ఇప్పటికే చేర్చబడింది.",
+        "no_contacts_yet": '"+ ఎవరినైనా చేర్చు" నొక్కి వారి ఐడీని నమోదు చేయండి.',
+        "tap_to_chat": "చాట్ తెరవడానికి నొక్కండి",
+        "status_pending": "పంపుతోంది... (రద్దు చేయడానికి నొక్కండి)",
+        "status_sent": "పంపబడింది",
+        "status_delivered": "అందింది",
+        "status_cancelled": "రద్దు చేయబడింది",
     },
 }
 
-CONTACTS = [
-    {
-        "id": "1",
-        "name_en": "Lakshmi",
-        "name_te": "లక్ష్మి",
-        "meta_en": "Daughter · Hyderabad",
-        "meta_te": "కూతురు · హైదరాబాద్",
-        "initial_en": "L",
-        "initial_te": "ల",
-        "tint": TINTS[0],
-    },
-    {
-        "id": "2",
-        "name_en": "Ramana Rao",
-        "name_te": "రమణ రావు",
-        "meta_en": "Satsang · Kondapur",
-        "meta_te": "సత్సంగం · కొండాపూర్",
-        "initial_en": "R",
-        "initial_te": "ర",
-        "tint": TINTS[1],
-    },
-    {
-        "id": "3",
-        "name_en": "Padma Aunty",
-        "name_te": "పద్మ ఆంటీ",
-        "meta_en": "Neighbour · Ameerpet",
-        "meta_te": "పొరుగు · అమీర్‌పేట్",
-        "initial_en": "P",
-        "initial_te": "ప",
-        "tint": TINTS[2],
-    },
-    {
-        "id": "4",
-        "name_en": "Kondapur Circle",
-        "name_te": "కొండాపూర్ బృందం",
-        "meta_en": "14 members",
-        "meta_te": "14 మంది",
-        "initial_en": "K",
-        "initial_te": "కొ",
-        "tint": TINTS[3],
-    },
-    {
-        "id": "5",
-        "name_en": "Ashram Announcements",
-        "name_te": "ఆశ్రమ ప్రకటనలు",
-        "meta_en": "Listen only",
-        "meta_te": "వినడానికి మాత్రమే",
-        "initial_en": "A",
-        "initial_te": "ఆ",
-        "tint": TINTS[4],
-    },
-]
-
 # ---------------------------------------------------------------------------
-# Client-side JS: real session join + WebSocket chat against the shared
-# circle. Pattern lifted from elder_app/gateway_ws_proof.py -- on_mount +
-# rx.call_script (not rx.script, which doesn't fire in this Reflex/React
-# combination; see that module's docstring for the three ruled-out
-# attempts). The live message feed is rendered by this JS directly into a
-# plain DOM node (id="live-chat-messages"), not through Reflex state --
-# same reasoning as the proof module: a persistent socket pushing many
-# async updates doesn't fit rx.call_script's one-shot call/callback shape,
-# and wrapping it as a proper Reflex component wasn't verifiable against
-# stable documented usage without risking a subtly wrong implementation.
+# Client-side JS: real identity bootstrap + a persistent WebSocket carrying
+# services/gateway's real per-contact protocol (contracts/chat/envelope.py's
+# FrameType values). Pattern (on_mount + rx.call_script, not rx.script;
+# DOM-rendered feed via a plain node rather than Reflex state) inherited
+# from the earlier shared-circle version and, before that, from
+# elder_app/gateway_ws_proof.py -- a persistent socket pushing many async
+# updates still doesn't fit rx.call_script's one-shot call/callback shape.
 # ---------------------------------------------------------------------------
 
-JOIN_JS_TEMPLATE = """
-(async () => {
-    try {
-        const resp = await fetch(%(gateway_url)s + "/session", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ display_name: %(name)s }),
+# crypto.randomUUID() only exists in a secure context (HTTPS, or
+# localhost) -- confirmed live: it throws "crypto.randomUUID is not a
+# function" when this app is loaded over plain http:// at a LAN IP, which
+# is exactly how the team runs it before TLS/Caddy is in front of a real
+# domain. This fallback (Math.random-seeded, not cryptographically
+# strong, but only ever used as a client-side correlation id, never a
+# security token) keeps identity bootstrap and message sending working
+# in that real, common case.
+_UUID_V4_JS_FALLBACK = """
+    function satUuidV4() {
+        if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+        return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+            const r = (Math.random() * 16) | 0;
+            const v = c === "x" ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
         });
-        if (!resp.ok) return "error:HTTP " + resp.status;
-        const data = await resp.json();
-        window.__satToken = data.token;
-        window.__satUserId = data.user_id;
-        return JSON.stringify({ token: data.token, user_id: data.user_id });
+    }
+"""
+
+ENSURE_IDENTITY_JS = (
+    """
+(() => {
+"""
+    + _UUID_V4_JS_FALLBACK
+    + """
+    let id = localStorage.getItem("satsandesh_my_id");
+    if (!id) {
+        id = satUuidV4();
+        localStorage.setItem("satsandesh_my_id", id);
+    }
+    window.__satUserId = id;
+    window.__satToken = id;
+    return id;
+})()
+"""
+)
+
+LOAD_NAME_JS = """
+(() => localStorage.getItem("satsandesh_my_name") || "")()
+"""
+
+SAVE_NAME_JS_TEMPLATE = """
+(() => {
+    localStorage.setItem("satsandesh_my_name", %(name)s);
+    return "ok";
+})()
+"""
+
+LOAD_CONTACTS_JS = """
+(() => {
+    try {
+        return localStorage.getItem("satsandesh_contacts") || "[]";
     } catch (err) {
-        return "error:" + (err && err.message ? err.message : "unreachable");
+        return "[]";
     }
 })()
 """
 
+ADD_CONTACT_JS_TEMPLATE = """
+(() => {
+    const name = (%(name)s || "").trim();
+    const rawId = (%(target_id)s || "").trim();
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRe.test(rawId)) return "error:invalid_id";
+    if (rawId.toLowerCase() === (window.__satUserId || "").toLowerCase()) return "error:self";
+    let contacts = [];
+    try {
+        contacts = JSON.parse(localStorage.getItem("satsandesh_contacts") || "[]");
+    } catch (err) {
+        contacts = [];
+    }
+    if (contacts.some((c) => c.id.toLowerCase() === rawId.toLowerCase())) {
+        return "error:duplicate";
+    }
+    const tints = %(tints)s;
+    const label = name || rawId.slice(0, 8);
+    contacts.push({
+        id: rawId,
+        name: label,
+        initial: label.trim().charAt(0).toUpperCase(),
+        tint: tints[contacts.length %% tints.length],
+    });
+    localStorage.setItem("satsandesh_contacts", JSON.stringify(contacts));
+    return JSON.stringify(contacts);
+})()
+"""
+
+COPY_ID_JS_TEMPLATE = """
+(async () => {
+    try {
+        await navigator.clipboard.writeText(%(my_id)s);
+        return "ok";
+    } catch (err) {
+        return "error";
+    }
+})()
+"""
+
+# The persistent connection + all shared rendering/state-tracking helpers.
+# Idempotent via window.__satsandeshWsInit -- connect_chat is called once,
+# right after identity is ready, and stays up for the whole session; a
+# contact's chat screen only needs to (re)render from the already-live
+# window.__satConversations cache and issue a sync.request, both handled by
+# OPEN_CHAT_JS_TEMPLATE below, not by reconnecting.
 CHAT_CONNECT_JS_TEMPLATE = """
 if (window.__satsandeshWsInit) {
   console.log("[satsandesh-ws] already initialized, skipping");
@@ -246,106 +347,216 @@ window.__satsandeshWsInit = true;
 (function () {
   const GATEWAY_URL = %(gateway_url)s;
   const WS_URL = GATEWAY_URL.replace(/^http/, "ws");
-  const MY_ID = window.__satUserId;
-  const token = window.__satToken;
+  const UNDO_WINDOW_MS = %(undo_window_seconds)s * 1000;
+  %(uuid_v4_fallback)s
+  window.__satUuidV4 = satUuidV4;
 
-  const messagesEl = document.getElementById("live-chat-messages");
-  const statusEl = document.getElementById("live-chat-status");
-  if (!messagesEl || !token) return;
+  window.__satConversations = window.__satConversations || {};
+  window.__satCurrentContactId = window.__satCurrentContactId || "";
+  window.__satPendingTimers = window.__satPendingTimers || {};
 
   let ws = null;
   let backoffMs = 1000;
   const MAX_BACKOFF_MS = 30000;
   let reconnectAttempt = 0;
-  let intentionalClose = false;
 
   function setStatus(text) {
-    if (statusEl) statusEl.textContent = text;
+    const el = document.getElementById("live-chat-status");
+    if (el) el.textContent = text;
     console.log("[satsandesh-ws] status:", text);
   }
 
-  function appendMessage(senderId, body, isOwn) {
-    const row = document.createElement("div");
-    row.style.margin = "10px 0";
-    row.style.display = "flex";
-    row.style.justifyContent = isOwn ? "flex-end" : "flex-start";
-    const bubble = document.createElement("div");
-    bubble.style.maxWidth = "80%%";
-    bubble.style.padding = "12px 16px";
-    bubble.style.borderRadius = isOwn ? "16px 16px 4px 16px" : "16px 16px 16px 4px";
-    bubble.style.background = isOwn ? "#EAF1EC" : "#FFFCF6";
-    bubble.style.border = isOwn ? "none" : "1px solid #EADCC4";
-    bubble.style.fontFamily = "Mulish, 'Noto Sans Telugu', system-ui, sans-serif";
-    const who = document.createElement("div");
-    who.style.fontSize = "13px";
-    who.style.fontWeight = "700";
-    who.style.color = "#6E6047";
-    who.style.marginBottom = "2px";
-    who.textContent = isOwn ? "You" : senderId;
-    const text = document.createElement("div");
-    text.style.fontSize = "20px";
-    text.style.color = "#2A2118";
-    text.textContent = body;
-    bubble.appendChild(who);
-    bubble.appendChild(text);
-    row.appendChild(bubble);
-    messagesEl.appendChild(row);
+  function threadFor(contactId) {
+    if (!window.__satConversations[contactId]) window.__satConversations[contactId] = [];
+    return window.__satConversations[contactId];
+  }
+
+  function statusLabel(msg) {
+    if (msg.status === "delivered") return %(status_delivered)s;
+    if (msg.status === "cancelled") return %(status_cancelled)s;
+    if (msg.status === "sent") return %(status_sent)s;
+    return %(status_pending)s;
+  }
+
+  function renderCurrentThread() {
+    const messagesEl = document.getElementById("live-chat-messages");
+    const contactId = window.__satCurrentContactId;
+    if (!messagesEl || !contactId) return;
+    const thread = threadFor(contactId);
+    messagesEl.innerHTML = "";
+    if (thread.length === 0) {
+      const empty = document.createElement("div");
+      empty.style.margin = "8px 0";
+      empty.style.fontSize = "14px";
+      empty.style.color = "#6E6047";
+      empty.style.textAlign = "center";
+      empty.textContent = %(no_messages)s;
+      messagesEl.appendChild(empty);
+      return;
+    }
+    for (const msg of thread) {
+      const isOwn = msg.author_id === window.__satUserId;
+      const row = document.createElement("div");
+      row.style.margin = "10px 0";
+      row.style.display = "flex";
+      row.style.justifyContent = isOwn ? "flex-end" : "flex-start";
+      const bubble = document.createElement("div");
+      bubble.style.maxWidth = "80%%";
+      bubble.style.padding = "12px 16px";
+      bubble.style.borderRadius = isOwn ? "16px 16px 4px 16px" : "16px 16px 16px 4px";
+      bubble.style.background = isOwn ? "#EAF1EC" : "#FFFCF6";
+      bubble.style.border = isOwn ? "none" : "1px solid #EADCC4";
+      bubble.style.fontFamily = "Mulish, 'Noto Sans Telugu', system-ui, sans-serif";
+      bubble.style.cursor = isOwn && msg.status === "pending" ? "pointer" : "default";
+      const text = document.createElement("div");
+      text.style.fontSize = "20px";
+      text.style.color = "#2A2118";
+      text.textContent = msg.text;
+      bubble.appendChild(text);
+      if (isOwn) {
+        const status = document.createElement("div");
+        status.style.fontSize = "12px";
+        status.style.marginTop = "4px";
+        status.style.color = msg.status === "cancelled" ? "#8A3E0F" : "#6E6047";
+        status.style.fontStyle = msg.status === "cancelled" ? "italic" : "normal";
+        status.textContent = statusLabel(msg);
+        bubble.appendChild(status);
+        if (msg.status === "pending" && msg.id) {
+          bubble.onclick = () => cancelMessage(msg.id, contactId);
+        }
+      }
+      row.appendChild(bubble);
+      messagesEl.appendChild(row);
+    }
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  function appendSystemLine(text) {
-    const row = document.createElement("div");
-    row.style.margin = "8px 0";
-    row.style.fontSize = "14px";
-    row.style.color = "#B4531A";
-    row.style.fontStyle = "italic";
-    row.textContent = text;
-    messagesEl.appendChild(row);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+  function upsertMessage(contactId, msg) {
+    const thread = threadFor(contactId);
+    const idx = thread.findIndex(
+      (m) => (msg.id && m.id === msg.id) || (msg.client_msg_id && m.client_msg_id === msg.client_msg_id)
+    );
+    if (idx === -1) {
+      thread.push(msg);
+    } else {
+      thread[idx] = Object.assign({}, thread[idx], msg);
+    }
+    if (window.__satCurrentContactId === contactId) renderCurrentThread();
   }
 
-  function scheduleReconnect() {
-    reconnectAttempt += 1;
-    const jitter = Math.random() * 300;
-    const delay = backoffMs + jitter;
-    setStatus("Reconnecting... (attempt " + reconnectAttempt + ")");
-    setTimeout(connect, delay);
-    backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+  function scheduleSentTransition(contactId, messageId) {
+    if (window.__satPendingTimers[messageId]) clearTimeout(window.__satPendingTimers[messageId]);
+    window.__satPendingTimers[messageId] = setTimeout(() => {
+      delete window.__satPendingTimers[messageId];
+      const thread = threadFor(contactId);
+      const m = thread.find((x) => x.id === messageId);
+      if (m && m.status === "pending") {
+        upsertMessage(contactId, { id: messageId, status: "sent" });
+      }
+    }, UNDO_WINDOW_MS + 1000);
   }
+
+  function sendDeliveredAck(messageId) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "message.delivered", data: { message_id: messageId } }));
+    }
+  }
+
+  function otherPartyId(msg) {
+    return msg.author_id === window.__satUserId ? msg.target_id : msg.author_id;
+  }
+
+  function cancelMessage(messageId, contactId) {
+    fetch(GATEWAY_URL + "/messages/" + messageId, {
+      method: "DELETE",
+      headers: { Authorization: "Bearer " + window.__satToken },
+    }).then((resp) => {
+      if (resp.status === 204) {
+        if (window.__satPendingTimers[messageId]) {
+          clearTimeout(window.__satPendingTimers[messageId]);
+          delete window.__satPendingTimers[messageId];
+        }
+        upsertMessage(contactId, { id: messageId, status: "cancelled" });
+      }
+    });
+  }
+  window.__satCancelMessage = cancelMessage;
+
+  function handleFrame(frame) {
+    if (frame.type === "message.ack") {
+      const data = frame.data;
+      const contactId = window.__satPendingSendTarget && window.__satPendingSendTarget[data.client_msg_id];
+      if (contactId) {
+        upsertMessage(contactId, { client_msg_id: data.client_msg_id, id: data.id, status: data.status });
+        scheduleSentTransition(contactId, data.id);
+        delete window.__satPendingSendTarget[data.client_msg_id];
+      }
+    } else if (frame.type === "message.new") {
+      const data = frame.data;
+      const contactId = otherPartyId(data);
+      upsertMessage(contactId, {
+        id: data.id,
+        author_id: data.author_id,
+        target_id: data.target_id,
+        text: data.text,
+        status: data.status,
+      });
+      if (data.author_id !== window.__satUserId) sendDeliveredAck(data.id);
+    } else if (frame.type === "message.status") {
+      const data = frame.data;
+      for (const contactId of Object.keys(window.__satConversations)) {
+        const thread = window.__satConversations[contactId];
+        if (thread.some((m) => m.id === data.id)) {
+          upsertMessage(contactId, { id: data.id, status: data.status });
+          break;
+        }
+      }
+    } else if (frame.type === "sync.batch") {
+      const data = frame.data;
+      const contactId = data.target_id;
+      window.__satConversations[contactId] = data.messages.map((m) => ({
+        id: m.id,
+        author_id: m.author_id,
+        target_id: m.target_id,
+        text: m.text,
+        status: m.status,
+      }));
+      for (const m of data.messages) {
+        if (m.author_id !== window.__satUserId && m.status === "sent") sendDeliveredAck(m.id);
+      }
+      if (window.__satCurrentContactId === contactId) renderCurrentThread();
+    } else if (frame.type === "error") {
+      console.log("[satsandesh-ws] error frame:", frame.data);
+    }
+  }
+
+  window.__satRenderCurrentThread = renderCurrentThread;
 
   function connect() {
-    setStatus("Connecting...");
-    ws = new WebSocket(WS_URL + "/ws?token=" + encodeURIComponent(token));
+    setStatus(%(connecting)s);
+    ws = new WebSocket(WS_URL + "/ws?token=" + encodeURIComponent(window.__satToken));
     window.__satWs = ws;
 
     ws.onopen = function () {
-      setStatus("Connected");
+      setStatus("");
       backoffMs = 1000;
       reconnectAttempt = 0;
     };
 
     ws.onmessage = function (event) {
-      const data = JSON.parse(event.data);
-      if (data.type === "history") {
-        messagesEl.innerHTML = "";
-        for (const m of data.messages) {
-          appendMessage(m.sender_id, m.body, m.sender_id === MY_ID);
-        }
-        if (data.warning) appendSystemLine(data.warning);
-      } else if (data.type === "message") {
-        appendMessage(data.sender_id, data.body, data.sender_id === MY_ID);
-      } else if (data.type === "error") {
-        appendSystemLine(data.detail);
-      }
+      handleFrame(JSON.parse(event.data));
     };
 
     ws.onclose = function (event) {
-      if (intentionalClose) return;
-      if (event.code === 4401) {
-        setStatus("Session expired -- please rejoin");
+      if (event.code === 1008) {
+        setStatus("");
         return;
       }
-      scheduleReconnect();
+      reconnectAttempt += 1;
+      const jitter = Math.random() * 300;
+      setStatus("Reconnecting... (" + reconnectAttempt + ")");
+      setTimeout(connect, backoffMs + jitter);
+      backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
     };
 
     ws.onerror = function () {};
@@ -354,21 +565,61 @@ window.__satsandeshWsInit = true;
   connect();
 
   window.addEventListener("beforeunload", function () {
-    intentionalClose = true;
     if (ws) ws.close();
   });
 })();
 }
 """
 
+OPEN_CHAT_JS_TEMPLATE = """
+(() => {
+    const targetId = %(target_id)s;
+    window.__satCurrentContactId = targetId;
+    if (!window.__satConversations) window.__satConversations = {};
+    if (!window.__satConversations[targetId]) window.__satConversations[targetId] = [];
+    if (window.__satRenderCurrentThread) window.__satRenderCurrentThread();
+    if (window.__satWs && window.__satWs.readyState === WebSocket.OPEN) {
+        window.__satWs.send(JSON.stringify({
+            type: "sync.request",
+            data: { target_type: "user", target_id: targetId, limit: 200 },
+        }));
+    }
+    return "ok";
+})()
+"""
+
 CHAT_SEND_JS = """
 (() => {
-  const input = document.getElementById("live-chat-input");
-  const body = (input.value || "").trim();
-  if (!body || !window.__satWs || window.__satWs.readyState !== WebSocket.OPEN) return "";
-  window.__satWs.send(JSON.stringify({ body: body }));
-  input.value = "";
-  return "sent";
+    const input = document.getElementById("live-chat-input");
+    const text = (input.value || "").trim();
+    const contactId = window.__satCurrentContactId;
+    if (!text || !contactId || !window.__satWs || window.__satWs.readyState !== WebSocket.OPEN) {
+        return "";
+    }
+    const clientMsgId = window.__satUuidV4();
+    window.__satPendingSendTarget = window.__satPendingSendTarget || {};
+    window.__satPendingSendTarget[clientMsgId] = contactId;
+    if (!window.__satConversations[contactId]) window.__satConversations[contactId] = [];
+    window.__satConversations[contactId].push({
+        client_msg_id: clientMsgId,
+        author_id: window.__satUserId,
+        target_id: contactId,
+        text: text,
+        status: "pending",
+    });
+    if (window.__satRenderCurrentThread) window.__satRenderCurrentThread();
+    window.__satWs.send(JSON.stringify({
+        type: "message.send",
+        data: {
+            client_msg_id: clientMsgId,
+            target_type: "user",
+            target_id: contactId,
+            kind: "text",
+            text: text,
+        },
+    }));
+    input.value = "";
+    return "sent";
 })()
 """
 
@@ -420,17 +671,23 @@ class State(rx.State):
     language: str = "en"
     current_contact_id: str = ""
     active_tab: str = "people"
-    contacts: list[dict[str, str]] = CONTACTS
+    contacts: list[dict[str, str]] = []
 
-    # Real gateway session -- POST /session -> a token, then the WS
-    # connect in CHAT_CONNECT_JS_TEMPLATE. No password, no account:
-    # the gateway's own auth.py issues a token for whatever display name
-    # is given (see that file's docstring -- not final auth, a real step
-    # up from a bare client-asserted string on every message).
+    # Real gateway identity: a client-generated UUID persisted in
+    # localStorage (ENSURE_IDENTITY_JS), not a server-issued session --
+    # services/gateway's auth stub takes any UUID-shaped token as that
+    # user's real, permanent id. The typed display name never leaves the
+    # device (see module docstring's "Identity" section).
+    my_user_id: str = ""
     display_name_input: str = ""
     joined: bool = False
-    join_error: str = ""
     my_display_name: str = ""
+
+    add_contact_open: bool = False
+    add_name_input: str = ""
+    add_id_input: str = ""
+    add_error: str = ""
+    copied_id: bool = False
 
     mic_recording: bool = False
     mic_permission_denied: bool = False
@@ -459,34 +716,66 @@ class State(rx.State):
     def set_active_tab(self, tab: str):
         self.active_tab = tab
 
+    # -- Bootstrap: identity, saved name, saved contacts, then (if already
+    # joined before) the persistent WS connection -- all on the app's own
+    # on_mount, once per load, not per screen. --------------------------
+
+    def bootstrap(self):
+        return rx.call_script(ENSURE_IDENTITY_JS, callback=State.on_identity_ready)
+
+    def on_identity_ready(self, user_id: str):
+        self.my_user_id = user_id
+        return [
+            rx.call_script(LOAD_NAME_JS, callback=State.on_name_loaded),
+            rx.call_script(LOAD_CONTACTS_JS, callback=State.on_contacts_loaded),
+        ]
+
+    def on_name_loaded(self, name: str):
+        if not name:
+            return None
+        self.my_display_name = name
+        self.joined = True
+        return self.connect_chat()
+
+    def on_contacts_loaded(self, contacts_json: str):
+        try:
+            parsed = json.loads(contacts_json)
+        except (json.JSONDecodeError, TypeError):
+            parsed = []
+        self.contacts = parsed
+
+    def connect_chat(self):
+        js = CHAT_CONNECT_JS_TEMPLATE % {
+            "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
+            "undo_window_seconds": UNDO_WINDOW_SECONDS,
+            "connecting": json.dumps(TEXTS["en"]["connecting"]),
+            "no_messages": json.dumps(TEXTS["en"]["no_messages"]),
+            "status_pending": json.dumps(TEXTS["en"]["status_pending"]),
+            "status_sent": json.dumps(TEXTS["en"]["status_sent"]),
+            "status_delivered": json.dumps(TEXTS["en"]["status_delivered"]),
+            "status_cancelled": json.dumps(TEXTS["en"]["status_cancelled"]),
+            "uuid_v4_fallback": _UUID_V4_JS_FALLBACK,
+        }
+        return rx.call_script(js)
+
     def set_display_name_input(self, value: str):
         self.display_name_input = value
 
     def join_circle(self):
-        self.join_error = ""
         name = self.display_name_input.strip()
         if not name:
             return None
-        js = JOIN_JS_TEMPLATE % {
-            "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
-            "name": json.dumps(name),
-        }
-        return rx.call_script(js, callback=State.on_joined)
-
-    def on_joined(self, result: str):
-        if result.startswith("error:"):
-            self.join_error = result[len("error:") :]
-            return
-        # window.__satToken/__satUserId (set by JOIN_JS_TEMPLATE) are all
-        # the JS side needs -- CHAT_CONNECT_JS_TEMPLATE reads them
-        # directly, no need to round-trip the user_id through Python state.
-        self.my_display_name = self.display_name_input.strip()
+        self.my_display_name = name
         self.joined = True
+        return [
+            rx.call_script(SAVE_NAME_JS_TEMPLATE % {"name": json.dumps(name)}),
+            self.connect_chat(),
+        ]
 
-    def connect_chat(self):
-        if not self.joined:
+    def enter_chat(self):
+        if not self.current_contact_id:
             return None
-        js = CHAT_CONNECT_JS_TEMPLATE % {"gateway_url": json.dumps(GATEWAY_PUBLIC_URL)}
+        js = OPEN_CHAT_JS_TEMPLATE % {"target_id": json.dumps(self.current_contact_id)}
         return rx.call_script(js)
 
     def send_live_message(self):
@@ -496,6 +785,54 @@ class State(rx.State):
         if key == "Enter":
             return rx.call_script(CHAT_SEND_JS)
         return None
+
+    # -- Add a real contact (locally stored id/name pair) ----------------
+
+    def open_add_contact(self):
+        self.add_contact_open = True
+        self.add_name_input = ""
+        self.add_id_input = ""
+        self.add_error = ""
+
+    def close_add_contact(self):
+        self.add_contact_open = False
+
+    def set_add_name_input(self, value: str):
+        self.add_name_input = value
+
+    def set_add_id_input(self, value: str):
+        self.add_id_input = value
+
+    def submit_add_contact(self):
+        self.add_error = ""
+        js = ADD_CONTACT_JS_TEMPLATE % {
+            "name": json.dumps(self.add_name_input.strip()),
+            "target_id": json.dumps(self.add_id_input.strip()),
+            "tints": json.dumps(TINTS),
+        }
+        return rx.call_script(js, callback=State.on_contact_added)
+
+    def on_contact_added(self, result: str):
+        if result == "error:invalid_id":
+            self.add_error = self.t["add_error_invalid_id"]
+        elif result == "error:self":
+            self.add_error = self.t["add_error_self"]
+        elif result == "error:duplicate":
+            self.add_error = self.t["add_error_duplicate"]
+        else:
+            try:
+                self.contacts = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            self.add_contact_open = False
+
+    def copy_my_id(self):
+        self.copied_id = False
+        js = COPY_ID_JS_TEMPLATE % {"my_id": json.dumps(self.my_user_id)}
+        return rx.call_script(js, callback=State.on_id_copied)
+
+    def on_id_copied(self, result: str):
+        self.copied_id = result == "ok"
 
     def start_recording(self):
         self.mic_permission_denied = False
@@ -713,6 +1050,56 @@ def thought_card() -> rx.Component:
     )
 
 
+def your_id_card() -> rx.Component:
+    return rx.hstack(
+        rx.vstack(
+            rx.text(
+                State.t["your_id_label"],
+                style={
+                    "font_family": FONT_LATIN,
+                    "font_weight": "600",
+                    "font_size": "0.9rem",
+                    "color": COLOR["green_ink"],
+                },
+            ),
+            rx.text(
+                State.my_user_id,
+                style={
+                    "font_family": FONT_MONO,
+                    "font_size": "0.85rem",
+                    "color": COLOR["muted_ink"],
+                    "word_break": "break-all",
+                },
+            ),
+            spacing="1",
+            align_items="flex-start",
+            flex="1",
+            min_width="0",
+        ),
+        rx.button(
+            rx.cond(State.copied_id, State.t["copied_id"], State.t["copy_id"]),
+            on_click=State.copy_my_id,
+            style={
+                "flex_shrink": "0",
+                "min_height": "56px",
+                "padding": "0 18px",
+                "border_radius": "14px",
+                "font_weight": "700",
+                "cursor": "pointer",
+                **pill_button_style(True),
+            },
+        ),
+        style={
+            "margin": "16px 20px 0",
+            "padding": "16px 18px",
+            "background": COLOR["green_tint"],
+            "border_radius": "18px",
+        },
+        align="center",
+        spacing="3",
+    )
+
+
 def section_heading() -> rx.Component:
     return rx.heading(
         State.t["heading"],
@@ -728,14 +1115,11 @@ def section_heading() -> rx.Component:
 
 
 def contact_row(contact: rx.Var[dict]) -> rx.Component:
-    name = rx.cond(State.language == "en", contact["name_en"], contact["name_te"])
-    meta = rx.cond(State.language == "en", contact["meta_en"], contact["meta_te"])
-    initial = rx.cond(State.language == "en", contact["initial_en"], contact["initial_te"])
     return rx.button(
         rx.hstack(
             rx.box(
                 rx.text(
-                    initial,
+                    contact["initial"],
                     style={
                         "font_family": FONT_LATIN,
                         "font_weight": "700",
@@ -756,7 +1140,7 @@ def contact_row(contact: rx.Var[dict]) -> rx.Component:
             ),
             rx.vstack(
                 rx.text(
-                    name,
+                    contact["name"],
                     style={
                         "font_family": FONT_LATIN,
                         "font_weight": "700",
@@ -766,7 +1150,7 @@ def contact_row(contact: rx.Var[dict]) -> rx.Component:
                     },
                 ),
                 rx.text(
-                    meta,
+                    State.t["tap_to_chat"],
                     style={
                         "font_family": FONT_LATIN,
                         "font_weight": "400",
@@ -810,12 +1194,132 @@ def contact_row(contact: rx.Var[dict]) -> rx.Component:
     )
 
 
+def add_contact_form() -> rx.Component:
+    return rx.vstack(
+        rx.text(
+            State.t["add_person_title"],
+            style={"font_weight": "700", "font_size": "1.1rem", "color": COLOR["ink"]},
+        ),
+        rx.input(
+            placeholder=State.t["add_person_name_placeholder"],
+            value=State.add_name_input,
+            on_change=State.set_add_name_input,
+            style={
+                "min_height": "56px",
+                "font_size": "18px",
+                "padding": "0 14px",
+                "border_radius": "12px",
+                "border": f"1px solid {COLOR['warm_border']}",
+                "width": "100%",
+            },
+        ),
+        rx.input(
+            placeholder=State.t["add_person_id_placeholder"],
+            value=State.add_id_input,
+            on_change=State.set_add_id_input,
+            style={
+                "min_height": "56px",
+                "font_size": "16px",
+                "font_family": FONT_MONO,
+                "padding": "0 14px",
+                "border_radius": "12px",
+                "border": f"1px solid {COLOR['warm_border']}",
+                "width": "100%",
+            },
+        ),
+        rx.cond(
+            State.add_error != "",
+            rx.text(State.add_error, style={"color": "#8A3E0F", "font_weight": "600"}),
+            rx.fragment(),
+        ),
+        rx.hstack(
+            rx.button(
+                State.t["cancel_add_button"],
+                on_click=State.close_add_contact,
+                style={
+                    "flex": "1",
+                    "min_height": "56px",
+                    "border_radius": "14px",
+                    "font_weight": "700",
+                    "cursor": "pointer",
+                    "background": "transparent",
+                    "border": f"2px solid {COLOR['warm_border']}",
+                    "color": COLOR["muted_ink"],
+                },
+            ),
+            rx.button(
+                State.t["add_button"],
+                on_click=State.submit_add_contact,
+                style={
+                    "flex": "1",
+                    "min_height": "56px",
+                    "border_radius": "14px",
+                    "font_weight": "700",
+                    "cursor": "pointer",
+                    **pill_button_style(True),
+                },
+            ),
+            width="100%",
+            spacing="3",
+        ),
+        spacing="3",
+        width="100%",
+        style={
+            "margin": "0 20px 16px",
+            "padding": "18px",
+            "background": COLOR["card_cream"],
+            "border": f"1px solid {COLOR['warm_border']}",
+            "border_radius": "20px",
+        },
+    )
+
+
+def add_person_button() -> rx.Component:
+    return rx.button(
+        State.t["add_person"],
+        on_click=State.open_add_contact,
+        style={
+            "width": "100%",
+            "min_height": "72px",
+            "border_radius": "20px",
+            "font_family": FONT_LATIN,
+            "font_weight": "700",
+            "font_size": "1.05rem",
+            "cursor": "pointer",
+            "background": "transparent",
+            "border": f"2px dashed {COLOR['gold_border']}",
+            "color": "#8A5B12",
+        },
+    )
+
+
 def contact_list() -> rx.Component:
     return rx.vstack(
+        rx.cond(
+            State.add_contact_open,
+            add_contact_form(),
+            add_person_button(),
+        ),
+        rx.cond(
+            State.contacts.length() == 0,
+            rx.center(
+                rx.text(
+                    State.t["no_contacts_yet"],
+                    style={
+                        "font_family": FONT_LATIN,
+                        "font_size": "1rem",
+                        "color": COLOR["muted_ink"],
+                        "text_align": "center",
+                        "padding": "20px 20px",
+                    },
+                ),
+            ),
+            rx.fragment(),
+        ),
         rx.foreach(State.contacts, contact_row),
         spacing="3",
         width="100%",
-        style={"padding": "0 20px 28px"},
+        style={"padding": "16px 20px 28px"},
     )
 
 
@@ -975,6 +1479,7 @@ def home_screen() -> rx.Component:
         rx.box(
             app_header(),
             thought_card(),
+            your_id_card(),
             recording_banner(),
             section_heading(),
             rx.cond(State.active_tab == "people", contact_list(), satsang_placeholder()),
@@ -996,9 +1501,12 @@ def home_screen() -> rx.Component:
 
 
 def join_screen() -> rx.Component:
-    """Shown once, before Home. The gateway needs a display name to
-    issue a session token (POST /session) -- there's no other identity
-    source yet (see auth.py's own docstring: not final auth)."""
+    """Shown once, before Home. No network call: services/gateway has no
+    login step at all (see module docstring's "Identity" section) --
+    this just records a local display name and flips `joined`, matching
+    the fact that the elder's real identity (the UUID) was already
+    minted by ENSURE_IDENTITY_JS on load, before this screen even
+    renders."""
     return rx.center(
         rx.vstack(
             rx.text(
@@ -1042,11 +1550,6 @@ def join_screen() -> rx.Component:
                     "cursor": "pointer",
                 },
             ),
-            rx.cond(
-                State.join_error != "",
-                rx.text(State.join_error, style={"color": "#8A3E0F", "font_weight": "600"}),
-                rx.fragment(),
-            ),
             spacing="4",
             width="100%",
             style={"max_width": "420px", "padding": "24px"},
@@ -1073,7 +1576,7 @@ def chat_screen() -> rx.Component:
                 },
             ),
             rx.text(
-                State.my_display_name,
+                State.current_contact["name"],
                 style={"font_size": "18px", "font_weight": "600", "color": COLOR["muted_ink"]},
             ),
             rx.spacer(),
@@ -1082,21 +1585,8 @@ def chat_screen() -> rx.Component:
             align="center",
             spacing="3",
         ),
-        rx.box(
-            rx.text(
-                State.t["shared_circle_note"],
-                style={"font_size": "0.9rem", "color": "#8A5B12"},
-            ),
-            style={
-                "background": COLOR["gold_sand"],
-                "border": "1px solid #EFD9A8",
-                "border_radius": "14px",
-                "padding": "10px 14px",
-                "margin_bottom": "8px",
-            },
-        ),
         rx.text(
-            State.t["connecting"],
+            "",
             id="live-chat-status",
             style={"font_size": "0.85rem", "color": COLOR["muted_ink"]},
         ),
@@ -1149,7 +1639,7 @@ def chat_screen() -> rx.Component:
         ),
         spacing="3",
         width="100%",
-        on_mount=State.connect_chat,
+        on_mount=State.enter_chat,
         style={
             "max_width": "560px",
             "margin": "0 auto",
@@ -1168,6 +1658,7 @@ def index() -> rx.Component:
             rx.cond(State.current_contact_id == "", home_screen(), chat_screen()),
             join_screen(),
         ),
+        on_mount=State.bootstrap,
         style={"background": COLOR["cream_canvas"], "font_family": FONT_LATIN},
     )
 
