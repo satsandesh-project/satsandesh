@@ -63,8 +63,6 @@ class MessageStatus(str, Enum):
     HELD = "held"
     BLOCKED = "blocked"
     FAILED = "failed"
-    SENT = "sent"
-    CANCELLED = "cancelled"
 
 
 class MediaRef(BaseModel):
