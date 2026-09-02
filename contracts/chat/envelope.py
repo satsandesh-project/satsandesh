@@ -5,7 +5,13 @@ from pydantic import BaseModel, Field
 
 from contracts.chat.common import TargetType, VersionedModel
 from contracts.chat.errors import ErrorPayload
-from contracts.chat.messages import AckOut, MessageIn, MessageOut
+from contracts.chat.messages import (
+    AckOut,
+    DeliveredIn,
+    MessageIn,
+    MessageOut,
+    MessageStatusOut,
+)
 
 DataT = TypeVar("DataT", bound=BaseModel)
 
@@ -14,6 +20,8 @@ class FrameType(str, Enum):
     MESSAGE_SEND = "message.send"
     MESSAGE_ACK = "message.ack"
     MESSAGE_NEW = "message.new"
+    MESSAGE_DELIVERED = "message.delivered"
+    MESSAGE_STATUS = "message.status"
     SYNC_REQUEST = "sync.request"
     SYNC_BATCH = "sync.batch"
     ERROR = "error"
@@ -67,6 +75,8 @@ class SyncBatch(VersionedModel):
 MessageSendFrame = Frame[MessageIn]
 MessageAckFrame = Frame[AckOut]
 MessageNewFrame = Frame[MessageOut]
+MessageDeliveredFrame = Frame[DeliveredIn]
+MessageStatusFrame = Frame[MessageStatusOut]
 SyncRequestFrame = Frame[SyncRequest]
 SyncBatchFrame = Frame[SyncBatch]
 ErrorFrame = Frame[ErrorPayload]
