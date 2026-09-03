@@ -61,7 +61,15 @@ shared-circle-only version:
     `sync.batch`, per contracts/chat/envelope.py's FrameType. Opening a
     contact's chat screen sends `sync.request` for that
     (target_type=user, target_id) pair to catch up on history,
-    including anything that arrived while the elder was elsewhere.
+    including anything that arrived while the elder was elsewhere. On
+    reconnect (not just first connect), any message still carrying only
+    a client_msg_id -- no server id, meaning its ack never came back --
+    is resent automatically, not left stuck at "Sending..." forever.
+    Found live (2026-09-03): a mid-send WS connection dying under real
+    staging-server instability left exactly this stuck. Safe to resend
+    blindly: client_msg_id's uniqueness constraint on the server makes a
+    genuine retry idempotent, recovering the original row rather than
+    creating a duplicate.
 
   - Status UI reflects the real, and only the real, wire signals: a
     sent message shows "Sending..." (with a genuine Undo / DELETE
@@ -484,6 +492,44 @@ window.__satsandeshWsInit = true;
   }
   window.__satCancelMessage = cancelMessage;
 
+  function sendMessageFrame(contactId, text, clientMsgId) {
+    window.__satPendingSendTarget = window.__satPendingSendTarget || {};
+    window.__satPendingSendTarget[clientMsgId] = contactId;
+    ws.send(JSON.stringify({
+      type: "message.send",
+      data: {
+        client_msg_id: clientMsgId,
+        target_type: "user",
+        target_id: contactId,
+        kind: "text",
+        text: text,
+      },
+    }));
+  }
+  window.__satSendMessage = sendMessageFrame;
+
+  function resendUnacked() {
+    // A message still carrying only client_msg_id (no server id) is one
+    // whose ack never arrived -- most likely because the connection it
+    // was sent on died before the reply came back (see the healthwatch
+    // incident this session: a mid-flight WS getting cut by a server
+    // restart). The reconnect logic below already re-establishes the
+    // socket; this is the other half -- re-sending anything still
+    // unacknowledged once that socket is open again, rather than leaving
+    // it stuck at "Sending..." forever. Safe to resend blindly: the
+    // server's client_msg_id uniqueness constraint
+    // (services/gateway/app/db/repository.py's _create_message_impl)
+    // makes this idempotent -- a genuine retry recovers the same row and
+    // returns the same ack, it does not create a duplicate message.
+    for (const contactId of Object.keys(window.__satConversations)) {
+      for (const msg of window.__satConversations[contactId]) {
+        if (msg.author_id === window.__satUserId && !msg.id && msg.client_msg_id) {
+          sendMessageFrame(contactId, msg.text, msg.client_msg_id);
+        }
+      }
+    }
+  }
+
   function handleFrame(frame) {
     if (frame.type === "message.ack") {
       const data = frame.data;
@@ -548,6 +594,7 @@ window.__satsandeshWsInit = true;
       setStatus("");
       backoffMs = 1000;
       reconnectAttempt = 0;
+      resendUnacked();
     };
 
     ws.onmessage = function (event) {
@@ -604,8 +651,6 @@ CHAT_SEND_JS = """
         return "";
     }
     const clientMsgId = window.__satUuidV4();
-    window.__satPendingSendTarget = window.__satPendingSendTarget || {};
-    window.__satPendingSendTarget[clientMsgId] = contactId;
     if (!window.__satConversations[contactId]) window.__satConversations[contactId] = [];
     window.__satConversations[contactId].push({
         client_msg_id: clientMsgId,
@@ -615,16 +660,7 @@ CHAT_SEND_JS = """
         status: "pending",
     });
     if (window.__satRenderCurrentThread) window.__satRenderCurrentThread();
-    window.__satWs.send(JSON.stringify({
-        type: "message.send",
-        data: {
-            client_msg_id: clientMsgId,
-            target_type: "user",
-            target_id: contactId,
-            kind: "text",
-            text: text,
-        },
-    }));
+    window.__satSendMessage(contactId, text, clientMsgId);
     input.value = "";
     return "sent";
 })()
