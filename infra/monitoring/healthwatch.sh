@@ -22,9 +22,13 @@
 #   2. Any container that isn't "healthy" -- append a timestamped ALERT
 #      line to $LOG_FILE, restart it, then log whether the restart
 #      actually restored a healthy state after a short wait.
-#   3. Healthy containers get a quiet heartbeat line, not a persistent
-#      alert -- so grepping the log for ALERT surfaces real incidents,
-#      not routine noise.
+#   3. One summary heartbeat line per run, always -- "N/M healthy" --
+#      regardless of whether anything needed an ALERT. This is what
+#      actually lets `tail -f`/a gap in timestamps prove cron is still
+#      running at all, as opposed to grepping for ALERT lines that only
+#      ever appear when something's already wrong (caught in review on
+#      #28: the first version logged nothing on a clean run, which is
+#      indistinguishable from cron not running).
 #
 # Optional: set ALERT_WEBHOOK_URL (a Slack/Discord incoming-webhook URL)
 # to also POST a one-line message there when an ALERT fires. Unset by
@@ -55,7 +59,12 @@ alert() {
   fi
 }
 
+healthy_count=0
+total_count=0
+
 for container in $CONTAINERS; do
+  total_count=$((total_count + 1))
+
   if ! docker inspect "$container" >/dev/null 2>&1; then
     alert "$container: not found (stopped, removed, or renamed?)"
     continue
@@ -64,6 +73,7 @@ for container in $CONTAINERS; do
   status=$(docker inspect "$container" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' 2>/dev/null)
 
   if [ "$status" = "healthy" ] || [ "$status" = "no-healthcheck" ]; then
+    healthy_count=$((healthy_count + 1))
     continue
   fi
 
@@ -75,8 +85,11 @@ for container in $CONTAINERS; do
 
   new_status=$(docker inspect "$container" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' 2>/dev/null)
   if [ "$new_status" = "healthy" ] || [ "$new_status" = "starting" ]; then
+    healthy_count=$((healthy_count + 1))
     log "$container: restart recovered it (status=$new_status)"
   else
     alert "$container: restart did NOT recover it (status=$new_status) -- needs a human"
   fi
 done
+
+log "heartbeat: $healthy_count/$total_count healthy"
