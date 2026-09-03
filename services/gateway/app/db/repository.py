@@ -333,6 +333,14 @@ def create_circle(session: Session, *, name: str, created_by: uuid.UUID) -> Circ
     return circle
 
 
+def get_circle(session: Session, circle_id: uuid.UUID) -> Circle | None:
+    """The circle row itself, or None if circle_id doesn't exist -- lets a
+    caller (e.g. the self-join route) return a clean 404 for a bad id
+    instead of letting a doomed add_member() surface as a raw FK-violation
+    IntegrityError."""
+    return session.get(Circle, circle_id)
+
+
 def add_member(
     session: Session, *, circle_id: uuid.UUID, user_id: uuid.UUID, role: str = "member"
 ) -> Membership:

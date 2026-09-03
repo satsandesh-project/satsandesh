@@ -220,3 +220,64 @@ def test_admin_can_grant_admin_to_a_new_member(client, db_session, login_as):
     membership = db_session.get(Membership, (circle.id, dora.id))
     assert membership is not None
     assert membership.role == "admin"
+
+
+def test_post_circle_join_adds_caller_as_a_member(client, db_session, login_as):
+    # The actual gap this closes (issue #30): a real second user, not
+    # already a member and with no existing member acting on their
+    # behalf, can join a circle on their own by knowing its id.
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")
+    circle = create_circle(db_session, name="Evening Satsang", created_by=alice.id)
+    add_member(db_session, circle_id=circle.id, user_id=alice.id, role="admin")
+    login_as(bob)
+
+    response = client.post(f"/circles/{circle.id}/join")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user_id"] == str(bob.id)
+    assert body["role"] == "member"
+    membership = db_session.get(Membership, (circle.id, bob.id))
+    assert membership is not None
+    assert membership.role == "member"
+
+
+def test_post_circle_join_never_grants_an_elevated_role(client, db_session, login_as):
+    # Self-join always lands as a plain member, even for the circle's own
+    # creator joining a second time (defensive -- shouldn't be reachable
+    # via the client today, but the route itself must not trust anything
+    # beyond "you are you" to decide the role).
+    alice = _make_db_user(db_session, "Alice")
+    circle = create_circle(db_session, name="Evening Satsang", created_by=alice.id)
+    login_as(alice)
+
+    response = client.post(f"/circles/{circle.id}/join")
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "member"
+
+
+def test_post_circle_join_is_idempotent_for_an_existing_member(client, db_session, login_as):
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")
+    circle = create_circle(db_session, name="Evening Satsang", created_by=alice.id)
+    add_member(db_session, circle_id=circle.id, user_id=alice.id, role="admin")
+    add_member(db_session, circle_id=circle.id, user_id=bob.id, role="member")
+    login_as(bob)
+
+    response = client.post(f"/circles/{circle.id}/join")
+
+    # Must not 500 on the composite-PK conflict a naive second insert
+    # would hit -- returns the caller's existing membership instead.
+    assert response.status_code == 200
+    assert response.json()["user_id"] == str(bob.id)
+
+
+def test_post_circle_join_nonexistent_circle_returns_404(client, db_session, login_as):
+    alice = _make_db_user(db_session, "Alice")
+    login_as(alice)
+
+    response = client.post(f"/circles/{uuid.uuid4()}/join")
+
+    assert response.status_code == 404
