@@ -8,11 +8,19 @@ owns the transaction boundary and this module stays testable without HTTP.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Circle, Conversation, Membership, Message, PushSubscription, User
+from app.db.models import (
+    Circle,
+    Conversation,
+    Membership,
+    Message,
+    MessageDelivery,
+    PushSubscription,
+    User,
+)
 
 # Exact names Alembic generated for the two UNIQUE constraints this module
 # recovers from (alembic/versions/8761697bd6bb_initial_schema_users_circles_.py,
@@ -21,6 +29,11 @@ from app.db.models import Circle, Conversation, Membership, Message, PushSubscri
 # swallow every IntegrityError instead of just the expected ones.
 _UQ_CONVERSATIONS_USER_PAIR = "uq_conversations_user_pair"
 _UQ_MESSAGES_AUTHOR_CLIENT_MSG_ID = "uq_messages_author_client_msg_id"
+# Postgres's own default naming for an unnamed composite PRIMARY KEY
+# (message_deliveries has no separate UniqueConstraint(name=...) to give
+# it a chosen name — the PK itself is the uniqueness guard) — verified
+# against the migration that creates it, not guessed.
+_PK_MESSAGE_DELIVERIES = "message_deliveries_pkey"
 
 
 def _violated_constraint_name(exc: IntegrityError) -> str | None:
@@ -300,6 +313,40 @@ def set_message_status(
     )
     session.flush()
     return result.rowcount > 0
+
+
+def record_circle_delivery(session: Session, *, message_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """Records that user_id has confirmed delivery of a circle message.
+    Returns True if this call recorded a genuinely new confirmation,
+    False if user_id had already confirmed (a retry, or a second device
+    acking the same message) -- the caller (app/ws.py's
+    _handle_message_delivered) uses this to decide whether to push an
+    updated delivered_count to the sender, so a duplicate ack doesn't
+    look like real progress.
+
+    Same SAVEPOINT-recovery pattern as create_message's own idempotency
+    (_create_message_impl): try the insert, catch the composite-PK
+    conflict specifically, treat only that as "already recorded" -- any
+    other IntegrityError (e.g. message_id or user_id no longer exists)
+    is a real failure that must surface, not get silently swallowed."""
+    delivery = MessageDelivery(message_id=message_id, user_id=user_id)
+    try:
+        with session.begin_nested():
+            session.add(delivery)
+            session.flush()
+    except IntegrityError as exc:
+        if _violated_constraint_name(exc) != _PK_MESSAGE_DELIVERIES:
+            raise
+        return False
+    return True
+
+
+def count_circle_deliveries(session: Session, *, message_id: uuid.UUID) -> int:
+    return session.execute(
+        select(func.count())
+        .select_from(MessageDelivery)
+        .where(MessageDelivery.message_id == message_id)
+    ).scalar_one()
 
 
 def get_or_create_user(

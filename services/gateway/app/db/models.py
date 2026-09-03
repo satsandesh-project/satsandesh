@@ -233,6 +233,48 @@ class Message(Base):
     )
 
 
+class MessageDelivery(Base):
+    """Per-recipient delivery confirmation for a CIRCLE message -- the
+    N-recipient counterpart to `messages.status`'s single-value
+    'delivered' transition, which only ever meant one well-defined DM
+    recipient (see app/ws.py's `_handle_message_delivered`) and doesn't
+    translate to a message with multiple recipients. Raised as an open
+    question on PR #16 once circles became a real, working feature (#32):
+    what "delivered" even means for N people is a product decision, not
+    an implementation one -- the one made here is an aggregate count
+    (delivered_count / member_count), not "first confirms" or "all must
+    confirm," since a partial count is still genuinely useful information
+    and doesn't force the UI to wait on the slowest or laggiest member.
+
+    Deliberately a separate table, not a mutation of `messages.status`:
+    that column stays the sender-side pending/sent/cancelled lifecycle
+    for every message, circle or DM, unchanged by this feature -- setting
+    it to 'delivered' for a circle message would misrepresent a partial
+    count as if the message were fully delivered to everyone.
+
+    Composite PK (message_id, user_id): idempotent by construction, same
+    reasoning as `messages`'s own client_msg_id uniqueness -- a duplicate
+    ack from the same member (a retry, or a second device) hits the PK
+    conflict and is a no-op, not a second row or a double count.
+    """
+
+    __tablename__ = "message_deliveries"
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        sa.ForeignKey("messages.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    delivered_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+
 class PushSubscription(Base):
     """Week 3 Phase 7: one row per browser/device Web Push subscription. A
     user can have several (one per device/browser they've enabled push

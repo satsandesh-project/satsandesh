@@ -65,8 +65,11 @@ class AckOut(VersionedModel):
 class DeliveredIn(VersionedModel):
     """`data` for a `message.delivered` WS frame — the recipient confirming
     actual receipt of a `message.new`, not just that the server attempted a
-    push. DM-scoped only (see app/ws.py's `_handle_message_delivered`);
-    there is deliberately no equivalent for circle messages yet."""
+    push. Works for both a DM's single recipient and a circle's N
+    recipients (see app/ws.py's `_handle_message_delivered`) — the wire
+    shape doesn't need to know which, since it's just "I confirm I have
+    this message," and the two cases differ only in how the server
+    aggregates and reports it back (see MessageStatusOut below)."""
 
     message_id: str
 
@@ -74,8 +77,23 @@ class DeliveredIn(VersionedModel):
 class MessageStatusOut(VersionedModel):
     """`data` for a `message.status` WS frame — pushed to the *sender's*
     connected devices when a message's status changes after the initial
-    ack (currently: `sent` -> `delivered`), so their UI can move off
-    whatever it showed for the ack without polling."""
+    ack, so their UI can move off whatever it showed for the ack without
+    polling.
+
+    For a DM (a single, well-defined recipient): `status` transitions
+    `sent` -> `delivered`, `delivered_count`/`member_count` stay unset.
+
+    For a circle message (N recipients, no single "delivered" moment):
+    `status` is NOT reused to mean "fully delivered" -- that would
+    misrepresent a partial count as if everyone had it, and would also
+    collide with `messages.status`'s existing, unrelated meaning (the
+    sender-side pending/sent/cancelled undo-window lifecycle, unchanged
+    by this). Instead `delivered_count`/`member_count` carry the real
+    aggregate progress (e.g. "3/13"), pushed again each time a new
+    member's confirmation arrives -- `status` stays whatever the
+    message's actual lifecycle status already was."""
 
     id: str
     status: MessageStatus
+    delivered_count: int | None = None
+    member_count: int | None = None
