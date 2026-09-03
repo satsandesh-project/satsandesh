@@ -14,7 +14,7 @@ import uuid
 
 import pytest
 
-import app.onboarding as onboarding
+from app import onboarding
 from app.db.models import User as DbUser
 
 
