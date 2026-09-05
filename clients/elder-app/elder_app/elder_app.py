@@ -165,7 +165,7 @@ TEXTS = {
         "circle_error_invalid_id": "That doesn't look like a valid circle ID.",
         "circle_error_not_found": "No circle found with that ID.",
         "circle_error_generic": "Something went wrong. Try again.",
-        "no_circles_yet": 'No circles yet. Create one, or join with an ID.',
+        "no_circles_yet": "No circles yet. Create one, or join with an ID.",
         "recording_label": "Recording...",
         "recorded_label": "Voice message recorded",
         "discard": "Discard",
