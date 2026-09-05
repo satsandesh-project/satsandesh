@@ -154,7 +154,18 @@ TEXTS = {
         "mic_aria": "Hold to speak a message",
         "tab_people": "People",
         "tab_satsang": "Satsang",
-        "satsang_placeholder": "Satsang sessions will appear here soon.",
+        "create_circle": "+ Create a circle",
+        "join_circle": "Join a circle",
+        "create_circle_title": "Create a circle",
+        "create_circle_name_placeholder": "Circle name",
+        "join_circle_title": "Join a circle",
+        "join_circle_id_placeholder": "Circle ID (ask an admin to share it)",
+        "create_button": "Create",
+        "join_button_circle": "Join",
+        "circle_error_invalid_id": "That doesn't look like a valid circle ID.",
+        "circle_error_not_found": "No circle found with that ID.",
+        "circle_error_generic": "Something went wrong. Try again.",
+        "no_circles_yet": "No circles yet. Create one, or join with an ID.",
         "recording_label": "Recording...",
         "recorded_label": "Voice message recorded",
         "discard": "Discard",
@@ -199,7 +210,18 @@ TEXTS = {
         "mic_aria": "మాట్లాడటానికి నొక్కి పట్టుకోండి",
         "tab_people": "మీ వాళ్ళు",
         "tab_satsang": "సత్సంగం",
-        "satsang_placeholder": "సత్సంగ సమావేశాలు త్వరలో ఇక్కడ కనిపిస్తాయి.",
+        "create_circle": "+ సర్కిల్ సృష్టించండి",
+        "join_circle": "సర్కిల్‌లో చేరండి",
+        "create_circle_title": "సర్కిల్ సృష్టించండి",
+        "create_circle_name_placeholder": "సర్కిల్ పేరు",
+        "join_circle_title": "సర్కిల్‌లో చేరండి",
+        "join_circle_id_placeholder": "సర్కిల్ ఐడీ (అడ్మిన్‌ని పంచుకోమని అడగండి)",
+        "create_button": "సృష్టించు",
+        "join_button_circle": "చేరండి",
+        "circle_error_invalid_id": "ఇది సరైన సర్కిల్ ఐడీలా లేదు.",
+        "circle_error_not_found": "ఆ ఐడీతో సర్కిల్ కనుగొనబడలేదు.",
+        "circle_error_generic": "ఏదో తప్పు జరిగింది. మళ్ళీ ప్రయత్నించండి.",
+        "no_circles_yet": "ఇంకా సర్కిల్‌లు లేవు. ఒకటి సృష్టించండి, లేదా ఐడీతో చేరండి.",
         "recording_label": "రికార్డ్ అవుతోంది...",
         "recorded_label": "వాయిస్ సందేశం రికార్డ్ చేయబడింది",
         "discard": "తొలగించు",
@@ -380,8 +402,20 @@ window.__satsandeshWsInit = true;
   }
 
   function statusLabel(msg) {
-    if (msg.status === "delivered") return %(status_delivered)s;
     if (msg.status === "cancelled") return %(status_cancelled)s;
+    // Circle messages: an aggregate count is more informative than a
+    // single delivered/not-delivered boolean the moment even one member
+    // has confirmed -- shown in preference to the plain status labels
+    // below, same reasoning as contracts/chat/messages.py's
+    // MessageStatusOut docstring (a partial count, not a status value).
+    if (
+      msg.target_type === "circle" &&
+      typeof msg.delivered_count === "number" &&
+      msg.delivered_count > 0
+    ) {
+      return msg.delivered_count + "/" + msg.member_count;
+    }
+    if (msg.status === "delivered") return %(status_delivered)s;
     if (msg.status === "sent") return %(status_sent)s;
     return %(status_pending)s;
   }
@@ -416,6 +450,19 @@ window.__satsandeshWsInit = true;
       bubble.style.border = isOwn ? "none" : "1px solid #EADCC4";
       bubble.style.fontFamily = "Mulish, 'Noto Sans Telugu', system-ui, sans-serif";
       bubble.style.cursor = isOwn && msg.status === "pending" ? "pointer" : "default";
+      if (!isOwn && msg.target_type === "circle") {
+        // No user directory exists yet (see module docstring's
+        // "Contacts" section) -- a circle has no way to resolve another
+        // member's id to a name, so this shows the honest thing it can,
+        // a short id fragment, rather than inventing one.
+        const who = document.createElement("div");
+        who.style.fontSize = "12px";
+        who.style.fontWeight = "700";
+        who.style.color = "#6E6047";
+        who.style.marginBottom = "2px";
+        who.textContent = (msg.author_id || "").slice(0, 8);
+        bubble.appendChild(who);
+      }
       const text = document.createElement("div");
       text.style.fontSize = "20px";
       text.style.color = "#2A2118";
@@ -492,14 +539,14 @@ window.__satsandeshWsInit = true;
   }
   window.__satCancelMessage = cancelMessage;
 
-  function sendMessageFrame(contactId, text, clientMsgId) {
+  function sendMessageFrame(contactId, text, clientMsgId, targetType) {
     window.__satPendingSendTarget = window.__satPendingSendTarget || {};
     window.__satPendingSendTarget[clientMsgId] = contactId;
     ws.send(JSON.stringify({
       type: "message.send",
       data: {
         client_msg_id: clientMsgId,
-        target_type: "user",
+        target_type: targetType || "user",
         target_id: contactId,
         kind: "text",
         text: text,
@@ -521,10 +568,12 @@ window.__satsandeshWsInit = true;
     // (services/gateway/app/db/repository.py's _create_message_impl)
     // makes this idempotent -- a genuine retry recovers the same row and
     // returns the same ack, it does not create a duplicate message.
+    // target_type defaults to "user" for a message stored before circle
+    // support existed, matching sendMessageFrame's own default.
     for (const contactId of Object.keys(window.__satConversations)) {
       for (const msg of window.__satConversations[contactId]) {
         if (msg.author_id === window.__satUserId && !msg.id && msg.client_msg_id) {
-          sendMessageFrame(contactId, msg.text, msg.client_msg_id);
+          sendMessageFrame(contactId, msg.text, msg.client_msg_id, msg.target_type);
         }
       }
     }
@@ -546,11 +595,15 @@ window.__satsandeshWsInit = true;
       }
     } else if (frame.type === "message.new") {
       const data = frame.data;
-      const contactId = otherPartyId(data);
+      // A circle message's thread key is the circle's own id, regardless
+      // of who sent it -- otherPartyId's "the other side of a DM" logic
+      // doesn't apply once there can be more than two parties.
+      const contactId = data.target_type === "circle" ? data.target_id : otherPartyId(data);
       upsertMessage(contactId, {
         id: data.id,
         author_id: data.author_id,
         target_id: data.target_id,
+        target_type: data.target_type,
         text: data.text,
         status: data.status,
       });
@@ -560,7 +613,12 @@ window.__satsandeshWsInit = true;
       for (const contactId of Object.keys(window.__satConversations)) {
         const thread = window.__satConversations[contactId];
         if (thread.some((m) => m.id === data.id)) {
-          upsertMessage(contactId, { id: data.id, status: data.status });
+          upsertMessage(contactId, {
+            id: data.id,
+            status: data.status,
+            delivered_count: data.delivered_count,
+            member_count: data.member_count,
+          });
           break;
         }
       }
@@ -571,6 +629,7 @@ window.__satsandeshWsInit = true;
         id: m.id,
         author_id: m.author_id,
         target_id: m.target_id,
+        target_type: m.target_type,
         text: m.text,
         status: m.status,
       }));
@@ -628,14 +687,16 @@ window.__satsandeshWsInit = true;
 OPEN_CHAT_JS_TEMPLATE = """
 (() => {
     const targetId = %(target_id)s;
+    const targetType = %(target_type)s;
     window.__satCurrentContactId = targetId;
+    window.__satCurrentTargetType = targetType;
     if (!window.__satConversations) window.__satConversations = {};
     if (!window.__satConversations[targetId]) window.__satConversations[targetId] = [];
     if (window.__satRenderCurrentThread) window.__satRenderCurrentThread();
     if (window.__satWs && window.__satWs.readyState === WebSocket.OPEN) {
         window.__satWs.send(JSON.stringify({
             type: "sync.request",
-            data: { target_type: "user", target_id: targetId, limit: 200 },
+            data: { target_type: targetType, target_id: targetId, limit: 200 },
         }));
     }
     return "ok";
@@ -647,6 +708,7 @@ CHAT_SEND_JS = """
     const input = document.getElementById("live-chat-input");
     const text = (input.value || "").trim();
     const contactId = window.__satCurrentContactId;
+    const targetType = window.__satCurrentTargetType || "user";
     if (!text || !contactId || !window.__satWs || window.__satWs.readyState !== WebSocket.OPEN) {
         return "";
     }
@@ -656,13 +718,74 @@ CHAT_SEND_JS = """
         client_msg_id: clientMsgId,
         author_id: window.__satUserId,
         target_id: contactId,
+        target_type: targetType,
         text: text,
         status: "pending",
     });
     if (window.__satRenderCurrentThread) window.__satRenderCurrentThread();
-    window.__satSendMessage(contactId, text, clientMsgId);
+    window.__satSendMessage(contactId, text, clientMsgId, targetType);
     input.value = "";
     return "sent";
+})()
+"""
+
+# ---------------------------------------------------------------------------
+# Client-side JS: circles -- list, create, self-service join (real endpoints,
+# see services/gateway/app/circles.py). No user-directory equivalent exists
+# for circles yet (same honest gap as DM contacts): joining requires knowing
+# a circle's real id, shared out of band, same as sharing "Your ID" for DMs.
+# ---------------------------------------------------------------------------
+
+LOAD_CIRCLES_JS_TEMPLATE = """
+(async () => {
+    try {
+        const resp = await fetch(%(gateway_url)s + "/circles", {
+            headers: { Authorization: "Bearer " + window.__satToken },
+        });
+        if (!resp.ok) return "[]";
+        const circles = await resp.json();
+        return JSON.stringify(circles);
+    } catch (err) {
+        return "[]";
+    }
+})()
+"""
+
+CREATE_CIRCLE_JS_TEMPLATE = """
+(async () => {
+    try {
+        const resp = await fetch(%(gateway_url)s + "/circles", {
+            method: "POST",
+            headers: {
+                Authorization: "Bearer " + window.__satToken,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ name: %(name)s }),
+        });
+        if (!resp.ok) return "error:" + resp.status;
+        return "ok";
+    } catch (err) {
+        return "error:network";
+    }
+})()
+"""
+
+JOIN_CIRCLE_JS_TEMPLATE = """
+(async () => {
+    const rawId = (%(circle_id)s || "").trim();
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRe.test(rawId)) return "error:invalid_id";
+    try {
+        const resp = await fetch(%(gateway_url)s + "/circles/" + rawId + "/join", {
+            method: "POST",
+            headers: { Authorization: "Bearer " + window.__satToken },
+        });
+        if (resp.status === 404) return "error:not_found";
+        if (!resp.ok) return "error:" + resp.status;
+        return "ok";
+    } catch (err) {
+        return "error:network";
+    }
 })()
 """
 
@@ -716,6 +839,18 @@ class State(rx.State):
     active_tab: str = "people"
     contacts: list[dict[str, str]] = []
 
+    # Real circles (services/gateway/'s app/circles.py) -- create, list,
+    # self-join (POST /circles/{id}/join, PR #32). Loaded once identity is
+    # ready, same timing as contacts, since GET /circles needs a real
+    # Bearer token but not the "joined" (named) state.
+    circles: list[dict[str, str]] = []
+    current_circle_id: str = ""
+    create_circle_open: bool = False
+    create_circle_name_input: str = ""
+    join_circle_open: bool = False
+    join_circle_id_input: str = ""
+    circle_error: str = ""
+
     # Real gateway identity: a client-generated UUID persisted in
     # localStorage (ENSURE_IDENTITY_JS), not a server-issued session --
     # services/gateway's auth stub takes any UUID-shaped token as that
@@ -747,11 +882,37 @@ class State(rx.State):
                 return c
         return {}
 
+    @rx.var
+    def current_circle(self) -> dict[str, str]:
+        for c in self.circles:
+            if c["id"] == self.current_circle_id:
+                return c
+        return {}
+
+    @rx.var
+    def chat_title(self) -> str:
+        # One chat screen serves both DMs and circles (current_contact_id
+        # and current_circle_id are mutually exclusive) -- the header
+        # just needs to know which kind is actually open.
+        if self.current_circle_id:
+            for c in self.circles:
+                if c["id"] == self.current_circle_id:
+                    return c["name"]
+            return ""
+        for c in self.contacts:
+            if c["id"] == self.current_contact_id:
+                return c["name"]
+        return ""
+
     def open_chat(self, contact_id: str):
         self.current_contact_id = contact_id
 
+    def open_circle_chat(self, circle_id: str):
+        self.current_circle_id = circle_id
+
     def go_home(self):
         self.current_contact_id = ""
+        self.current_circle_id = ""
 
     def toggle_language(self):
         self.language = "te" if self.language == "en" else "en"
@@ -771,6 +932,7 @@ class State(rx.State):
         return [
             rx.call_script(LOAD_NAME_JS, callback=State.on_name_loaded),
             rx.call_script(LOAD_CONTACTS_JS, callback=State.on_contacts_loaded),
+            self.load_circles(),
         ]
 
     def on_name_loaded(self, name: str):
@@ -816,9 +978,18 @@ class State(rx.State):
         ]
 
     def enter_chat(self):
+        if self.current_circle_id:
+            js = OPEN_CHAT_JS_TEMPLATE % {
+                "target_id": json.dumps(self.current_circle_id),
+                "target_type": json.dumps("circle"),
+            }
+            return rx.call_script(js)
         if not self.current_contact_id:
             return None
-        js = OPEN_CHAT_JS_TEMPLATE % {"target_id": json.dumps(self.current_contact_id)}
+        js = OPEN_CHAT_JS_TEMPLATE % {
+            "target_id": json.dumps(self.current_contact_id),
+            "target_type": json.dumps("user"),
+        }
         return rx.call_script(js)
 
     def send_live_message(self):
@@ -868,6 +1039,92 @@ class State(rx.State):
             except (json.JSONDecodeError, TypeError):
                 pass
             self.add_contact_open = False
+
+    # -- Circles: list, create, self-service join (real endpoints) -------
+
+    def load_circles(self):
+        js = LOAD_CIRCLES_JS_TEMPLATE % {"gateway_url": json.dumps(GATEWAY_PUBLIC_URL)}
+        return rx.call_script(js, callback=State.on_circles_loaded)
+
+    def on_circles_loaded(self, circles_json: str):
+        try:
+            parsed = json.loads(circles_json)
+        except (json.JSONDecodeError, TypeError):
+            parsed = []
+        # GET /circles returns only id/name/created_by/created_at -- the
+        # avatar initial and tint are purely a client-side display detail
+        # (same as ADD_CONTACT_JS_TEMPLATE computes for DM contacts),
+        # computed here once rather than re-derived in every render.
+        for i, circle in enumerate(parsed):
+            name = circle.get("name", "")
+            circle["initial"] = name[:1].upper() if name else "?"
+            circle["tint"] = TINTS[i % len(TINTS)]
+        self.circles = parsed
+
+    def open_create_circle(self):
+        self.create_circle_open = True
+        self.join_circle_open = False
+        self.create_circle_name_input = ""
+        self.circle_error = ""
+
+    def close_create_circle(self):
+        self.create_circle_open = False
+
+    def set_create_circle_name_input(self, value: str):
+        self.create_circle_name_input = value
+
+    def submit_create_circle(self):
+        name = self.create_circle_name_input.strip()
+        if not name:
+            return None
+        self.circle_error = ""
+        js = CREATE_CIRCLE_JS_TEMPLATE % {
+            "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
+            "name": json.dumps(name),
+        }
+        return rx.call_script(js, callback=State.on_circle_created)
+
+    def on_circle_created(self, result: str):
+        if result.startswith("error:"):
+            self.circle_error = self.t["circle_error_generic"]
+            return None
+        self.create_circle_open = False
+        return self.load_circles()
+
+    def open_join_circle(self):
+        self.join_circle_open = True
+        self.create_circle_open = False
+        self.join_circle_id_input = ""
+        self.circle_error = ""
+
+    def close_join_circle(self):
+        self.join_circle_open = False
+
+    def set_join_circle_id_input(self, value: str):
+        self.join_circle_id_input = value
+
+    def submit_join_circle(self):
+        self.circle_error = ""
+        js = JOIN_CIRCLE_JS_TEMPLATE % {
+            "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
+            "circle_id": json.dumps(self.join_circle_id_input.strip()),
+        }
+        return rx.call_script(js, callback=State.on_circle_join_result)
+
+    def on_circle_join_result(self, result: str):
+        if result == "error:invalid_id":
+            self.circle_error = self.t["circle_error_invalid_id"]
+        elif result == "error:not_found":
+            self.circle_error = self.t["circle_error_not_found"]
+        elif result.startswith("error:"):
+            self.circle_error = self.t["circle_error_generic"]
+        else:
+            self.join_circle_open = False
+            # Join only returns a Membership, no circle name -- refresh
+            # the full list so the newly-joined circle's real name shows
+            # up, rather than round-tripping a second lookup for just it.
+            return self.load_circles()
+        return None
 
     def copy_my_id(self):
         self.copied_id = False
@@ -1366,19 +1623,289 @@ def contact_list() -> rx.Component:
     )
 
 
-def satsang_placeholder() -> rx.Component:
-    return rx.center(
+def circle_row(circle: rx.Var[dict]) -> rx.Component:
+    return rx.button(
+        rx.hstack(
+            rx.box(
+                rx.text(
+                    circle["initial"],
+                    style={
+                        "font_family": FONT_LATIN,
+                        "font_weight": "700",
+                        "font_size": "1.5rem",
+                        "color": "#1F4034",
+                    },
+                ),
+                style={
+                    "flex_shrink": "0",
+                    "width": "76px",
+                    "height": "76px",
+                    "border_radius": "50%",
+                    "display": "flex",
+                    "align_items": "center",
+                    "justify_content": "center",
+                    "background": circle["tint"],
+                },
+            ),
+            rx.vstack(
+                rx.text(
+                    circle["name"],
+                    style={
+                        "font_family": FONT_LATIN,
+                        "font_weight": "700",
+                        "font_size": "1.2rem",
+                        "line_height": "1.3",
+                        "color": COLOR["ink"],
+                    },
+                ),
+                rx.text(
+                    State.t["tap_to_chat"],
+                    style={
+                        "font_family": FONT_LATIN,
+                        "font_weight": "400",
+                        "font_size": "0.85rem",
+                        "line_height": "1.35",
+                        "color": COLOR["muted_ink"],
+                    },
+                ),
+                spacing="1",
+                align_items="flex-start",
+                flex="1",
+                min_width="0",
+            ),
+            rx.box(
+                style={
+                    "width": "14px",
+                    "height": "14px",
+                    "border_top": "3px solid #B08E5C",
+                    "border_right": "3px solid #B08E5C",
+                    "transform": "rotate(45deg)",
+                    "opacity": ".8",
+                    "flex_shrink": "0",
+                }
+            ),
+            spacing="5",
+            align="center",
+            width="100%",
+        ),
+        on_click=lambda: State.open_circle_chat(circle["id"]),
+        style={
+            "width": "100%",
+            "min_height": "108px",
+            "padding": "16px 20px",
+            "background": COLOR["card_cream"],
+            "border": f"1px solid {COLOR['warm_border']}",
+            "border_radius": "28px",
+            "box_shadow": "0 2px 6px rgba(90,66,32,.07)",
+            "cursor": "pointer",
+            "text_align": "left",
+        },
+    )
+
+
+def create_circle_form() -> rx.Component:
+    return rx.vstack(
         rx.text(
-            State.t["satsang_placeholder"],
+            State.t["create_circle_title"],
+            style={"font_weight": "700", "font_size": "1.1rem", "color": COLOR["ink"]},
+        ),
+        rx.input(
+            placeholder=State.t["create_circle_name_placeholder"],
+            value=State.create_circle_name_input,
+            on_change=State.set_create_circle_name_input,
             style={
-                "font_family": FONT_LATIN,
-                "font_size": "1.05rem",
-                "color": COLOR["muted_ink"],
-                "text_align": "center",
-                "padding": "0 40px",
+                "min_height": "56px",
+                "font_size": "18px",
+                "padding": "0 14px",
+                "border_radius": "12px",
+                "border": f"1px solid {COLOR['warm_border']}",
+                "width": "100%",
             },
         ),
-        style={"min_height": "35vh"},
+        rx.cond(
+            State.circle_error != "",
+            rx.text(State.circle_error, style={"color": "#8A3E0F", "font_weight": "600"}),
+            rx.fragment(),
+        ),
+        rx.hstack(
+            rx.button(
+                State.t["cancel_add_button"],
+                on_click=State.close_create_circle,
+                style={
+                    "flex": "1",
+                    "min_height": "56px",
+                    "border_radius": "14px",
+                    "font_weight": "700",
+                    "cursor": "pointer",
+                    "background": "transparent",
+                    "border": f"2px solid {COLOR['warm_border']}",
+                    "color": COLOR["muted_ink"],
+                },
+            ),
+            rx.button(
+                State.t["create_button"],
+                on_click=State.submit_create_circle,
+                style={
+                    "flex": "1",
+                    "min_height": "56px",
+                    "border_radius": "14px",
+                    "font_weight": "700",
+                    "cursor": "pointer",
+                    **pill_button_style(True),
+                },
+            ),
+            width="100%",
+            spacing="3",
+        ),
+        spacing="3",
+        width="100%",
+        style={
+            "margin": "0 20px 16px",
+            "padding": "18px",
+            "background": COLOR["card_cream"],
+            "border": f"1px solid {COLOR['warm_border']}",
+            "border_radius": "20px",
+        },
+    )
+
+
+def join_circle_form() -> rx.Component:
+    return rx.vstack(
+        rx.text(
+            State.t["join_circle_title"],
+            style={"font_weight": "700", "font_size": "1.1rem", "color": COLOR["ink"]},
+        ),
+        rx.input(
+            placeholder=State.t["join_circle_id_placeholder"],
+            value=State.join_circle_id_input,
+            on_change=State.set_join_circle_id_input,
+            style={
+                "min_height": "56px",
+                "font_size": "16px",
+                "font_family": FONT_MONO,
+                "padding": "0 14px",
+                "border_radius": "12px",
+                "border": f"1px solid {COLOR['warm_border']}",
+                "width": "100%",
+            },
+        ),
+        rx.cond(
+            State.circle_error != "",
+            rx.text(State.circle_error, style={"color": "#8A3E0F", "font_weight": "600"}),
+            rx.fragment(),
+        ),
+        rx.hstack(
+            rx.button(
+                State.t["cancel_add_button"],
+                on_click=State.close_join_circle,
+                style={
+                    "flex": "1",
+                    "min_height": "56px",
+                    "border_radius": "14px",
+                    "font_weight": "700",
+                    "cursor": "pointer",
+                    "background": "transparent",
+                    "border": f"2px solid {COLOR['warm_border']}",
+                    "color": COLOR["muted_ink"],
+                },
+            ),
+            rx.button(
+                State.t["join_button_circle"],
+                on_click=State.submit_join_circle,
+                style={
+                    "flex": "1",
+                    "min_height": "56px",
+                    "border_radius": "14px",
+                    "font_weight": "700",
+                    "cursor": "pointer",
+                    **pill_button_style(True),
+                },
+            ),
+            width="100%",
+            spacing="3",
+        ),
+        spacing="3",
+        width="100%",
+        style={
+            "margin": "0 20px 16px",
+            "padding": "18px",
+            "background": COLOR["card_cream"],
+            "border": f"1px solid {COLOR['warm_border']}",
+            "border_radius": "20px",
+        },
+    )
+
+
+def circle_actions_row() -> rx.Component:
+    return rx.hstack(
+        rx.button(
+            State.t["create_circle"],
+            on_click=State.open_create_circle,
+            style={
+                "flex": "1",
+                "min_height": "72px",
+                "border_radius": "20px",
+                "font_family": FONT_LATIN,
+                "font_weight": "700",
+                "font_size": "1rem",
+                "cursor": "pointer",
+                "background": "transparent",
+                "border": f"2px dashed {COLOR['gold_border']}",
+                "color": "#8A5B12",
+            },
+        ),
+        rx.button(
+            State.t["join_circle"],
+            on_click=State.open_join_circle,
+            style={
+                "flex": "1",
+                "min_height": "72px",
+                "border_radius": "20px",
+                "font_family": FONT_LATIN,
+                "font_weight": "700",
+                "font_size": "1rem",
+                "cursor": "pointer",
+                "background": "transparent",
+                "border": f"2px dashed {COLOR['gold_border']}",
+                "color": "#8A5B12",
+            },
+        ),
+        spacing="3",
+        width="100%",
+    )
+
+
+def circle_list() -> rx.Component:
+    return rx.vstack(
+        rx.cond(
+            State.create_circle_open,
+            create_circle_form(),
+            rx.cond(
+                State.join_circle_open,
+                join_circle_form(),
+                circle_actions_row(),
+            ),
+        ),
+        rx.cond(
+            State.circles.length() == 0,
+            rx.center(
+                rx.text(
+                    State.t["no_circles_yet"],
+                    style={
+                        "font_family": FONT_LATIN,
+                        "font_size": "1rem",
+                        "color": COLOR["muted_ink"],
+                        "text_align": "center",
+                        "padding": "20px 20px",
+                    },
+                ),
+            ),
+            rx.fragment(),
+        ),
+        rx.foreach(State.circles, circle_row),
+        spacing="3",
+        width="100%",
+        style={"padding": "16px 20px 28px"},
     )
 
 
@@ -1525,7 +2052,7 @@ def home_screen() -> rx.Component:
             your_id_card(),
             recording_banner(),
             section_heading(),
-            rx.cond(State.active_tab == "people", contact_list(), satsang_placeholder()),
+            rx.cond(State.active_tab == "people", contact_list(), circle_list()),
             style={"flex": "1", "min_height": "0", "overflow_y": "auto"},
         ),
         mic_button(),
@@ -1619,7 +2146,7 @@ def chat_screen() -> rx.Component:
                 },
             ),
             rx.text(
-                State.current_contact["name"],
+                State.chat_title,
                 style={"font_size": "18px", "font_weight": "600", "color": COLOR["muted_ink"]},
             ),
             rx.spacer(),
@@ -1698,7 +2225,11 @@ def index() -> rx.Component:
     return rx.box(
         rx.cond(
             State.joined,
-            rx.cond(State.current_contact_id == "", home_screen(), chat_screen()),
+            rx.cond(
+                (State.current_contact_id == "") & (State.current_circle_id == ""),
+                home_screen(),
+                chat_screen(),
+            ),
             join_screen(),
         ),
         on_mount=State.bootstrap,
