@@ -120,9 +120,20 @@ readable plaintext message. See Spike A findings below.*
 
 **Both spikes are now complete.** Spike B (custom-lite) findings and Spike
 A (Matrix/Tuwunel) findings are both below, followed by a joined
-comparison. **Status remains Proposed** — moving this to Accepted is the
-whole team's decision to make together, not something either spike author
-decides unilaterally by writing up their own results.
+comparison. **Status remains Proposed as of this section being written**
+— moving this to Accepted is the whole team's decision to make together,
+not something either spike author decides unilaterally by writing up
+their own results.
+
+**Since resolved, left unedited above for the historical record:** the
+team formally confirmed Option A (Matrix/Tuwunel) — see this document's
+own header (`Status: Accepted`) — resolving the sequencing concern this
+section originally raised. This paragraph is intentionally left as it
+was written, at the point the spikes had just finished and before that
+confirmation, rather than rewritten to sound like it already knew the
+outcome; per `docs/OWNERSHIP.md`'s rule R6, that's exactly the kind of
+edit-in-place that produced this ADR's earlier two-contradictory-copies
+problem in the first place.
 
 ## Spike plan (hands-on portion — pending Docker being unblocked locally)
 
