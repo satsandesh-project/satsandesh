@@ -15,12 +15,16 @@ from app import undo
 from app.auth import user_from_token
 from app.config import get_settings
 from app.db.base import SessionLocal, get_db
+from app.db.models import Message
 from app.db.repository import (
+    count_circle_deliveries,
     create_message_with_created_flag,
     find_conversation_id,
     get_message_by_id,
     get_messages_since,
     is_circle_member,
+    list_member_ids_for_circle,
+    record_circle_delivery,
     set_message_status,
 )
 from app.messages import fan_out_message, message_to_out
@@ -225,28 +229,116 @@ async def _handle_message_send(
     )
 
 
+async def _handle_message_delivered_dm(
+    websocket: WebSocket, db: Session, message: Message, caller_id: uuid.UUID
+) -> None:
+    """The original DM half of message.delivered — a single, well-defined
+    recipient, so `messages.status` itself transitions `sent` ->
+    `delivered`. Unchanged behavior from before circle delivery existed;
+    split out of _handle_message_delivered verbatim so that function can
+    dispatch on target_type without duplicating either half inline."""
+    if message.target_user_id != caller_id:
+        # Covers both "not this message's recipient" (some unrelated third
+        # party) and "the author trying to mark their own sent message
+        # delivered" in one check: target_user_id can never equal author_id
+        # for a real DM (app/ws.py's own can't-DM-yourself check in
+        # _handle_message_send), so an author here always fails this too.
+        await _send_error(
+            websocket,
+            ErrorCode.UNAUTHORIZED,
+            "only the message's recipient can mark it delivered",
+        )
+        return
+
+    updated = set_message_status(
+        db,
+        message.id,
+        new_status=MessageStatus.DELIVERED.value,
+        expected=MessageStatus.SENT.value,
+    )
+    db.commit()
+    if not updated:
+        # Already delivered (a duplicate ack, e.g. the recipient's second
+        # device) or some other unexpected state — either way, the caller
+        # didn't do anything wrong by acking a message that isn't (or is no
+        # longer) `sent`, so this is a no-op, not an error.
+        return
+
+    status_frame = {
+        "type": FrameType.MESSAGE_STATUS.value,
+        "data": MessageStatusOut(id=str(message.id), status=MessageStatus.DELIVERED).model_dump(
+            mode="json"
+        ),
+    }
+    await manager.send_to_user(str(message.author_id), status_frame)
+
+
+async def _handle_message_delivered_circle(
+    websocket: WebSocket, db: Session, message: Message, caller_id: uuid.UUID
+) -> None:
+    """The circle half of message.delivered (closing the gap raised on PR
+    #16 once circles became real via #32's self-join) — N recipients, no
+    single "delivered" moment, so this tracks each member's own
+    confirmation (record_circle_delivery) and reports an aggregate count
+    back to the sender, rather than mutating messages.status the way the
+    DM half does (see MessageStatusOut's docstring for why)."""
+    if not is_circle_member(db, circle_id=message.target_circle_id, user_id=caller_id):
+        await _send_error(
+            websocket,
+            ErrorCode.UNAUTHORIZED,
+            "only a member of this circle can confirm delivery",
+        )
+        return
+
+    if caller_id == message.author_id:
+        # Confirming delivery to yourself isn't a meaningful event -- you
+        # already have the message, you sent it. Rejected explicitly
+        # rather than silently counted, so a client bug doesn't inflate
+        # delivered_count with the sender's own device.
+        await _send_error(
+            websocket,
+            ErrorCode.VALIDATION_FAILED,
+            "the author does not confirm delivery of their own message",
+        )
+        return
+
+    is_new = record_circle_delivery(db, message_id=message.id, user_id=caller_id)
+    db.commit()
+    if not is_new:
+        # Already recorded (a duplicate ack, e.g. a second device) —
+        # no-op, not an error, and no redundant push: delivered_count
+        # hasn't changed, so there's nothing new to tell the sender.
+        return
+
+    delivered_count = count_circle_deliveries(db, message_id=message.id)
+    # -1: every member except the author, who is never expected to (and
+    # is now rejected from trying to) confirm their own message.
+    member_count = len(list_member_ids_for_circle(db, circle_id=message.target_circle_id)) - 1
+
+    status_frame = {
+        "type": FrameType.MESSAGE_STATUS.value,
+        "data": MessageStatusOut(
+            id=str(message.id),
+            status=message.status,
+            delivered_count=delivered_count,
+            member_count=member_count,
+        ).model_dump(mode="json"),
+    }
+    await manager.send_to_user(str(message.author_id), status_frame)
+
+
 async def _handle_message_delivered(
     websocket: WebSocket, db: Session, user: User, raw_data: dict
 ) -> None:
     """Week 3: the still-missing half of "sent / delivered states" —
     `sent` (app/undo.py's deferred fan_out_message, above) already existed
     and only ever meant "the server pushed this out," not "the recipient
-    actually has it." This is the recipient's own confirmation of that,
-    and the resulting notification back to the *sender*.
-
-    DM-scoped only, deliberately: `message.target_type != "user"` below
-    rejects a circle message outright rather than guessing at "delivered
-    to whom" for a multi-recipient target — a separate design question
-    this doesn't try to answer (see tests/test_message_delivered.py's
-    circle-target test).
-
-    Idempotent by construction: set_message_status's WHERE-scoped update
-    (same guard app/undo.py's cancellation and fan_out_message already
-    rely on) means a second ack for an already-`delivered` message is a
-    silent no-op, not an error and not a second redundant push to the
-    sender — a client retry or a second device acking the same message
-    must not look like a problem.
-    """
+    actually has it." This is a recipient's own confirmation of that, and
+    the resulting notification back to the *sender* — dispatching to
+    _handle_message_delivered_dm or _handle_message_delivered_circle
+    depending on the message's own target_type, since a DM's single
+    well-defined recipient and a circle's N recipients need genuinely
+    different tracking (see each half's own docstring)."""
     try:
         delivered = DeliveredIn.model_validate(raw_data)
     except ValidationError as exc:
@@ -269,49 +361,11 @@ async def _handle_message_delivered(
         await _send_error(websocket, ErrorCode.NOT_FOUND, "message not found")
         return
 
-    if message.target_type != "user":
-        await _send_error(
-            websocket,
-            ErrorCode.VALIDATION_FAILED,
-            "message.delivered is only supported for DMs, not circle messages",
-        )
-        return
-
     caller_id = uuid.UUID(user.id)
-    if message.target_user_id != caller_id:
-        # Covers both "not this message's recipient" (some unrelated third
-        # party) and "the author trying to mark their own sent message
-        # delivered" in one check: target_user_id can never equal author_id
-        # for a real DM (app/ws.py's own can't-DM-yourself check in
-        # _handle_message_send), so an author here always fails this too.
-        await _send_error(
-            websocket,
-            ErrorCode.UNAUTHORIZED,
-            "only the message's recipient can mark it delivered",
-        )
-        return
-
-    updated = set_message_status(
-        db,
-        message_uuid,
-        new_status=MessageStatus.DELIVERED.value,
-        expected=MessageStatus.SENT.value,
-    )
-    db.commit()
-    if not updated:
-        # Already delivered (a duplicate ack, e.g. the recipient's second
-        # device) or some other unexpected state — either way, the caller
-        # didn't do anything wrong by acking a message that isn't (or is no
-        # longer) `sent`, so this is a no-op, not an error.
-        return
-
-    status_frame = {
-        "type": FrameType.MESSAGE_STATUS.value,
-        "data": MessageStatusOut(id=str(message.id), status=MessageStatus.DELIVERED).model_dump(
-            mode="json"
-        ),
-    }
-    await manager.send_to_user(str(message.author_id), status_frame)
+    if message.target_type == "user":
+        await _handle_message_delivered_dm(websocket, db, message, caller_id)
+    else:
+        await _handle_message_delivered_circle(websocket, db, message, caller_id)
 
 
 async def _handle_sync_request(
