@@ -38,12 +38,13 @@ echo "Configuring firewall (ufw): SSH + HTTP only..."
 if command -v ufw >/dev/null 2>&1; then
   sudo ufw allow OpenSSH
   sudo ufw allow 80/tcp
-  # Deliberately NOT opening 5432 (Postgres), 8008 (Tuwunel), or 8101
-  # (matrix-circle-service) -- those host port publishes in
-  # docker-compose.yml exist for local dev convenience (manual poking
-  # during a spike) and have no reason to be reachable from the public
-  # internet on a staging box. Caddy on :80 is the only intended entry
-  # point; everything else talks over the compose-internal network.
+  # Deliberately NOT opening 5432 (Postgres) -- that host port publish
+  # in docker-compose.yml exists for local dev convenience and has no
+  # reason to be reachable from the public internet on a staging box.
+  # Caddy on :80 is the only intended entry point; everything else
+  # talks over the compose-internal network. (Historical: this used to
+  # also cover 8008/Tuwunel and 8101/matrix-circle-service, removed
+  # 2026-09-05 along with ADR 0002's superseded Matrix decision.)
   sudo ufw --force enable
   sudo ufw status verbose
 else
@@ -55,10 +56,10 @@ echo "Pulling images / building services..."
 docker compose build
 
 echo "Starting the base stack (gateway, elder-app, ai-services, caddy," \
-     "postgres) plus the matrix profile (tuwunel, matrix-circle-service)" \
-     "-- ADR 0002 decided Matrix as the real backbone, not the base" \
-     "stack's placeholder default..."
-docker compose --profile matrix up -d
+     "postgres) -- the matrix profile (tuwunel, matrix-circle-service) was" \
+     "removed 2026-09-05; ADR 0002's Matrix decision was superseded, see" \
+     "docs/adr/0002-chat-backbone.md's Update section..."
+docker compose up -d
 
 echo "Waiting for healthchecks..."
 for i in $(seq 1 30); do

@@ -147,17 +147,18 @@ scp .env youruser@<server-ip>:~/satsandesh/.env
 
    - Configures `ufw` to allow only SSH and port 80, denies everything
      else inbound, and enables it. **Deliberately does not open** 5432
-     (Postgres), 8008 (Tuwunel), or 8101 (matrix-circle-service) --
-     `docker-compose.yml` publishes those to the host for local dev
-     convenience (manual poking during the Matrix spike), and there's no
-     reason for any of them to be reachable from the public internet on a
-     staging box. Caddy on `:80` is the only intended entry point.
+     (Postgres) -- `docker-compose.yml` publishes it to the host for
+     local dev convenience, and there's no reason for it to be reachable
+     from the public internet on a staging box. Caddy on `:80` is the
+     only intended entry point. (Historical: this used to also cover
+     8008/Tuwunel and 8101/matrix-circle-service, removed from
+     `docker-compose.yml` 2026-09-05 along with ADR 0002's Matrix
+     decision -- see its "Update" section.)
    - Runs `docker compose build`.
-   - Starts the stack with `docker compose --profile matrix up -d` --
-     the `matrix` profile, not a plain `docker compose up`, because ADR
-     0002 decided Matrix/Tuwunel as the actual backbone; a plain
-     `docker compose up` would leave the gateway pointed at a
-     `matrix-circle-service` that was never started.
+   - Starts the stack with `docker compose up -d`. (Historical: this
+     used to be `docker compose --profile matrix up -d`, back when ADR
+     0002's Matrix/Tuwunel decision was still the plan; there is no
+     `matrix` profile anymore.)
    - Polls `docker compose ps` until every service reports healthy (or
      30 x 5s tries out).
 

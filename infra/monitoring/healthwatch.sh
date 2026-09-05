@@ -37,7 +37,13 @@
 # a config change, not a script change.
 set -uo pipefail
 
-CONTAINERS="${CONTAINERS:-liveapp-gateway-1 liveapp-elder-app-1 liveapp-ai-services-1 liveapp-postgres-1 liveapp-matrix-circle-service-1 liveapp-tuwunel-1}"
+# liveapp-matrix-circle-service-1 and liveapp-tuwunel-1 removed
+# 2026-09-05 along with ADR 0002's superseded Matrix decision -- see
+# docker-compose.yml and docs/adr/0002-chat-backbone.md's "Update"
+# section. Left in CONTAINERS, they'd permanently ALERT as "not found"
+# once the live deployment picks up that removal, for containers that
+# were deliberately retired, not actually down.
+CONTAINERS="${CONTAINERS:-liveapp-gateway-1 liveapp-elder-app-1 liveapp-ai-services-1 liveapp-postgres-1}"
 LOG_FILE="${LOG_FILE:-$HOME/healthwatch.log}"
 RESTART_RECHECK_DELAY="${RESTART_RECHECK_DELAY:-15}"
 

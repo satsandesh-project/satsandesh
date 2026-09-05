@@ -32,11 +32,17 @@ services:
   #
   # gateway/ (M2's) removed from the repo entirely (2026-09-02): the team
   # confirmed services/gateway/ as the one gateway going forward, so the
-  # parallel implementation was redundant. Its Matrix backbone
-  # (backbone/spike-matrix-a/circle_service/ + tuwunel, "matrix" profile
-  # below) stays -- it's ADR 0002's actual decided chat backbone and
-  # services/gateway/ doesn't use it yet; that integration is separate,
-  # not-yet-done work, not something this removal answers.
+  # parallel implementation was redundant.
+  #
+  # Matrix backbone removed (2026-09-05): ADR 0002 originally decided
+  # Option A (Matrix/Tuwunel), and the tuwunel + matrix-circle-service
+  # services lived here for that -- but the team has since superseded
+  # that decision (see docs/adr/0002-chat-backbone.md's "Update
+  # (2026-09-05)"): services/gateway/'s existing Postgres implementation
+  # is the one going forward, not a Matrix cutover. Nothing depends on
+  # Tuwunel or matrix-circle-service anymore, so removed rather than
+  # left running unused -- see backbone/spike-matrix-a/README.md for
+  # the archived Spike A material this used to run.
   gateway:
     build:
       # Repo root, not ./services/gateway -- it imports from contracts/
@@ -154,77 +160,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Matrix backend (ADR 0002, Option A): Tuwunel homeserver + the
-  # FastAPI service implementing CircleBackbone against it. Separate
-  # "matrix" profile so it never starts with a plain `docker compose up`
-  # or with `--profile spike` -- the two backbone implementations don't
-  # run against each other's rooms/outbox. See backbone/spike-matrix-a/.
-  tuwunel:
-    profiles: ["matrix"]
-    image: ghcr.io/matrix-construct/tuwunel:latest
-    restart: unless-stopped
-    environment:
-      TUWUNEL_SERVER_NAME: localhost
-      TUWUNEL_DATABASE_PATH: /var/lib/tuwunel
-      TUWUNEL_ALLOW_REGISTRATION: "true"
-      # Confirmed by actually starting the container and reading its own
-      # refusal, not by guessing from docs: without a registration_token,
-      # Tuwunel hard-refuses to start with allow_registration on unless
-      # this exact flag says so explicitly. Fine for a local dev spike --
-      # this is exactly the abuse case the flag exists to gate.
-      TUWUNEL_YES_I_AM_VERY_VERY_SURE_I_WANT_AN_OPEN_REGISTRATION_SERVER_PRONE_TO_ABUSE: "true"
-      # Also confirmed by reading the container's own startup warning:
-      # it defaults to binding 127.0.0.1/[::1], which is unreachable from
-      # another container (matrix-circle-service needs to reach this one
-      # by service name over the compose network).
-      TUWUNEL_ADDRESS: "0.0.0.0"
-      # Single-node dev setup -- Spike A's own findings note federation
-      # was irrelevant to the join bug it found, and we have no second
-      # server to federate with here anyway.
-      TUWUNEL_ALLOW_FEDERATION: "false"
-    volumes:
-      - tuwunel_data:/var/lib/tuwunel
-    ports:
-      # Published for the bootstrap/registration script and manual
-      # poking. 8448 (federation) is exposed by the image but unused
-      # with federation off.
-      - "8008:8008"
-    # The image ships its own healthcheck binary flag -- confirmed by
-    # inspecting the image directly (`docker inspect`) rather than
-    # assuming curl/wget/python exist in what turned out to be a
-    # shell-less minimal image. Declared explicitly here to shorten the
-    # interval for faster dev feedback than the image's 30s default.
-    healthcheck:
-      test: ["CMD", "tuwunel", "--health-check"]
-      interval: 5s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-
-  matrix-circle-service:
-    profiles: ["matrix"]
-    build:
-      # Repo root, same reason as gateway/spike-backbone: needs
-      # backbone/interfaces.py, which lives outside this service's own
-      # directory.
-      context: .
-      dockerfile: backbone/spike-matrix-a/circle_service/Dockerfile
-    restart: unless-stopped
-    environment:
-      HOMESERVER_URL: http://tuwunel:8008
-      SERVER_NAME: localhost
-    depends_on:
-      tuwunel:
-        condition: service_healthy
-    ports:
-      - "8101:8000"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -250,4 +185,3 @@ services:
 
 volumes:
   pgdata:
-  tuwunel_data:
