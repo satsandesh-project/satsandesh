@@ -7,23 +7,19 @@ expiry, and double-use.
 These tests use the conftest.py client/login_as/db_session fixtures and
 therefore require a real Postgres test database (see services/gateway/README.md).
 The activate endpoint inserts a real `users` row, so a live DB is necessary.
+
+Invites now live in the real `invites` table (app.db.models.Invite), not
+an in-memory dict — no autouse clear-between-tests fixture is needed here
+any more, since conftest.py's db_session fixture already truncates every
+table (invites included) after each test.
 """
 
 import time
 import uuid
 
-import pytest
-
 from app import onboarding
+from app.db.models import Invite
 from app.db.models import User as DbUser
-
-
-@pytest.fixture(autouse=True)
-def clear_pending():
-    """Reset in-memory invite store between tests."""
-    onboarding._pending.clear()
-    yield
-    onboarding._pending.clear()
 
 
 def _make_inviter(db_session, name="Family Member"):
@@ -62,8 +58,9 @@ def test_invite_defaults_phone_and_language(client, db_session, login_as):
     assert resp.status_code == 201
     body = resp.json()
     invite_id = body["invite_token"].split(".")[0]
-    assert onboarding._pending[invite_id]["language"] == "te"
-    assert onboarding._pending[invite_id]["phone"] == ""
+    invite = db_session.get(Invite, invite_id)
+    assert invite.language == "te"
+    assert invite.phone == ""
 
 
 def test_invite_stores_inviter_id(client, db_session, login_as):
@@ -74,7 +71,8 @@ def test_invite_stores_inviter_id(client, db_session, login_as):
 
     assert resp.status_code == 201
     invite_id = resp.json()["invite_token"].split(".")[0]
-    assert onboarding._pending[invite_id]["invited_by"] == wire_user.id
+    invite = db_session.get(Invite, invite_id)
+    assert str(invite.invited_by) == wire_user.id
 
 
 def test_invite_requires_auth(client, db_session):

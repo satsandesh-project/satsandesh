@@ -18,9 +18,11 @@ Token format:
   invite_id is a URL-safe random string (no dots), expires_at is an int,
   hmac is hex — splitting on "." with maxsplit=2 is unambiguous.
 
-Storage: _pending is an in-memory dict (intentional shortcut matching the
-current auth stub's stage of development).  Will be backed by a Postgres
-`invites` table once that schema lands.
+Storage: a Postgres `invites` table (app.db.models.Invite), one row per
+pending invite, deleted on activation. Previously an in-memory dict —
+switched after PR #29's review (kpspyolo024) found a killed-and-restarted
+gateway silently dropped every pending invite, including ones already
+shown to an elder as a QR code.
 """
 
 import hashlib
@@ -29,24 +31,25 @@ import io
 import os
 import secrets
 import time
+import uuid
+from datetime import UTC, datetime
 
 import qrcode
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.config import get_settings
 from app.db.base import get_db
+from app.db.models import Invite
 from app.db.models import User as DbUser
 from app.models import User
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
 INVITE_TOKEN_TTL_SECONDS = int(os.environ.get("INVITE_TOKEN_TTL_SECONDS", str(7 * 24 * 60 * 60)))
-
-# invite_id -> {display_name, phone, language, invited_by, expires_at}
-_pending: dict[str, dict] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -61,21 +64,25 @@ def _sign(invite_id: str, expires_at: int) -> str:
 
 
 def _issue_invite_token(
-    display_name: str, phone: str, language: str, invited_by: str
+    db: Session, display_name: str, phone: str, language: str, invited_by: uuid.UUID
 ) -> tuple[str, int]:
-    """Creates a pending invite and returns (invite_token, expires_at)."""
+    """Creates a pending invite row and returns (invite_token, expires_at)."""
     invite_id = secrets.token_urlsafe(32)
     expires_at = int(time.time()) + INVITE_TOKEN_TTL_SECONDS
     sig = _sign(invite_id, expires_at)
     invite_token = f"{invite_id}.{expires_at}.{sig}"
 
-    _pending[invite_id] = {
-        "display_name": display_name,
-        "phone": phone,
-        "language": language,
-        "invited_by": invited_by,
-        "expires_at": expires_at,
-    }
+    db.add(
+        Invite(
+            id=invite_id,
+            display_name=display_name,
+            phone=phone,
+            language=language,
+            invited_by=invited_by,
+            expires_at=datetime.fromtimestamp(expires_at, tz=UTC),
+        )
+    )
+    db.commit()
 
     return invite_token, expires_at
 
@@ -133,6 +140,7 @@ class ActivateResponse(BaseModel):
 def create_invite(
     req: InviteRequest,
     caller: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> InviteResponse:
     """Family member creates an invite for an elder.
 
@@ -140,7 +148,7 @@ def create_invite(
     Returns an invite token the family member exchanges for a QR code.
     """
     invite_token, expires_at = _issue_invite_token(
-        req.display_name, req.phone, req.language, caller.id
+        db, req.display_name, req.phone, req.language, uuid.UUID(caller.id)
     )
     return InviteResponse(invite_token=invite_token, expires_at=expires_at)
 
@@ -173,16 +181,44 @@ def activate_invite(
 
     Single-use: the invite is consumed on the first successful call.
     Subsequent calls with the same token return 410.
+
+    Consuming the invite is one DELETE ... RETURNING statement rather than
+    a separate SELECT-then-DELETE, so single-use holds even if two
+    /activate calls for the same token race each other — Postgres's row
+    lock during the DELETE means at most one of them gets a row back, the
+    same guarantee the old in-memory dict.pop had within a single process,
+    now also true across multiple gateway instances sharing one database.
+
+    RETURNING only the two specific columns needed (not the whole Invite
+    entity) on purpose. .returning(Invite) plus .scalars() hands back an
+    Invite ORM instance bound to this Session, and accessing its
+    attributes after the db.commit() below re-triggers a SELECT under
+    expire-on-commit — the default for a bare Session(), which is what
+    tests/conftest.py's db_session fixture uses (prod's own SessionLocal
+    sets expire_on_commit=False, so this only broke under tests). That
+    refresh finds nothing, since the row was just deleted, and raises
+    ObjectDeletedError. .returning(Invite) plus .mappings() doesn't fix
+    it either — the RowMapping keys on the ORM entity, not plain column
+    names, so `invite["display_name"]` raises KeyError. Selecting the two
+    columns directly gives a plain Row of scalars with no ORM instance
+    involved at all, sidestepping both problems (found by running the
+    suite against real Postgres, not by reasoning about SQLAlchemy's
+    RETURNING semantics in the abstract).
     """
     invite_id = _verify_invite_token(req.invite_token)
 
-    invite = _pending.pop(invite_id, None)
-    if invite is None:
+    result = db.execute(
+        delete(Invite).where(Invite.id == invite_id).returning(Invite.display_name, Invite.language)
+    )
+    row = result.one_or_none()
+    db.commit()
+    if row is None:
         raise HTTPException(status_code=410, detail="invite already used or not found")
+    display_name, language = row
 
     user = DbUser(
-        name=invite["display_name"],
-        preferred_language=invite["language"],
+        name=display_name,
+        preferred_language=language,
         role="elder",
     )
     db.add(user)
@@ -192,6 +228,6 @@ def activate_invite(
     return ActivateResponse(
         token=user_id,
         user_id=user_id,
-        display_name=invite["display_name"],
-        language=invite["language"],
+        display_name=display_name,
+        language=language,
     )

@@ -264,3 +264,41 @@ class PushSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
+
+
+class Invite(Base):
+    """Family-assisted QR onboarding invite (see app/onboarding.py's module
+    docstring for the full invite -> QR -> activate flow).
+
+    Replaces onboarding._pending, the in-memory dict PR #29's review
+    (kpspyolo024) flagged as unsafe: a killed-and-restarted gateway
+    silently dropped every pending invite, including ones already handed
+    to an elder as a printed/shown QR code. Moving storage here means an
+    invite survives a restart, and — since `activate_invite` now consumes
+    a row via a single DELETE ... RETURNING rather than a Python dict.pop
+    — stays single-use even across multiple gateway instances, which the
+    in-memory version could never guarantee to begin with.
+
+    `id` is the invite_id embedded in the signed token (see
+    onboarding._issue_invite_token), not a UUID7 like every other table
+    here — it's already unique and unguessable by construction (32 random
+    bytes via secrets.token_urlsafe), so reusing it as the primary key
+    avoids a second lookup key.
+    """
+
+    __tablename__ = "invites"
+
+    id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    display_name: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    phone: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default="")
+    language: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    invited_by: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        # CASCADE, not RESTRICT — same reasoning as PushSubscription.user_id
+        # above: an invite is owned by, and meaningless without, the family
+        # member who created it, unlike messages.author_id's audit-trail
+        # RESTRICT.
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
