@@ -326,8 +326,10 @@ def get_or_create_user(
     return user
 
 
-def create_circle(session: Session, *, name: str, created_by: uuid.UUID) -> Circle:
-    circle = Circle(name=name, created_by=created_by)
+def create_circle(
+    session: Session, *, name: str, created_by: uuid.UUID, kind: str = "group"
+) -> Circle:
+    circle = Circle(name=name, created_by=created_by, kind=kind)
     session.add(circle)
     session.flush()
     return circle
@@ -358,6 +360,31 @@ def is_circle_member(session: Session, *, circle_id: uuid.UUID, user_id: uuid.UU
         select(Membership).where(Membership.circle_id == circle_id, Membership.user_id == user_id)
     ).scalar_one_or_none()
     return existing is not None
+
+
+def can_post_to_circle(session: Session, *, circle_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """Authorization for *posting* to a circle -- distinct from
+    is_circle_member, which gates reading/syncing and stays open to any
+    member regardless of kind. A 'group' circle behaves exactly as before
+    this function existed: any member may post. An 'announcement' circle
+    (contracts/chat/circles.py::CircleKind) is one-to-many by design --
+    proposal Section 7.1's "elders mostly consume" -- so only a moderator
+    or admin member may post; other members can still read via
+    is_circle_member, unaffected.
+
+    False for a nonexistent circle_id or a non-member, same as
+    is_circle_member would return for those cases -- the caller (a 403 at
+    the route) doesn't need to distinguish "not found" from "not
+    authorized" here, matching the existing not-a-member error message."""
+    circle = session.get(Circle, circle_id)
+    if circle is None:
+        return False
+    membership = get_membership(session, circle_id=circle_id, user_id=user_id)
+    if membership is None:
+        return False
+    if circle.kind == "announcement":
+        return membership.role in ("moderator", "admin")
+    return True
 
 
 def get_membership(

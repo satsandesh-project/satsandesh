@@ -77,6 +77,7 @@ def get_circles(
         Circle(
             id=str(circle.id),
             name=circle.name,
+            kind=circle.kind,
             created_by=str(circle.created_by),
             created_at=circle.created_at,
         )
@@ -91,16 +92,20 @@ def post_circle(
     db: Session = Depends(get_db),
 ) -> Circle:
     caller_id = uuid.UUID(user.id)
-    circle = create_circle(db, name=body.name, created_by=caller_id)
+    circle = create_circle(db, name=body.name, created_by=caller_id, kind=body.kind.value)
     # The creator ends up an admin member of the circle they just created —
     # confirmed decision (Step 0), not a default the reference mock shares
-    # (it auto-adds nobody); see tests/test_circle_routes.py.
+    # (it auto-adds nobody); see tests/test_circle_routes.py. Also the
+    # deliberate way an announcement circle's creator gets posting rights:
+    # admin is always allowed to post regardless of kind
+    # (can_post_to_circle), so no separate bootstrap step is needed.
     add_member(db, circle_id=circle.id, user_id=caller_id, role="admin")
     db.commit()
 
     return Circle(
         id=str(circle.id),
         name=circle.name,
+        kind=circle.kind,
         created_by=str(circle.created_by),
         created_at=circle.created_at,
     )

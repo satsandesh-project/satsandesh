@@ -36,6 +36,7 @@ from app.config import get_settings
 from app.db.base import SessionLocal, get_db
 from app.db.models import Message
 from app.db.repository import (
+    can_post_to_circle,
     create_message_with_created_flag,
     find_conversation_id,
     get_message_by_id,
@@ -175,7 +176,21 @@ async def post_message(
     target_user_id: uuid.UUID | None = None
     target_circle_id: uuid.UUID | None = None
     if body.target_type is TargetType.CIRCLE:
-        if not is_circle_member(db, circle_id=target_uuid, user_id=caller_id):
+        # Posting authorization, not just membership: an 'announcement'
+        # circle only allows a moderator/admin to post (can_post_to_circle),
+        # matching the one-to-many "elders mostly consume" shape -- an
+        # ordinary member can still read/sync it (is_circle_member,
+        # get_messages below, unaffected). A 'group' circle behaves exactly
+        # as before this existed. Checked as two separate calls, not just
+        # can_post_to_circle alone, so a real member who simply lacks
+        # posting rights gets an accurate message instead of "not a member"
+        # (which they are).
+        if not can_post_to_circle(db, circle_id=target_uuid, user_id=caller_id):
+            if is_circle_member(db, circle_id=target_uuid, user_id=caller_id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only a moderator or admin can post to an announcement circle",
+                )
             raise HTTPException(status_code=403, detail="Not a member of this circle")
         target_circle_id = target_uuid
     else:

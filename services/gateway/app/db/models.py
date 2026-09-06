@@ -71,11 +71,19 @@ class Circle(Base):
     """docs/SCHEMA_DRAFT.md `circles` table."""
 
     __tablename__ = "circles"
+    __table_args__ = (
+        # 'group' (any member posts) vs 'announcement' (moderator/admin-only
+        # posting, everyone reads) -- contracts/chat/circles.py::CircleKind.
+        # server_default keeps every pre-existing row a plain group circle,
+        # matching its actual behavior before this column existed.
+        sa.CheckConstraint("kind IN ('group', 'announcement')", name="ck_circles_kind"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=generate_uuid7
     )
     name: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    kind: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'group'"))
     created_by: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
         sa.ForeignKey("users.id", ondelete="RESTRICT"),

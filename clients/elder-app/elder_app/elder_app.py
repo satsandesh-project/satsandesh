@@ -166,6 +166,10 @@ TEXTS = {
         "circle_error_not_found": "No circle found with that ID.",
         "circle_error_generic": "Something went wrong. Try again.",
         "no_circles_yet": "No circles yet. Create one, or join with an ID.",
+        "announcement_toggle_label": "Announcement channel (only admins post)",
+        "announcement_badge": "Announcement",
+        "send_error_not_member": "You're no longer a member of this circle.",
+        "send_error_announcement_only": "Only a moderator or admin can post here.",
         "recording_label": "Recording...",
         "recorded_label": "Voice message recorded",
         "discard": "Discard",
@@ -222,6 +226,10 @@ TEXTS = {
         "circle_error_not_found": "ఆ ఐడీతో సర్కిల్ కనుగొనబడలేదు.",
         "circle_error_generic": "ఏదో తప్పు జరిగింది. మళ్ళీ ప్రయత్నించండి.",
         "no_circles_yet": "ఇంకా సర్కిల్‌లు లేవు. ఒకటి సృష్టించండి, లేదా ఐడీతో చేరండి.",
+        "announcement_toggle_label": "ప్రకటన ఛానెల్ (అడ్మిన్లు మాత్రమే పోస్ట్ చేయగలరు)",
+        "announcement_badge": "ప్రకటన",
+        "send_error_not_member": "మీరు ఇకపై ఈ సర్కిల్‌లో సభ్యులు కాదు.",
+        "send_error_announcement_only": "ఇక్కడ మోడరేటర్ లేదా అడ్మిన్ మాత్రమే పోస్ట్ చేయగలరు.",
         "recording_label": "రికార్డ్ అవుతోంది...",
         "recorded_label": "వాయిస్ సందేశం రికార్డ్ చేయబడింది",
         "discard": "తొలగించు",
@@ -403,6 +411,11 @@ window.__satsandeshWsInit = true;
 
   function statusLabel(msg) {
     if (msg.status === "cancelled") return %(status_cancelled)s;
+    // Set by handleFrame's "error" branch below when the server rejects a
+    // message.send -- correlated back to this specific bubble via
+    // client_msg_id, since without that the bubble would otherwise sit
+    // stuck at "Sending..." forever, indistinguishable from a slow network.
+    if (msg.status === "failed") return msg.error_text || %(send_error_not_member)s;
     // Circle messages: an aggregate count is more informative than a
     // single delivered/not-delivered boolean the moment even one member
     // has confirmed -- shown in preference to the plain status labels
@@ -472,8 +485,9 @@ window.__satsandeshWsInit = true;
         const status = document.createElement("div");
         status.style.fontSize = "12px";
         status.style.marginTop = "4px";
-        status.style.color = msg.status === "cancelled" ? "#8A3E0F" : "#6E6047";
-        status.style.fontStyle = msg.status === "cancelled" ? "italic" : "normal";
+        const isCancelledOrFailed = msg.status === "cancelled" || msg.status === "failed";
+        status.style.color = isCancelledOrFailed ? "#8A3E0F" : "#6E6047";
+        status.style.fontStyle = isCancelledOrFailed ? "italic" : "normal";
         status.textContent = statusLabel(msg);
         bubble.appendChild(status);
         if (msg.status === "pending" && msg.id) {
@@ -570,9 +584,22 @@ window.__satsandeshWsInit = true;
     // returns the same ack, it does not create a duplicate message.
     // target_type defaults to "user" for a message stored before circle
     // support existed, matching sendMessageFrame's own default.
+    //
+    // status !== "failed" matters: a message the server explicitly
+    // rejected (e.g. posting to an announcement circle without
+    // moderator/admin rights, see handleFrame's "error" branch) also has
+    // no id, same as a genuinely dropped send -- but resending it blindly
+    // on every reconnect would just get rejected again forever. Only a
+    // message that never got *any* response (connection dropped, not
+    // authorization denied) belongs in a real retry.
     for (const contactId of Object.keys(window.__satConversations)) {
       for (const msg of window.__satConversations[contactId]) {
-        if (msg.author_id === window.__satUserId && !msg.id && msg.client_msg_id) {
+        if (
+          msg.author_id === window.__satUserId &&
+          !msg.id &&
+          msg.client_msg_id &&
+          msg.status !== "failed"
+        ) {
           sendMessageFrame(contactId, msg.text, msg.client_msg_id, msg.target_type);
         }
       }
@@ -639,6 +666,27 @@ window.__satsandeshWsInit = true;
       if (window.__satCurrentContactId === contactId) renderCurrentThread();
     } else if (frame.type === "error") {
       console.log("[satsandesh-ws] error frame:", frame.data);
+      // A rejected message.send (e.g. posting to an announcement circle
+      // without moderator/admin rights) carries the failed send's own
+      // client_msg_id in detail -- correlate it back to the specific
+      // "Sending..." bubble already rendered optimistically and mark it
+      // failed, rather than leaving it stuck at "Sending..." forever with
+      // no explanation. Frames with no such detail (a malformed-payload
+      // rejection, say, with no message ever pushed locally) have nothing
+      // to correlate to and are left as console-only, same as before.
+      const failedClientMsgId = frame.data.detail && frame.data.detail.client_msg_id;
+      if (failedClientMsgId) {
+        for (const contactId of Object.keys(window.__satConversations)) {
+          const thread = window.__satConversations[contactId];
+          const msg = thread.find((m) => m.client_msg_id === failedClientMsgId && !m.id);
+          if (msg) {
+            msg.status = "failed";
+            msg.error_text = frame.data.message;
+            if (window.__satCurrentContactId === contactId) renderCurrentThread();
+            break;
+          }
+        }
+      }
     }
   }
 
@@ -760,7 +808,7 @@ CREATE_CIRCLE_JS_TEMPLATE = """
                 Authorization: "Bearer " + window.__satToken,
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({ name: %(name)s }),
+            body: JSON.stringify({ name: %(name)s, kind: %(kind)s }),
         });
         if (!resp.ok) return "error:" + resp.status;
         return "ok";
@@ -847,6 +895,11 @@ class State(rx.State):
     current_circle_id: str = ""
     create_circle_open: bool = False
     create_circle_name_input: str = ""
+    # contracts/chat/circles.py::CircleKind -- "group" (default, any member
+    # posts) vs "announcement" (moderator/admin-only posting). A checkbox
+    # in create_circle_form, not a separate flow: creating either kind is
+    # the same POST /circles call, just a different kind value.
+    create_circle_is_announcement: bool = False
     join_circle_open: bool = False
     join_circle_id_input: str = ""
     circle_error: str = ""
@@ -959,6 +1012,8 @@ class State(rx.State):
             "status_sent": json.dumps(TEXTS["en"]["status_sent"]),
             "status_delivered": json.dumps(TEXTS["en"]["status_delivered"]),
             "status_cancelled": json.dumps(TEXTS["en"]["status_cancelled"]),
+            "send_error_not_member": json.dumps(TEXTS["en"]["send_error_not_member"]),
+            "send_error_announcement_only": json.dumps(TEXTS["en"]["send_error_announcement_only"]),
             "uuid_v4_fallback": _UUID_V4_JS_FALLBACK,
         }
         return rx.call_script(js)
@@ -1065,6 +1120,7 @@ class State(rx.State):
         self.create_circle_open = True
         self.join_circle_open = False
         self.create_circle_name_input = ""
+        self.create_circle_is_announcement = False
         self.circle_error = ""
 
     def close_create_circle(self):
@@ -1073,14 +1129,19 @@ class State(rx.State):
     def set_create_circle_name_input(self, value: str):
         self.create_circle_name_input = value
 
+    def set_create_circle_is_announcement(self, value: bool):
+        self.create_circle_is_announcement = value
+
     def submit_create_circle(self):
         name = self.create_circle_name_input.strip()
         if not name:
             return None
         self.circle_error = ""
+        kind = "announcement" if self.create_circle_is_announcement else "group"
         js = CREATE_CIRCLE_JS_TEMPLATE % {
             "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
             "name": json.dumps(name),
+            "kind": json.dumps(kind),
         }
         return rx.call_script(js, callback=State.on_circle_created)
 
@@ -1648,15 +1709,35 @@ def circle_row(circle: rx.Var[dict]) -> rx.Component:
                 },
             ),
             rx.vstack(
-                rx.text(
-                    circle["name"],
-                    style={
-                        "font_family": FONT_LATIN,
-                        "font_weight": "700",
-                        "font_size": "1.2rem",
-                        "line_height": "1.3",
-                        "color": COLOR["ink"],
-                    },
+                rx.hstack(
+                    rx.text(
+                        circle["name"],
+                        style={
+                            "font_family": FONT_LATIN,
+                            "font_weight": "700",
+                            "font_size": "1.2rem",
+                            "line_height": "1.3",
+                            "color": COLOR["ink"],
+                        },
+                    ),
+                    rx.cond(
+                        circle["kind"] == "announcement",
+                        rx.text(
+                            State.t["announcement_badge"],
+                            style={
+                                "font_family": FONT_LATIN,
+                                "font_weight": "700",
+                                "font_size": "0.7rem",
+                                "color": "#8A5B12",
+                                "background": "#FCEBC8",
+                                "border_radius": "8px",
+                                "padding": "2px 8px",
+                            },
+                        ),
+                        rx.fragment(),
+                    ),
+                    align="center",
+                    spacing="2",
                 ),
                 rx.text(
                     State.t["tap_to_chat"],
@@ -1721,6 +1802,18 @@ def create_circle_form() -> rx.Component:
                 "border": f"1px solid {COLOR['warm_border']}",
                 "width": "100%",
             },
+        ),
+        rx.hstack(
+            rx.checkbox(
+                checked=State.create_circle_is_announcement,
+                on_change=State.set_create_circle_is_announcement,
+            ),
+            rx.text(
+                State.t["announcement_toggle_label"],
+                style={"font_size": "0.95rem", "color": COLOR["muted_ink"]},
+            ),
+            align="center",
+            spacing="2",
         ),
         rx.cond(
             State.circle_error != "",
