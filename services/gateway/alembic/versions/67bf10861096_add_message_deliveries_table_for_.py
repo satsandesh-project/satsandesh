@@ -1,7 +1,7 @@
 """add message_deliveries table for circle delivery tracking
 
 Revision ID: 67bf10861096
-Revises: ee7195a99a19
+Revises: f4c8a91e6d3b
 Create Date: 2026-09-03 00:00:00.000000
 
 """
@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "67bf10861096"
-down_revision: str | Sequence[str] | None = "ee7195a99a19"
+down_revision: str | Sequence[str] | None = "f4c8a91e6d3b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
