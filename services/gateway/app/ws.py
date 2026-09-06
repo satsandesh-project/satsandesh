@@ -16,6 +16,7 @@ from app.auth import user_from_token
 from app.config import get_settings
 from app.db.base import SessionLocal, get_db
 from app.db.repository import (
+    can_post_to_circle,
     create_message_with_created_flag,
     find_conversation_id,
     get_message_by_id,
@@ -132,8 +133,33 @@ async def _handle_message_send(
     target_user_id: uuid.UUID | None = None
     target_circle_id: uuid.UUID | None = None
     if msg.target_type is TargetType.CIRCLE:
-        if not is_circle_member(db, circle_id=target_uuid, user_id=caller_id):
-            await _send_error(websocket, ErrorCode.UNAUTHORIZED, "Not a member of this circle")
+        # Same posting-authorization split as app/messages.py's post_message
+        # -- can_post_to_circle gates an 'announcement' circle to
+        # moderator/admin only, but a real member who simply lacks posting
+        # rights gets an accurate message rather than "not a member".
+        #
+        # detail={"client_msg_id": ...} on both branches: unlike a generic
+        # WS error, a rejected message.send corresponds to one specific
+        # optimistically-rendered "Sending..." bubble the client already
+        # has locally (elder_app.py's CHAT_SEND_JS pushes it before the
+        # send). Without this, the client has no way to know *which*
+        # pending message to mark failed -- it would otherwise sit stuck
+        # at "Sending..." forever, indistinguishable from a slow network.
+        if not can_post_to_circle(db, circle_id=target_uuid, user_id=caller_id):
+            if is_circle_member(db, circle_id=target_uuid, user_id=caller_id):
+                await _send_error(
+                    websocket,
+                    ErrorCode.UNAUTHORIZED,
+                    "Only a moderator or admin can post to an announcement circle",
+                    detail={"client_msg_id": msg.client_msg_id},
+                )
+            else:
+                await _send_error(
+                    websocket,
+                    ErrorCode.UNAUTHORIZED,
+                    "Not a member of this circle",
+                    detail={"client_msg_id": msg.client_msg_id},
+                )
             return
         target_circle_id = target_uuid
     else:
