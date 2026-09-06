@@ -1013,9 +1013,7 @@ class State(rx.State):
             "status_delivered": json.dumps(TEXTS["en"]["status_delivered"]),
             "status_cancelled": json.dumps(TEXTS["en"]["status_cancelled"]),
             "send_error_not_member": json.dumps(TEXTS["en"]["send_error_not_member"]),
-            "send_error_announcement_only": json.dumps(
-                TEXTS["en"]["send_error_announcement_only"]
-            ),
+            "send_error_announcement_only": json.dumps(TEXTS["en"]["send_error_announcement_only"]),
             "uuid_v4_fallback": _UUID_V4_JS_FALLBACK,
         }
         return rx.call_script(js)
