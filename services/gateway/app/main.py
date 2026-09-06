@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.db.base import check_database_connection
 from app.messages import router as messages_router
 from app.models import User
+from app.onboarding import router as onboarding_router
 from app.push import router as push_router
 from app.ws import router as ws_router
 
@@ -40,6 +41,7 @@ app.add_middleware(
 app.include_router(ws_router)
 app.include_router(messages_router)
 app.include_router(circles_router)
+app.include_router(onboarding_router)
 app.include_router(push_router)
 app.include_router(audio_labels_router)
 

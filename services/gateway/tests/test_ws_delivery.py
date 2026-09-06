@@ -616,6 +616,46 @@ def test_message_send_to_circle_requires_membership(client, db_session, ws_login
     assert rows == []
 
 
+def test_message_send_to_announcement_circle_by_ordinary_member_is_rejected(
+    client, db_session, ws_login_as
+):
+    alice = _make_db_user(db_session, "Alice")
+    bob = _make_db_user(db_session, "Bob")
+    circle = create_circle(
+        db_session, name="Daily Thought", created_by=alice.id, kind="announcement"
+    )
+    add_member(db_session, circle_id=circle.id, user_id=alice.id, role="admin")
+    add_member(db_session, circle_id=circle.id, user_id=bob.id, role="member")
+    bob_token = ws_login_as(bob)
+    client_msg_id = str(uuid.uuid4())
+
+    with client.websocket_connect(f"/ws?token={bob_token}") as bob_ws:
+        bob_ws.send_json(
+            _send_frame(
+                client_msg_id=client_msg_id,
+                target_type="circle",
+                target_id=str(circle.id),
+                text="can I post this?",
+            )
+        )
+        error = bob_ws.receive_json()
+        assert error["type"] == "error"
+        assert error["data"]["code"] == "UNAUTHORIZED"
+        assert "moderator or admin" in error["data"]["message"]
+        # The client correlates a rejected send back to the specific
+        # optimistic "Sending..." bubble it already rendered locally via
+        # this field -- without it, the bubble has no way to know it
+        # failed and would sit stuck at "Sending..." forever.
+        assert error["data"]["detail"]["client_msg_id"] == client_msg_id
+
+    rows = (
+        db_session.execute(select(Message).where(Message.target_circle_id == circle.id))
+        .scalars()
+        .all()
+    )
+    assert rows == []
+
+
 def test_circle_message_fans_out_to_all_connected_members(
     client, db_session, ws_login_as, _instant_fan_out
 ):

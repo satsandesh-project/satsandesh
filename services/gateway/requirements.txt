@@ -39,6 +39,7 @@ Mako==1.4.1
 MarkupSafe==3.0.3
 multidict==6.7.1
 packaging==26.3
+pillow==12.3.0
 pluggy==1.6.0
 propcache==0.5.2
 psycopg2-binary==2.9.12
@@ -49,6 +50,7 @@ pydantic==2.13.4
 pydantic-settings==2.15.0
 pydantic_core==2.46.4
 Pygments==2.21.0
+qrcode==8.2
 pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0

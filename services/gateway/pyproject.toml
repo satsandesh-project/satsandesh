@@ -14,6 +14,9 @@ dependencies = [
     "psycopg2-binary==2.9.12",
     "alembic==1.19.1",
     "pywebpush==2.4.0",
+    # QR code generation for family-assisted elder onboarding (app/onboarding.py).
+    # [pil] pulls in Pillow for PNG output.
+    "qrcode[pil]==8.2",
     # zoneinfo (app/push.py's is_quiet_hours) needs an IANA tz database to
     # resolve keys like "Asia/Kolkata" — the stdlib falls back to this
     # package when the OS doesn't ship one itself, which Windows never
