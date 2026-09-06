@@ -186,6 +186,7 @@ TEXTS = {
         "your_id_label": "Your ID -- share this with family so they can add you",
         "copy_id": "Copy",
         "copied_id": "Copied!",
+        "circle_id_label": "Circle ID -- share this so others can join",
         "add_person": "+ Add someone",
         "add_person_title": "Add someone",
         "add_person_name_placeholder": "Their name",
@@ -245,6 +246,7 @@ TEXTS = {
         "your_id_label": "మీ ఐడీ — కుటుంబంతో పంచుకోండి, వారు మిమ్మల్ని చేర్చుకోవచ్చు",
         "copy_id": "కాపీ చేయి",
         "copied_id": "కాపీ అయ్యింది!",
+        "circle_id_label": "సర్కిల్ ఐడీ — ఇతరులు చేరడానికి దీన్ని పంచుకోండి",
         "add_person": "+ ఎవరినైనా చేర్చు",
         "add_person_title": "ఎవరినైనా చేర్చు",
         "add_person_name_placeholder": "వారి పేరు",
@@ -919,6 +921,7 @@ class State(rx.State):
     add_id_input: str = ""
     add_error: str = ""
     copied_id: bool = False
+    copied_circle_id: bool = False
 
     mic_recording: bool = False
     mic_permission_denied: bool = False
@@ -1194,6 +1197,14 @@ class State(rx.State):
 
     def on_id_copied(self, result: str):
         self.copied_id = result == "ok"
+
+    def copy_circle_id(self):
+        self.copied_circle_id = False
+        js = COPY_ID_JS_TEMPLATE % {"my_id": json.dumps(self.current_circle_id)}
+        return rx.call_script(js, callback=State.on_circle_id_copied)
+
+    def on_circle_id_copied(self, result: str):
+        self.copied_circle_id = result == "ok"
 
     def start_recording(self):
         self.mic_permission_denied = False
@@ -2247,6 +2258,53 @@ def chat_screen() -> rx.Component:
             width="100%",
             align="center",
             spacing="3",
+        ),
+        rx.cond(
+            State.current_circle_id != "",
+            rx.hstack(
+                rx.vstack(
+                    rx.text(
+                        State.t["circle_id_label"],
+                        style={
+                            "font_family": FONT_LATIN,
+                            "font_weight": "600",
+                            "font_size": "0.8rem",
+                            "color": COLOR["green_ink"],
+                        },
+                    ),
+                    rx.text(
+                        State.current_circle_id,
+                        style={
+                            "font_family": FONT_MONO,
+                            "font_size": "0.78rem",
+                            "color": COLOR["muted_ink"],
+                            "word_break": "break-all",
+                        },
+                    ),
+                    spacing="1",
+                    align_items="flex-start",
+                    flex="1",
+                    min_width="0",
+                ),
+                rx.button(
+                    rx.cond(State.copied_circle_id, State.t["copied_id"], State.t["copy_id"]),
+                    on_click=State.copy_circle_id,
+                    style={
+                        "flex_shrink": "0",
+                        "min_height": "44px",
+                        "padding": "0 14px",
+                        "border_radius": "12px",
+                        "font_weight": "700",
+                        "cursor": "pointer",
+                        **pill_button_style(True),
+                    },
+                ),
+                style={
+                    "width": "100%",
+                    "padding": "10px 4px",
+                    "align_items": "center",
+                },
+            ),
         ),
         rx.text(
             "",
