@@ -524,6 +524,19 @@ async def ws_endpoint(websocket: WebSocket, db: Session = Depends(get_db)) -> No
         await websocket.accept()
         await websocket.close(code=1008, reason="missing_or_invalid_token")
         return
+    # user_from_token's provisioning insert (get_or_create_user) only
+    # flushes, it doesn't commit -- and a plain SELECT for an existing user
+    # implicitly opens a transaction too (SQLAlchemy's autobegin). Either
+    # way, without a commit here that transaction stays open for this
+    # connection's entire lifetime (this route holds one Session the whole
+    # time, not one per frame). A WS connection that only ever reads
+    # (sync.request, no message.send) never hits any of this file's other
+    # db.commit() calls, so it would sit "idle in transaction" in Postgres
+    # for as long as the socket stays open -- reproduced live: two
+    # connections idle-in-transaction for 6-7+ minutes, and *new* inserts
+    # on an unrelated connection stalling until they cleared. Not a data
+    # bug (writes already commit elsewhere in this file) -- a resource one.
+    db.commit()
 
     await manager.connect(user.id, websocket)
     try:
@@ -549,13 +562,26 @@ async def ws_endpoint(websocket: WebSocket, db: Session = Depends(get_db)) -> No
             # it. Reconnect logic needs the two to stay distinguishable.
             try:
                 await _process_frame(websocket, db, user, raw_data)
+                # Same reasoning as the connect-time commit above: a
+                # read-only frame (sync.request, or an is_circle_member
+                # check on a rejected send) leaves an open transaction
+                # behind otherwise, for as long as this connection lives.
+                # A frame that wrote something already committed inside
+                # its own handler; a plain commit here is then a no-op,
+                # not a double-write.
+                db.commit()
             except WebSocketDisconnect:
                 raise
             except Exception:
                 # the "any failure -> error frame, never a close" rule for
                 # this route: an unexpected bug here must not look like a
-                # dropped connection to a client's reconnect logic.
+                # dropped connection to a client's reconnect logic. Roll
+                # back rather than commit -- an unhandled exception (e.g.
+                # a DB error not already caught inside the handler) can
+                # leave the transaction in a failed state that only
+                # rollback clears; committing it would itself raise.
                 logger.exception("_process_frame: unexpected failure handling a WS frame")
+                db.rollback()
                 await _send_error(websocket, ErrorCode.INTERNAL_ERROR, "failed to process message")
     except WebSocketDisconnect:
         # Normal control flow, not an error: phones sleep, lifts lose signal,
