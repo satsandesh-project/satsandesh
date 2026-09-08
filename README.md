@@ -76,10 +76,10 @@ who's blocked on whom, see `docs/work-breakdown.md`.
 > `gateway/` (Member 2's own FastAPI gateway, with real auth, a WebSocket
 > relay, and a working Matrix/Tuwunel backbone integration, verified
 > end-to-end against a real deployed server) has been removed as redundant.
-> Its Matrix backbone — `backbone/spike-matrix-a/circle_service/` + Tuwunel,
-> ADR 0002's actual decided option — stays in the repo and still runs (the
-> `matrix` Compose profile), but `services/gateway/` doesn't use it yet;
-> `services/gateway/` has its own separate, Postgres-only circles
+> Its Matrix backbone — `backbone/spike-matrix-a/circle_service/` + Tuwunel —
+> stays in the repo as the spike record, but is no longer the decided option
+> (ADR 0002 was reversed to Option B on 2026-09-08) and is being retired from
+> the running stack; `services/gateway/` has its own separate, Postgres-only circles
 > implementation with no relationship to ADR 0002's decision. Reconciling
 > that is open, not-yet-scheduled work. Full reasoning and history:
 > `docs/prompt-journal.md`'s Week 4 entries and `docs/adr/0002-chat-backbone.md`.
@@ -88,7 +88,7 @@ who's blocked on whom, see `docs/work-breakdown.md`.
 satsandesh/
 ├── services/
 │   └── gateway/          # FastAPI gateway (M3's) — auth, circles, messages, WebSocket
-├── backbone/             # Chat backbone — Matrix bot (Option A, decided) or custom FastAPI+Postgres (Option B, spiked)
+├── backbone/             # Backbone spike record — Matrix bot (Option A) and custom FastAPI+Postgres (Option B, the decided option)
 ├── ai-services/          # ASR / MT / TTS / moderation services
 ├── clients/
 │   ├── elder-app/        # Reflex elder PWA
@@ -117,11 +117,12 @@ satsandesh/
 ## Status
 
 Month 1 — foundations. Backbone architecture spike (Matrix/Conduit vs custom-lite)
-resolved (Option A, Matrix/Tuwunel — see `docs/adr/0002-chat-backbone.md`). Member 2's
-platform deliverables (Docker Compose skeleton, backbone spikes, deployment, Week 1-4)
-are complete — see `docs/prompt-journal.md` for the full history — though the currently
-deployed gateway is `services/gateway/` (M3's), not the Matrix-backed `gateway/` that
-history describes; see the Repo layout note above.
+resolved to **Option B, custom-lite on Postgres** — `services/gateway/` (M3's), the
+gateway that is actually deployed. This reverses an earlier acceptance of Option A
+(Matrix/Tuwunel); see `docs/adr/0002-chat-backbone.md`'s "Reversal (2026-09-08)"
+section for the reasoning. Member 2's platform deliverables (Docker Compose skeleton,
+backbone spikes, deployment, Week 1-4) are complete — see `docs/prompt-journal.md`
+for the full history.
 
 ## How to run locally
 
