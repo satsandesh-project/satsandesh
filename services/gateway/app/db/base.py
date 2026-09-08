@@ -40,11 +40,13 @@ engine = create_engine(
     # closes a failure mode statement_timeout alone cannot: a session that
     # opened a transaction and then went *quiet* is never "running a long
     # query", so no statement timeout ever fires -- it just holds its locks
-    # indefinitely. That is exactly what ws_endpoint used to do (see its own
-    # comment): one uncommitted `users` INSERT pinned for the whole WebSocket
-    # lifetime, blocking every later write to that row. That specific leak is
-    # fixed at its source, but this bounds the blast radius of any future one
-    # -- Postgres itself terminates an abandoned open transaction after 30s
+    # indefinitely. ws_endpoint used to do exactly this (an uncommitted
+    # `users` INSERT, or later an implicitly-autobegun read transaction,
+    # pinned for the whole WebSocket lifetime, blocking every later write to
+    # that row) -- fixed at its source in ws.py itself (commit after connect
+    # and after every frame, PR #42), not here. This stays anyway as a
+    # backstop for whatever future code path leaks one the same way --
+    # Postgres itself terminates an abandoned open transaction after 30s
     # instead of letting it wedge unrelated requests until someone restarts
     # the process.
     connect_args={

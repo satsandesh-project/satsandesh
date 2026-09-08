@@ -525,33 +525,6 @@ async def ws_endpoint(websocket: WebSocket, db: Session = Depends(get_db)) -> No
         await websocket.close(code=1008, reason="missing_or_invalid_token")
         return
 
-    # user_from_token above may have INSERTed a `users` row for a
-    # token-derived id (get_or_create_user), and that INSERT is only
-    # flushed, never committed by its own code path. Every HTTP route
-    # either commits it incidentally (its own db.commit()) or ends
-    # microseconds later, releasing the transaction either way. This route
-    # does neither: it holds THIS SAME session for the whole WebSocket
-    # lifetime -- hours, if the elder leaves the tab open -- so anything
-    # left uncommitted here stays uncommitted, and any locks it holds stay
-    # held, for exactly that long.
-    #
-    # Committing a row we just decided to provision is the correct thing to
-    # do regardless (it should be durable, not contingent on whatever the
-    # first frame happens to do), so this is a fix on its own terms rather
-    # than only a defensive one.
-    #
-    # Context: staging showed a session `idle in transaction` for 4+ minutes
-    # holding a RowExclusiveLock on `users`, while POST /circles for that
-    # same user id failed with `QueryCanceled ... while inserting index
-    # tuple in relation "users_pkey"`. This route was the only plausible
-    # holder of a session that long-lived. That chain could NOT be
-    # reproduced in a test (the test harness overrides get_db to share the
-    # test's own session, which masks the difference), so this is not a
-    # verified root-cause fix -- app/db/base.py's
-    # idle_in_transaction_session_timeout is the backstop that bounds the
-    # symptom whatever its actual source.
-    db.commit()
-
     await manager.connect(user.id, websocket)
     try:
         while True:
