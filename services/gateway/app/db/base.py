@@ -35,9 +35,23 @@ engine = create_engine(
     # hang into a fast, visible error that this request's own error
     # handling (ws.py's "any failure -> error frame, never a close" rule)
     # already knows how to report, instead of the whole process wedging.
+    #
+    # idle_in_transaction_session_timeout is the other half of that, and it
+    # closes a failure mode statement_timeout alone cannot: a session that
+    # opened a transaction and then went *quiet* is never "running a long
+    # query", so no statement timeout ever fires -- it just holds its locks
+    # indefinitely. ws_endpoint used to do exactly this (an uncommitted
+    # `users` INSERT, or later an implicitly-autobegun read transaction,
+    # pinned for the whole WebSocket lifetime, blocking every later write to
+    # that row) -- fixed at its source in ws.py itself (commit after connect
+    # and after every frame, PR #42), not here. This stays anyway as a
+    # backstop for whatever future code path leaks one the same way --
+    # Postgres itself terminates an abandoned open transaction after 30s
+    # instead of letting it wedge unrelated requests until someone restarts
+    # the process.
     connect_args={
         "connect_timeout": 5,
-        "options": "-c statement_timeout=15000",
+        "options": "-c statement_timeout=15000 -c idle_in_transaction_session_timeout=30000",
     },
     pool_pre_ping=True,
 )
