@@ -22,7 +22,25 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(get_settings().DATABASE_URL)
+engine = create_engine(
+    get_settings().DATABASE_URL,
+    # Bounds on how long a single query/connection attempt can hang.
+    # Without these, a stalled query on a flaky network never fails --
+    # it just blocks forever. That's catastrophic specifically for the
+    # WS handler (app/ws.py's ws_endpoint): it's `async def` and holds
+    # one synchronous Session open for its whole connection lifetime, so
+    # one stuck query there freezes the entire event loop -- new
+    # connections, other requests, even the healthcheck -- until the
+    # process is restarted. A bounded timeout turns a silent, unrecoverable
+    # hang into a fast, visible error that this request's own error
+    # handling (ws.py's "any failure -> error frame, never a close" rule)
+    # already knows how to report, instead of the whole process wedging.
+    connect_args={
+        "connect_timeout": 5,
+        "options": "-c statement_timeout=15000",
+    },
+    pool_pre_ping=True,
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
