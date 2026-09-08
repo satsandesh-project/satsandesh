@@ -37,7 +37,7 @@ engine = create_engine(
     # already knows how to report, instead of the whole process wedging.
     connect_args={
         "connect_timeout": 5,
-        "options": "-c statement_timeout=8000",
+        "options": "-c statement_timeout=15000",
     },
     pool_pre_ping=True,
 )

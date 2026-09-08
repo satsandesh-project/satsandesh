@@ -34,6 +34,11 @@ _UQ_MESSAGES_AUTHOR_CLIENT_MSG_ID = "uq_messages_author_client_msg_id"
 # it a chosen name — the PK itself is the uniqueness guard) — verified
 # against the migration that creates it, not guessed.
 _PK_MESSAGE_DELIVERIES = "message_deliveries_pkey"
+# Same default-naming reasoning, for users' own single-column PK — this is
+# the exact constraint name Postgres reported when reproducing the
+# concurrent-provisioning race live (two requests racing to provision the
+# same fresh token's users row).
+_PK_USERS = "users_pkey"
 
 
 def _violated_constraint_name(exc: IntegrityError) -> str | None:
@@ -368,8 +373,22 @@ def get_or_create_user(
     if existing is not None:
         return existing
     user = User(id=user_id, name=name, preferred_language=preferred_language, role=role)
-    session.add(user)
-    session.flush()
+    try:
+        # Same SAVEPOINT-recovery pattern as _get_or_create_conversation
+        # above: two requests racing on the same brand-new token (e.g. a
+        # WS connect and an HTTP request arriving together on first use)
+        # can both miss the session.get above and both try to insert —
+        # one wins, the other hits users_pkey. Recover by re-reading the
+        # winner's row instead of surfacing a 500 for a race that isn't
+        # actually a problem.
+        with session.begin_nested():
+            session.add(user)
+            session.flush()
+    except IntegrityError as exc:
+        if _violated_constraint_name(exc) != _PK_USERS:
+            raise
+        session.expunge(user)
+        user = session.execute(select(User).where(User.id == user_id)).scalar_one()
     return user
 
 

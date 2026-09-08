@@ -2,6 +2,7 @@ import uuid
 
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.db.base import get_db
@@ -47,7 +48,26 @@ def user_from_token(token: str | None, db: Session) -> User:
         parsed = uuid.UUID(token)
     except ValueError:
         return User(id="stub-user-1", name="Test Elder", preferred_language="te", role="elder")
-    get_or_create_user(db, user_id=parsed, name="Test Elder", preferred_language="te", role="elder")
+    # Retried once: this runs on every authenticated request (both HTTP and
+    # WS), so it's the single hottest DB round-trip in the whole app --
+    # exactly the one most likely to catch a transient stall on this
+    # deployment's known-flaky network. app/db/base.py's statement_timeout
+    # turns such a stall into a fast OperationalError instead of an
+    # indefinite hang (good), but a stall that clears in a couple of
+    # seconds is genuinely transient, not a real failure -- reproduced live
+    # (2026-09-08): a provisioning insert got cancelled once, then the
+    # identical call succeeded in 28ms moments later. A canceled statement
+    # leaves the session's transaction unusable until rolled back, so that
+    # has to happen before the retry can run any query at all.
+    try:
+        get_or_create_user(
+            db, user_id=parsed, name="Test Elder", preferred_language="te", role="elder"
+        )
+    except OperationalError:
+        db.rollback()
+        get_or_create_user(
+            db, user_id=parsed, name="Test Elder", preferred_language="te", role="elder"
+        )
     return User(id=token, name="Test Elder", preferred_language="te", role="elder")
 
 
