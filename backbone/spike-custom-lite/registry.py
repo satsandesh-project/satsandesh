@@ -34,3 +34,11 @@ class ConnectionRegistry:
 
     def is_online(self, user_id: str) -> bool:
         return bool(self._connections.get(user_id))
+
+    def online_user_ids(self) -> list:
+        """Everyone with at least one live socket on this process.
+
+        The dispatcher passes this into its claim query so that a
+        connected recipient's queued rows are always claimable, whatever
+        delivery backoff had built up while they were away."""
+        return [uid for uid, socks in self._connections.items() if socks]

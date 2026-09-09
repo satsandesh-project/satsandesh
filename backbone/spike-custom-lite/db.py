@@ -6,22 +6,19 @@ about that. A real backbone would need a real migration tool; that's a
 cost worth naming in the ADR, not solving here.
 """
 
-import asyncio
 import glob
 import os
-import sys
 
 import psycopg
 
-# psycopg's async mode refuses to run under Windows' default
-# ProactorEventLoop ("Psycopg cannot use the 'ProactorEventLoop' to run in
-# async mode"). This must be set before anything creates an event loop --
-# db.py is imported first by every entry point (app.py, dispatcher.py,
-# conftest.py), so this is the earliest common place for it. Caught on
-# first real run against Postgres on this dev machine, not something
-# anticipated up front -- logged in the prompt journal.
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+# NOTE: an asyncio.set_event_loop_policy(WindowsSelectorEventLoopPolicy())
+# call used to live here, to work around psycopg refusing Windows'
+# ProactorEventLoop. It was removed because it does nothing: modern
+# uvicorn resolves its loop via get_loop_factory() and passes it to
+# asyncio.run(..., loop_factory=...), which bypasses the global policy
+# entirely -- loop_factory.py's docstring documents that dead end and
+# carries the fix that actually works. Leaving the call here implied a
+# second, working mechanism that does not exist.
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 

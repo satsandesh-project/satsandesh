@@ -24,7 +24,7 @@ import psycopg
 # poke -- named as a cost in the ADR, not solved here.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from interfaces import CircleBackbone, CircleMessage  # noqa: E402
+from interfaces import BackboneUnavailable, CircleBackbone, CircleMessage  # noqa: E402
 
 from db import DATABASE_URL  # noqa: E402
 
@@ -36,7 +36,30 @@ class OutboxCircleStore(CircleBackbone):
         self._database_url = database_url or DATABASE_URL
 
     async def _connect(self) -> psycopg.AsyncConnection:
-        return await psycopg.AsyncConnection.connect(self._database_url)
+        """Wraps connection failures in the contract's own exception type.
+
+        interfaces.py defines BackboneUnavailable precisely so route code
+        never has to know whether "down" meant a refused TCP connection,
+        an HTTP 500 or a dead database -- but this implementation used to
+        let raw psycopg errors escape, which is the exact coupling that
+        exception exists to prevent. A Matrix-backed store would leak
+        httpx errors here instead, and callers would have to catch both.
+        """
+        try:
+            return await psycopg.AsyncConnection.connect(self._database_url)
+        except psycopg.Error as exc:
+            raise BackboneUnavailable(f"cannot reach the outbox database: {exc}") from exc
+
+    @staticmethod
+    def _pk(circle_id: str) -> int:
+        """Circle ids are BIGSERIALs here. A non-numeric id used to reach
+        int() bare and raise ValueError from deep inside a query call;
+        app.py rejects those at the edge now, but this keeps the store
+        honest when called directly (tests, or a future non-HTTP caller)."""
+        try:
+            return int(circle_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"circle_id must be numeric, got {circle_id!r}") from exc
 
     async def create_circle(self, name: str) -> str:
         async with await self._connect() as conn:
@@ -53,11 +76,18 @@ class OutboxCircleStore(CircleBackbone):
         async with await self._connect() as conn:
             # ON CONFLICT DO NOTHING against the composite PK: idempotent
             # without a check-then-insert race, per the interface contract.
-            await conn.execute(
-                "INSERT INTO spike_circle_members (circle_id, user_id) "
-                "VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                (int(circle_id), user_id),
-            )
+            # It covers a duplicate MEMBER, not a missing CIRCLE -- adding
+            # to a circle id that does not exist violates the FK instead,
+            # which used to escape as a raw psycopg error (a 500 on what is
+            # really "no such circle").
+            try:
+                await conn.execute(
+                    "INSERT INTO spike_circle_members (circle_id, user_id) "
+                    "VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (self._pk(circle_id), user_id),
+                )
+            except psycopg.errors.ForeignKeyViolation as exc:
+                raise LookupError(f"no such circle: {circle_id}") from exc
             await conn.commit()
 
     async def remove_member(self, circle_id: str, user_id: str) -> None:
@@ -68,7 +98,7 @@ class OutboxCircleStore(CircleBackbone):
             # that's deliberate.
             await conn.execute(
                 "DELETE FROM spike_circle_members WHERE circle_id = %s AND user_id = %s",
-                (int(circle_id), user_id),
+                (self._pk(circle_id), user_id),
             )
             await conn.commit()
 
@@ -78,7 +108,7 @@ class OutboxCircleStore(CircleBackbone):
                 await cur.execute(
                     "SELECT user_id FROM spike_circle_members "
                     "WHERE circle_id = %s ORDER BY user_id",
-                    (int(circle_id),),
+                    (self._pk(circle_id),),
                 )
                 rows = await cur.fetchall()
         return [r[0] for r in rows]
@@ -94,7 +124,7 @@ class OutboxCircleStore(CircleBackbone):
             async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT user_id FROM spike_circle_members WHERE circle_id = %s",
-                    (int(circle_id),),
+                    (self._pk(circle_id),),
                 )
                 recipients = [r[0] for r in await cur.fetchall()]
 
@@ -123,8 +153,11 @@ class OutboxCircleStore(CircleBackbone):
         )
         params = [str(circle_id)]
         if before is not None:
+            try:
+                params.append(int(before))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"before must be a numeric message id, got {before!r}") from exc
             sql += " AND id < %s"
-            params.append(int(before))
         sql += " ORDER BY id DESC LIMIT %s"
         params.append(limit)
 

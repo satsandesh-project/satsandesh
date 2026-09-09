@@ -8,26 +8,48 @@ delivery? See docs/adr/0002-chat-backbone.md for the findings.
 """
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
 import psycopg
 from circles import OutboxCircleStore
 from dispatcher import run_forever
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
+from interfaces import BackboneUnavailable
 from pydantic import BaseModel
 from registry import ConnectionRegistry
 
 from db import DATABASE_URL, ensure_schema
 
+logger = logging.getLogger("spike.app")
+
 registry = ConnectionRegistry()
 circle_store = OutboxCircleStore()
+
+
+def _dispatcher_exited(task: asyncio.Task) -> None:
+    """The dispatcher task is the only thing delivering messages. If it
+    ever stops, the app keeps answering /health with "ok" while silently
+    delivering nothing -- which is exactly what used to happen when a
+    single transient connect error escaped run_forever (create_task never
+    retrieves an exception unless someone asks for it, so the failure was
+    invisible). run_forever now swallows per-cycle errors itself, so this
+    should be unreachable; it exists so that if it ever IS reached, it is
+    loud rather than silent."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.critical("dispatcher task died; no messages will be delivered", exc_info=exc)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await ensure_schema()
     task = asyncio.create_task(run_forever(lambda: registry))
+    task.add_done_callback(_dispatcher_exited)
     yield
     task.cancel()
     try:
@@ -37,6 +59,26 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SatSandesh Spike B — custom-lite backbone", lifespan=lifespan)
+
+
+# The store raises the contract's own error types (interfaces.py) rather
+# than leaking psycopg exceptions; these turn them into honest status
+# codes instead of a blanket 500. Without them, "the database is down" and
+# "you asked for a circle that does not exist" were indistinguishable to a
+# caller -- both arrived as an opaque 500.
+@app.exception_handler(BackboneUnavailable)
+async def _backbone_unavailable(request, exc):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+@app.exception_handler(LookupError)
+async def _not_found(request, exc):
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(ValueError)
+async def _bad_request(request, exc):
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 class SendRequest(BaseModel):
@@ -83,6 +125,17 @@ async def send(req: SendRequest):
 # decision is being insulated behind. See backbone/interfaces.py.
 
 
+def _circle_id(circle_id: str) -> str:
+    """Circle ids in this backbone are Postgres BIGSERIALs. A non-numeric
+    one used to reach circles.py's int() cast and surface as an unhandled
+    ValueError -- a 500 on what is really a malformed request. Rejected
+    here with a 422 instead, at the edge, so the store never sees input it
+    cannot use."""
+    if not circle_id.isdigit():
+        raise HTTPException(status_code=422, detail="circle_id must be numeric")
+    return circle_id
+
+
 class CreateCircleRequest(BaseModel):
     name: str
 
@@ -104,30 +157,34 @@ async def create_circle(req: CreateCircleRequest):
 
 @app.post("/circles/{circle_id}/members")
 async def add_member(circle_id: str, req: AddMemberRequest):
-    await circle_store.add_member(circle_id, req.user_id)
+    await circle_store.add_member(_circle_id(circle_id), req.user_id)
     return {"status": "ok"}
 
 
 @app.delete("/circles/{circle_id}/members/{user_id}")
 async def remove_member(circle_id: str, user_id: str):
-    await circle_store.remove_member(circle_id, user_id)
+    await circle_store.remove_member(_circle_id(circle_id), user_id)
     return {"status": "ok"}
 
 
 @app.get("/circles/{circle_id}/members")
 async def list_members(circle_id: str):
-    return {"members": await circle_store.list_members(circle_id)}
+    return {"members": await circle_store.list_members(_circle_id(circle_id))}
 
 
 @app.post("/circles/{circle_id}/announce")
 async def announce(circle_id: str, req: AnnounceRequest):
-    message_id = await circle_store.post_announcement(circle_id, req.sender_id, req.body)
+    message_id = await circle_store.post_announcement(
+        _circle_id(circle_id), req.sender_id, req.body
+    )
     return {"message_id": message_id}
 
 
 @app.get("/circles/{circle_id}/messages")
 async def list_messages(circle_id: str, limit: int = 50, before: Optional[str] = None):
-    messages = await circle_store.list_messages(circle_id, limit=limit, before=before)
+    if before is not None and not before.isdigit():
+        raise HTTPException(status_code=422, detail="before must be a numeric message id")
+    messages = await circle_store.list_messages(_circle_id(circle_id), limit=limit, before=before)
     return {
         "messages": [
             {
@@ -148,6 +205,9 @@ async def ws_endpoint(websocket: WebSocket, user_id: str):
     asserts. Real identity is a later task, not a Spike B concern."""
     await websocket.accept()
     registry.add(user_id, websocket)
+    # No backoff reset needed here: the dispatcher's claim query treats
+    # anyone in the registry as always-due (see its CLAIM_SQL), so simply
+    # being connected is what makes this user's backlog claimable again.
     try:
         while True:
             # The spike only pushes server->client; block here until the
