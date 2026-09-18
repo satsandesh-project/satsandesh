@@ -1,7 +1,9 @@
 # ADR 0002: Chat Backbone — Matrix (Tuwunel) vs Custom-Lite
 
-**Status:** Accepted — Option A (Matrix/Tuwunel), confirmed by the whole team
-**Date:** 2026-08-01 (opened, Spike B) / 2026-08-28 (Spike A findings added) / 2026-08-31 (formally accepted)
+**Status:** Accepted — **Option B (custom-lite, Postgres)**. Supersedes the
+earlier acceptance of Option A (Matrix/Tuwunel); see "Reversal (2026-09-08)"
+at the end of this document for the reasoning and how the decision was taken.
+**Date:** 2026-08-01 (opened, Spike B) / 2026-08-28 (Spike A findings added) / 2026-08-31 (Option A accepted) / 2026-09-08 (reversed to Option B)
 **Author(s):** Student 2 (Option B / Spike B); Kshitiz Pratap Singh (Option A / Spike A)
 
 > ### ✓ Merge note — 2026-08-31
@@ -126,9 +128,11 @@ not something either spike author decides unilaterally by writing up
 their own results.
 
 **Since resolved, left unedited above for the historical record:** the
-team formally confirmed Option A (Matrix/Tuwunel) — see this document's
-own header (`Status: Accepted`) — resolving the sequencing concern this
-section originally raised. This paragraph is intentionally left as it
+team formally confirmed Option A (Matrix/Tuwunel), resolving the
+sequencing concern this section originally raised. *(That confirmation
+was later reversed — the header now reads Option B. This paragraph
+describes what was true in August 2026; see "Reversal (2026-09-08)" at
+the end for the current decision.)* This paragraph is intentionally left as it
 was written, at the point the spikes had just finished and before that
 confirmation, rather than rewritten to sound like it already knew the
 outcome; per `docs/OWNERSHIP.md`'s rule R6, that's exactly the kind of
@@ -470,6 +474,94 @@ this section first, and will need to decide between the schema-migration
 path and the shadow-mapping path above before writing any code — that
 choice, not the wiring itself, is the actual first step.
 
+## Reversal (2026-09-08): the decision is now Option B (custom-lite)
+
+**The backbone is `services/gateway/`'s existing Postgres implementation.
+Option A (Matrix/Tuwunel) is no longer the target.** Everything above is
+left unedited as the historical record of how the original decision was
+reached — per this document's own repeated convention, and R6.
+
+### Why it was reversed
+
+The Update (2026-09-02) section above documented that the two had never
+been connected. Rather than schedule that integration, the team reversed
+the decision, for reasons that are specific rather than convenience:
+
+1. **Matrix's headline advantage does not apply to this product.** Its
+   E2EE is the main thing Option A buys that Option B does not. This
+   product requires server-side moderation of message content, which is
+   incompatible with end-to-end encryption regardless of backbone. A
+   moderation bot holding room keys is possible, but it re-introduces
+   plaintext access at the bot — so the privacy property is not actually
+   obtained, while all of its cost is.
+2. **Federation is out of scope.** The proposal (Section 5) explicitly
+   excludes federating with the public Matrix network in v1. That was
+   Option A's other distinguishing benefit.
+3. **The delivery semantics Option A was chosen for are already built.**
+   Retries, ordering, offline sync, the undo window, Web Push targeting
+   and per-recipient delivery counts all exist and are tested on the
+   Postgres path. Option A's stated case ("buys delivery semantics for
+   free") no longer describes a gap.
+4. **Two authorization models is a known, repeated failure mode here.**
+   Matrix room power levels alongside `users.role`/`memberships.role`
+   means two systems to keep in sync. This project has already had one
+   privilege-escalation regression from exactly that class of problem.
+5. **Ecosystem risk.** Tuwunel is the successor to conduwuit, which its
+   own maintainer archived; Continuwuity is a second fork of the same
+   lineage. The "Update: the Conduit landscape has shifted" section above
+   documents this churn as it stood in August — it is a reason for caution,
+   not only a reason to pick the newest fork.
+6. **No schedule room.** The Month 2/3 plan has no line item for a
+   cutover; Month 2 is committed to the language bridge and Month 3 to
+   sessions, the pilot and release. The proposal's own guidance (Section 8,
+   "attempt A; fall back to B without guilt"; Section 17, "assemble, don't
+   rebuild") anticipates this outcome rather than treating it as failure.
+
+### How this decision was taken — and the gap in it
+
+Being precise about this, because the approval is weaker than R6 asks for
+and that should be visible rather than implied:
+
+- **Written, on the record:** Veerendra (M2) and Kshitiz (M1) each posted
+  independent analyses on issue #35 reaching the same conclusion. Those
+  comments are the substantive argument and are linkable.
+- **Verbal only:** Sandesh (M3) accepted the reversal verbally. He did not
+  post a written confirmation on #35 or approve a document recording it,
+  despite being asked directly there more than once.
+- **Not recorded either way:** Sainathan (M4).
+
+So this reversal does **not** yet meet the standard R6 sets — an ADR status
+change reviewed in a PR by every owner. **This PR is the vehicle for
+fixing that:** an approval on it from each owner converts the verbal
+agreement into the documented one, and the merge is what makes this
+decision properly binding. If an owner disagrees, this is the place to say
+so before it merges, not after.
+
+Recorded this way deliberately: the earlier problem with this ADR was two
+copies disagreeing because a decision moved faster than its documentation.
+Overstating the approval here would repeat that in a quieter form.
+
+### What follows from it
+
+- Circles and announcements stay on `services/gateway/` (Postgres). No
+  migration. The Week-3 circle tests keep passing unmodified because
+  nothing underneath them changes.
+- The Matrix services (Tuwunel, `matrix-circle-service`, the `matrix`
+  Compose profile) are to be retired from the running stack — not yet
+  done as of this PR, which is docs-only. They consume resources on a
+  shared, capacity-constrained host for a capability now deliberately
+  unused; tracked as open, not-yet-scheduled infra work (see README.md's
+  repo-layout note).
+- `backbone/spike-matrix-a/` and its findings stay in the repository as
+  the spike record. This ADR is the reason they are not deleted: they are
+  the evidence for the decision, not dead code.
+- Reviving Option A later would need, at minimum: room provisioning per
+  circle, membership sync, message-routing replacement, reconciliation of
+  the two authorization models, and client changes to speak the Matrix
+  client-server API. That list is the scope, written down now so a future
+  revisit starts from a specification rather than a rediscovery.
+- Issue #35 is closed by this decision.
+
 ## Consequences
 
 Whichever option is chosen becomes the foundation every other student's
@@ -482,3 +574,10 @@ rather than picking on day one.
 above) is exactly this consequence arriving late: the team is currently
 running a gateway whose circles have no relationship to the backbone this
 document decided on.
+
+**Resolved by the Reversal (2026-09-08) above**, though not in the
+direction this section anticipated: rather than the gateway being brought
+to the decision, the decision was brought to the gateway. The consequence
+that remains real is the one about foundations — every service built from
+Month 2 onward now depends on the Postgres path, which makes a later
+reversal back to Option A progressively more expensive, not less.
