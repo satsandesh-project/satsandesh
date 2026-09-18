@@ -547,9 +547,11 @@ Overstating the approval here would repeat that in a quieter form.
   migration. The Week-3 circle tests keep passing unmodified because
   nothing underneath them changes.
 - The Matrix services (Tuwunel, `matrix-circle-service`, the `matrix`
-  Compose profile) are retired from the running stack. They consume
-  resources on a shared, capacity-constrained host for a capability now
-  deliberately unused.
+  Compose profile) are to be retired from the running stack — not yet
+  done as of this PR, which is docs-only. They consume resources on a
+  shared, capacity-constrained host for a capability now deliberately
+  unused; tracked as open, not-yet-scheduled infra work (see README.md's
+  repo-layout note).
 - `backbone/spike-matrix-a/` and its findings stay in the repository as
   the spike record. This ADR is the reason they are not deleted: they are
   the evidence for the decision, not dead code.
