@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Push the current work to every place it needs to live:
-#   1. personal repo   (origin)  -- direct to the current branch
-#   2. team repo       (team)    -- as a BRANCH ONLY, never main
-#   3. local storage             -- already the working copy, nothing to do
-#   4. server storage            -- git pull over SSH
+#   1. team repo       (team)    -- as a BRANCH ONLY, never main
+#   2. local storage             -- already the working copy, nothing to do
+#   3. server storage            -- git pull over SSH
 #
 # Usage, from the repo root:
 #   ./infra/deploy/sync-all.sh                    # push current branch everywhere
@@ -33,15 +32,10 @@ fi
 
 echo "==> branch: $BRANCH   HEAD: $HEAD_SHA"
 
-# 1. Personal repo. This one is yours, so pushing the branch directly is fine.
-echo
-echo "==> [1/4] personal repo (origin)"
-git push origin "$BRANCH"
-
-# 2. Team repo -- branch only. Refuse outright if someone runs this on main,
+# 1. Team repo -- branch only. Refuse outright if someone runs this on main,
 #    rather than trusting the remote's branch protection to catch it.
 echo
-echo "==> [2/4] team repo (team)"
+echo "==> [1/3] team repo (team)"
 if [ "$BRANCH" = "main" ]; then
   echo "    SKIPPED: refusing to push 'main' to the team repo." >&2
   echo "    Work on a feature branch (e.g. feat/m1-<what>) and open a PR." >&2
@@ -51,13 +45,13 @@ else
   echo "    https://github.com/satsandesh-project/satsandesh/pull/new/$BRANCH"
 fi
 
-# 3. Local storage is the working copy this script is running in.
+# 2. Local storage is the working copy this script is running in.
 echo
-echo "==> [3/4] local storage: already current (this working copy)"
+echo "==> [2/3] local storage: already current (this working copy)"
 
-# 4. Server. Pulls from the PERSONAL repo, which is what it's cloned from.
+# 3. Server. Pulls from the PERSONAL repo, which is what it's cloned from.
 echo
-echo "==> [4/4] server ($SERVER)"
+echo "==> [3/3] server ($SERVER)"
 if [ "$SKIP_SERVER" = "1" ]; then
   echo "    SKIPPED (--skip-server)"
 else
@@ -71,4 +65,4 @@ else
 fi
 
 echo
-echo "==> done. $HEAD_SHA is now on: origin, $([ "$BRANCH" != "main" ] && echo "team ($BRANCH), ")local$([ "$SKIP_SERVER" = "0" ] && echo ", server")"
+echo "==> done. $HEAD_SHA is now on: $([ "$BRANCH" != "main" ] && echo "team ($BRANCH), ")local$([ "$SKIP_SERVER" = "0" ] && echo ", server")"
