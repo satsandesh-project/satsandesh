@@ -49,13 +49,15 @@ fi
 echo
 echo "==> [2/3] local storage: already current (this working copy)"
 
-# 3. Server. Pulls from the PERSONAL repo, which is what it's cloned from.
+# 3. Server. Pulls from the TEAM repo (public, read-only pull needs no
+#    credentials). The server's clone also has a stale "origin" remote
+#    pointing at the personal fork -- do not pull from it.
 echo
 echo "==> [3/3] server ($SERVER)"
 if [ "$SKIP_SERVER" = "1" ]; then
   echo "    SKIPPED (--skip-server)"
 else
-  ssh "$SERVER" "cd $SERVER_PATH && git pull origin $BRANCH && git rev-parse HEAD"
+  ssh "$SERVER" "cd $SERVER_PATH && git pull team $BRANCH && git rev-parse HEAD"
   echo
   echo "    Remember: a code change needs a rebuild, not just a pull --"
   echo "      docker compose build <service>"
