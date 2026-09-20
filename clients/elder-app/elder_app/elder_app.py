@@ -1724,7 +1724,9 @@ def quiet_hours_card() -> rx.Component:
             style={"font_size": "0.78rem", "color": COLOR["muted_ink"]},
         ),
         rx.button(
-            rx.cond(State.quiet_hours_saved, State.t["quiet_hours_saved"], State.t["quiet_hours_save"]),
+            rx.cond(
+                State.quiet_hours_saved, State.t["quiet_hours_saved"], State.t["quiet_hours_save"]
+            ),
             on_click=State.save_quiet_hours,
             on_mouse_down=lambda: State.start_audio_label_hold("settings"),
             on_mouse_up=State.cancel_audio_label_hold,
