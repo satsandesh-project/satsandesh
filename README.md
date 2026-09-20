@@ -4,6 +4,8 @@
 
 Open source, self-hosted, built as seva. No advertising, no engagement traps, no data sold.
 
+Licensed under the [Apache License 2.0](LICENSE).
+
 > **Status: early development.** Month 1 of a 3-month build. Nothing here is usable yet.
 
 ---
