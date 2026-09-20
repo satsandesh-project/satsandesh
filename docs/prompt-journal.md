@@ -1278,3 +1278,58 @@ still_add_an_ordinary_member`, `test_ordinary_member_cannot_grant_-
 admin_to_a_new_member`, `test_admin_can_grant_admin_to_a_new_member` —
 all three pass, confirming the fix is back, the ordinary-invite path
 still works, and the legitimate admin-grants-admin path still works.
+
+## Week 5 — branch protection on `main`, matching OWNERSHIP.md §3
+
+Repo setting, not a file change — logged here because it's the kind of
+thing that's invisible in `git log` and nobody remembers who turned it on.
+
+**What was set** (2026-09-20, on `satsandesh-project/satsandesh`, branch
+`main`), following `docs/OWNERSHIP.md` §3 as the spec:
+
+- Require a pull request before merging
+- Require approvals: 1
+- Require review from Code Owners
+- Require status checks to pass: `lint-and-test` (the exact job name,
+  confirmed from the last three Actions runs on `main` before setting it)
+
+Not set, on purpose: "include administrators", block force-push, block
+deletion — none of them are in §3, so they're a separate conversation.
+
+**Who set it, and why not me.** The repo is owned by the
+`satsandesh-project` account, which is a plain user account (not an org)
+and the only admin. All four members are push collaborators
+(`gh api repos/satsandesh-project/satsandesh --jq .permissions` →
+`admin: false`). Branch protection needs admin, so the admin did the
+clicks in Settings → Branches — classic branch protection, not a ruleset
+(the `rulesets` endpoint is still `[]`).
+
+**How it was verified from a non-admin account.** The detailed
+`/branches/main/protection` endpoint 404s for collaborators even when
+protection is on — it's admin-only to read, which is worth knowing before
+anyone reads a 404 as "not enabled". What a collaborator *can* see:
+
+- `branches/main` → `protected: true`, required check `lint-and-test`,
+  `enforcement_level: non_admins` (so "include administrators" is
+  correctly off).
+- The three open PRs (#46, #47, #48) all flipped from mergeable to
+  `mergeStateStatus: BLOCKED` / `reviewDecision: REVIEW_REQUIRED` with
+  CI green — proof that PR-required and approvals-required are live.
+- #47 and #48 auto-requested `kpspyolo024`, `Master-ff`, `sainathanv`
+  (the CODEOWNERS `*` fallback), consistent with Code Owners being on.
+  #46 requested nobody, because `infra/` is owned by its author — that
+  PR needs a manually requested approval.
+
+Not directly confirmable from this account: the approval count is
+exactly 1, and whether "dismiss stale approvals" is on. The admin can
+paste `gh api repos/satsandesh-project/satsandesh/branches/main/protection`
+if the exact config ever needs to be on record.
+
+**Why this matters** — it's the enforcement for the Month 1 incident in
+`docs/OWNERSHIP.md` §1: a merge removed ~4,100 lines of another member's
+merged, tested code without that member on the review. CODEOWNERS on its
+own only *requests* a review; with "require review from Code Owners" on,
+the person whose folder is being changed has to actually approve before
+the Merge button goes green. No file in the repo changed, no branch
+other than `main` is affected, and everyone's existing PR workflow is
+unchanged except that you can no longer merge your own PR alone.
