@@ -969,12 +969,38 @@ AUDIO_LABEL_HOLD_START_JS_TEMPLATE = """
             );
             if (!resp.ok) return;
             const blob = await resp.blob();
-            new Audio(URL.createObjectURL(blob)).play().catch(() => {});
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            // Release the blob URL once playback actually finishes, or
+            // immediately if it never started -- URL.createObjectURL
+            // otherwise leaks for the page's lifetime (flagged in review,
+            // PR #45).
+            audio.addEventListener("ended", () => URL.revokeObjectURL(url));
+            audio.play().catch(() => URL.revokeObjectURL(url));
         } catch (err) {
             // Best-effort accessibility aid -- a failed fetch/playback here
             // must never surface as a visible error mid-tap.
         }
     }, %(hold_ms)s);
+})()
+"""
+
+# Read on release, not just cleared: whether the timer above is still
+# pending tells the caller whether this was a genuine short tap ("short",
+# timer never fired, safe to run the real action) or the end of a preview
+# that already played ("held", the setTimeout callback already nulled the
+# timer itself). Without this distinction, a plain on_click alongside
+# on_mouse_down/up double-fired the real action even on a long hold --
+# a mouseup on the same element always fires a click in the browser,
+# regardless of how long the press lasted. Flagged in review, PR #45.
+AUDIO_LABEL_HOLD_RELEASE_JS = """
+(() => {
+    if (window.__satAudioHoldTimer) {
+        clearTimeout(window.__satAudioHoldTimer);
+        window.__satAudioHoldTimer = null;
+        return "short";
+    }
+    return "held";
 })()
 """
 
@@ -1413,10 +1439,67 @@ class State(rx.State):
     def cancel_audio_label_hold(self):
         return rx.call_script(AUDIO_LABEL_HOLD_CANCEL_JS)
 
+    # -- Release handlers: one pair per button carrying the tap-and-hold
+    # affordance. Each checks AUDIO_LABEL_HOLD_RELEASE_JS's verdict before
+    # running that button's real action, so holding it to preview never
+    # also performs it (see AUDIO_LABEL_HOLD_RELEASE_JS's own comment for
+    # why on_click alone can't be trusted here).
+
+    def release_back(self):
+        return rx.call_script(AUDIO_LABEL_HOLD_RELEASE_JS, callback=State.on_release_back)
+
+    def on_release_back(self, result: str):
+        if result == "short":
+            return self.go_home()
+
+    def release_send(self):
+        return rx.call_script(AUDIO_LABEL_HOLD_RELEASE_JS, callback=State.on_release_send)
+
+    def on_release_send(self, result: str):
+        if result == "short":
+            return self.send_live_message()
+
+    def release_satsang_tab(self):
+        return rx.call_script(AUDIO_LABEL_HOLD_RELEASE_JS, callback=State.on_release_satsang_tab)
+
+    def on_release_satsang_tab(self, result: str):
+        if result == "short":
+            self.set_active_tab("satsang")
+
+    def release_add_person(self):
+        return rx.call_script(AUDIO_LABEL_HOLD_RELEASE_JS, callback=State.on_release_add_person)
+
+    def on_release_add_person(self, result: str):
+        if result == "short":
+            self.open_add_contact()
+
+    def release_quiet_hours_save(self):
+        return rx.call_script(
+            AUDIO_LABEL_HOLD_RELEASE_JS, callback=State.on_release_quiet_hours_save
+        )
+
+    def on_release_quiet_hours_save(self, result: str):
+        if result == "short":
+            return self.save_quiet_hours()
+
 
 # ---------------------------------------------------------------------------
 # Shared style helpers
 # ---------------------------------------------------------------------------
+
+
+def hold_to_hear(label: str, release_handler) -> dict:
+    """Tap-and-hold-to-hear-it-read-aloud event props for a single button:
+    press starts the preview timer, release runs `release_handler` (which
+    itself decides real-action-or-not via AUDIO_LABEL_HOLD_RELEASE_JS),
+    leaving mid-press cancels silently. Replaces a 3-line
+    on_mouse_down/up/leave block that was hand-copied across all five
+    buttons carrying this affordance -- flagged in review, PR #45."""
+    return {
+        "on_mouse_down": lambda: State.start_audio_label_hold(label),
+        "on_mouse_up": release_handler,
+        "on_mouse_leave": State.cancel_audio_label_hold,
+    }
 
 
 def pill_button_style(active: bool) -> dict:
@@ -1727,10 +1810,7 @@ def quiet_hours_card() -> rx.Component:
             rx.cond(
                 State.quiet_hours_saved, State.t["quiet_hours_saved"], State.t["quiet_hours_save"]
             ),
-            on_click=State.save_quiet_hours,
-            on_mouse_down=lambda: State.start_audio_label_hold("settings"),
-            on_mouse_up=State.cancel_audio_label_hold,
-            on_mouse_leave=State.cancel_audio_label_hold,
+            **hold_to_hear("settings", State.release_quiet_hours_save),
             style={
                 "min_height": "52px",
                 "padding": "0 20px",
@@ -1930,10 +2010,7 @@ def add_contact_form() -> rx.Component:
 def add_person_button() -> rx.Component:
     return rx.button(
         State.t["add_person"],
-        on_click=State.open_add_contact,
-        on_mouse_down=lambda: State.start_audio_label_hold("new_message"),
-        on_mouse_up=State.cancel_audio_label_hold,
-        on_mouse_leave=State.cancel_audio_label_hold,
+        **hold_to_hear("new_message", State.release_add_person),
         style={
             "width": "100%",
             "min_height": "72px",
@@ -2409,10 +2486,7 @@ def bottom_tabs() -> rx.Component:
         ),
         rx.button(
             State.t["tab_satsang"],
-            on_click=lambda: State.set_active_tab("satsang"),
-            on_mouse_down=lambda: State.start_audio_label_hold("circle"),
-            on_mouse_up=State.cancel_audio_label_hold,
-            on_mouse_leave=State.cancel_audio_label_hold,
+            **hold_to_hear("circle", State.release_satsang_tab),
             style={
                 "flex": "1",
                 "min_height": "88px",
@@ -2525,10 +2599,7 @@ def chat_screen() -> rx.Component:
         rx.hstack(
             rx.button(
                 State.t["back"],
-                on_click=State.go_home,
-                on_mouse_down=lambda: State.start_audio_label_hold("back"),
-                on_mouse_up=State.cancel_audio_label_hold,
-                on_mouse_leave=State.cancel_audio_label_hold,
+                **hold_to_hear("back", State.release_back),
                 style={
                     "min_height": "56px",
                     "font_size": "18px",
@@ -2627,10 +2698,7 @@ def chat_screen() -> rx.Component:
             ),
             rx.button(
                 State.t["send"],
-                on_click=State.send_live_message,
-                on_mouse_down=lambda: State.start_audio_label_hold("send_button"),
-                on_mouse_up=State.cancel_audio_label_hold,
-                on_mouse_leave=State.cancel_audio_label_hold,
+                **hold_to_hear("send_button", State.release_send),
                 style={
                     "min_height": "60px",
                     "min_width": "100px",

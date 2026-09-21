@@ -22,6 +22,7 @@ DB-free routes.
 import pytest
 from fastapi.testclient import TestClient
 
+from app.audio_labels import _LABELS
 from app.main import app
 
 
@@ -58,3 +59,23 @@ def test_audio_label_no_lang_defaults_to_en(client):
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "audio/wav"
+
+
+def test_audio_label_te_returns_audio_bytes(client):
+    # Regression for PR #45's review: clients/elder-app/'s only two
+    # languages are en/te, but this catalog only ever had en/hi -- every
+    # Telugu-preference elder silently got _FALLBACK_LANG's English clip.
+    # _synth_stub doesn't vary its output by text (still a placeholder
+    # tone), so this only proves "te" resolves without a 404/error, not
+    # that the audio differs from "en" -- see test_every_label_has_telugu
+    # below for the part that actually catches a missing translation.
+    response = client.get("/audio-labels/send_button", params={"lang": "te"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert len(response.content) > 0
+
+
+def test_every_label_has_telugu():
+    missing = [label for label, texts in _LABELS.items() if "te" not in texts]
+    assert missing == []
