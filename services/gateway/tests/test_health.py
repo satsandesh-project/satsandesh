@@ -23,7 +23,7 @@ def client():
 def test_health_returns_ok(client):
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "deliberately-wrong"}  # scratch: prove CI
 
 
 def test_health_is_dependency_free(client, monkeypatch):
