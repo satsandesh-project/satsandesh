@@ -18,6 +18,13 @@ dev = [
     "mypy>=1.9",
     "ruff>=0.4",
 ]
+# Microphone recording for the Week 5 bake-off (services/ai/tools/record_sample.py).
+# Kept out of both `dependencies` and `dev`: a deployed transcribe service never
+# touches a microphone, and this isn't needed to develop/test that service either.
+tools = [
+    "sounddevice>=0.4",
+    "soundfile>=0.12",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
