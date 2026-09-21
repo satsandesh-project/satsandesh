@@ -65,7 +65,7 @@ else
   echo
   echo "    Remember: a code change needs a rebuild, not just a pull --"
   echo "      docker compose build <service>"
-  echo "      docker compose --profile matrix up -d <service>"
+  echo "      docker compose up -d <service>"
   echo "    and a Caddyfile change needs: docker compose restart caddy"
   echo "    (both learned the hard way -- see docs/prompt-journal.md)"
 fi

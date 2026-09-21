@@ -78,8 +78,9 @@ who's blocked on whom, see `docs/work-breakdown.md`.
 > end-to-end against a real deployed server) has been removed as redundant.
 > Its Matrix backbone — `backbone/spike-matrix-a/circle_service/` + Tuwunel —
 > stays in the repo as the spike record, but is no longer the decided option
-> (ADR 0002 was reversed to Option B on 2026-09-08) and is being retired from
-> the running stack; `services/gateway/` has its own separate, Postgres-only circles
+> (ADR 0002 was reversed to Option B on 2026-09-08) and has been retired from
+> the running stack (no more `matrix` profile in `docker-compose.yml`);
+> `services/gateway/` has its own separate, Postgres-only circles
 > implementation with no relationship to ADR 0002's decision. Reconciling
 > that is open, not-yet-scheduled work. Full reasoning and history:
 > `docs/prompt-journal.md`'s Week 4 entries and `docs/adr/0002-chat-backbone.md`.
@@ -88,7 +89,7 @@ who's blocked on whom, see `docs/work-breakdown.md`.
 satsandesh/
 ├── services/
 │   └── gateway/          # FastAPI gateway (M3's) — auth, circles, messages, WebSocket
-├── backbone/             # Backbone spike record — Matrix bot (Option A) and custom FastAPI+Postgres (Option B, the decided option)
+├── backbone/             # Backbone spike record — Matrix (Option A, retired) and custom FastAPI+Postgres (Option B, the decided option); neither runs in the stack
 ├── ai-services/          # ASR / MT / TTS / moderation services
 ├── clients/
 │   ├── elder-app/        # Reflex elder PWA
@@ -161,12 +162,6 @@ To wipe the database and re-run init from scratch:
 
 ```bash
 docker compose down -v  # removes the named volume too
-```
-
-The Matrix backbone profile (ADR 0002's chosen option) starts alongside the base stack with:
-
-```bash
-docker compose --profile matrix up -d
 ```
 
 ### Running tests
