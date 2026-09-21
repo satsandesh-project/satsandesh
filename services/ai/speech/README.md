@@ -4,9 +4,35 @@ The real ASR service — not the mock. Loads `faster-whisper` (`small`, `int8`,
 CPU) once at startup and serves `POST /v1/transcribe` against the
 `contracts/ai/transcribe.py` contract.
 
-**Only `wav_pcm16` is supported right now.** `ogg_opus` and `mp3` return a real
-`PipelineError` (`AUDIO_FETCH_FAILED`), not a crash — decoding those needs
-ffmpeg, which isn't installed on this machine yet. That's the next phase.
+**All three `AudioFormat` values are supported**: `wav_pcm16` decodes via the
+stdlib `wave` module; `ogg_opus` and `mp3` decode via the `ffmpeg` binary,
+invoked as a subprocess (not a Python binding library, to keep the dependency
+surface small). Any decode failure — a corrupt/garbage file, an ffmpeg
+timeout, or ffmpeg not being installed at all — returns a real `PipelineError`
+(`AUDIO_FETCH_FAILED`), not a crash and not a hang.
+
+### ffmpeg
+
+The service resolves the ffmpeg binary in this order:
+
+1. the `FFMPEG_PATH` environment variable, if set — the full path to an
+   `ffmpeg` executable;
+2. otherwise, plain `ffmpeg`, relying on it being on `PATH`.
+
+There is never a hardcoded absolute path in source. If ffmpeg isn't on `PATH`
+on your machine, set `FFMPEG_PATH` before starting the service:
+
+```bash
+export FFMPEG_PATH="/full/path/to/ffmpeg"   # or the .exe on Windows
+```
+
+Decoding is done by piping ffmpeg's stdout (raw `s16le` PCM at 16kHz mono) back
+into the process — the input file is passed to ffmpeg by path (it's already a
+real file on disk via `AudioRef.uri`), so only the output needs a pipe, and no
+temp files are created. A 15-second subprocess timeout guards against a stuck
+ffmpeg process hanging a request forever; that's generous headroom for a short
+voice note (the realistic case is well under a minute of audio, and ffmpeg
+decodes that in well under a second on CPU).
 
 ## Run it
 
@@ -49,3 +75,31 @@ Tests load the real model (not mocked) against
 to exercise the decode → inference → response pipeline mechanically, not to
 prove transcription accuracy — real-speech accuracy against recorded Telugu
 samples is a later phase.
+
+`tests/fixtures/tone_2s.opus` and `tests/fixtures/tone_2s.mp3` are the same
+tone re-encoded via ffmpeg (`ffmpeg -i tone_2s.wav -c:a libopus -b:a 32k
+tone_2s.opus` and `ffmpeg -i tone_2s.wav -c:a libmp3lame -b:a 64k
+tone_2s.mp3`), exercising the real ffmpeg decode path. `tone_2s_corrupt.mp3`
+is 64 bytes of random data with a misleading `.mp3` extension, used to prove
+ffmpeg decode failures produce a clean `PipelineError` rather than a crash.
+
+## Known open question: webm vs. ogg container
+
+The browser's `MediaRecorder` API records `audio/webm;codecs=opus` — a WebM
+**container** carrying Opus-encoded audio. That is a different container
+format from Ogg, even though both can wrap Opus audio streams.
+
+`AudioFormat` (in `contracts/ai/common.py`) has no `webm_opus` value — only
+`wav_pcm16`, `ogg_opus`, and `mp3`. ffmpeg happily decodes a real WebM file
+even if it's labeled `ogg_opus` on the wire, because it inspects the actual
+bytes rather than trusting the extension or a declared format string. That
+leniency means a mislabeled webm-as-ogg_opus request will decode successfully
+today — but a successful decode is not evidence the contract is correct. It's
+ffmpeg papering over a mismatch between what the browser actually produces and
+what the enum can currently express.
+
+This question is still open and needs a decision from the team: either add a
+dedicated `webm_opus` value to `AudioFormat`, or have the gateway transcode
+real webm bytes into true Ogg/Opus before calling this service. Nothing in
+this phase resolves it — this decode path was built and tested against real
+Ogg/Opus and MP3 files, not webm.

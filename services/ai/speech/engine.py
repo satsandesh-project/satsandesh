@@ -1,17 +1,20 @@
 """
-faster-whisper loading, warm-up, and plain-WAV decoding.
+faster-whisper loading, warm-up, and audio decoding.
 
-Decoding here is deliberately stdlib-only (`wave`), not PyAV/ffmpeg. ffmpeg is
-confirmed not installed on this dev machine (see docs/AI_LANE_INVENTORY.md), and
-a plain WAV file needs no external decoder to read. Anything other than
-mono/16-bit-PCM/16kHz is rejected rather than silently resampled or
-channel-mixed — resampling is real signal processing that belongs in its own
-phase, not something to guess at here.
+`decode_wav_pcm16` stays stdlib-only (`wave`) — a plain WAV file needs no
+external decoder, and anything other than mono/16-bit-PCM/16kHz is rejected
+rather than silently resampled or channel-mixed. `decode_via_ffmpeg` handles
+everything else (ogg_opus, mp3) by shelling out to the `ffmpeg` binary rather
+than a Python binding library, keeping the dependency surface small — ffmpeg
+is accepted as an external tool dependency, resolved via `FFMPEG_PATH` or
+PATH, never a hardcoded path (see services/ai/speech/README.md).
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
 import time
 import wave
 from dataclasses import dataclass
@@ -24,6 +27,88 @@ from faster_whisper import WhisperModel
 logger = logging.getLogger("services.ai.speech.engine")
 
 EXPECTED_SAMPLE_RATE_HZ = 16000
+
+# Short voice notes are the realistic case here (capped well under a minute),
+# and ffmpeg decodes audio that short in well under a second on CPU. 15s gives
+# generous headroom for a cold process start on a loaded dev machine while
+# still guaranteeing a stuck ffmpeg process can never hang a request forever.
+FFMPEG_TIMEOUT_S = 15.0
+
+
+class FfmpegNotFoundError(RuntimeError):
+    """The ffmpeg executable could not be located (FFMPEG_PATH, then PATH)."""
+
+
+class FfmpegDecodeError(RuntimeError):
+    """ffmpeg ran but exited non-zero, or the decode timed out."""
+
+
+def _ffmpeg_executable() -> str:
+    """Resolve the ffmpeg binary: FFMPEG_PATH env override, else plain "ffmpeg"
+    relying on PATH. Never a hardcoded absolute path — that would break every
+    machine that installs ffmpeg somewhere else (see README for the override).
+    """
+    return os.environ.get("FFMPEG_PATH", "").strip() or "ffmpeg"
+
+
+def decode_via_ffmpeg(path: Path, timeout_s: float = FFMPEG_TIMEOUT_S) -> np.ndarray:
+    """Decode ogg_opus/mp3 (or anything ffmpeg recognizes) into a mono float32
+    array in [-1, 1] at 16kHz — the same shape decode_wav_pcm16 produces.
+
+    The input is already a real file on disk (AudioRef.uri resolved to a local
+    path), so it's passed to ffmpeg by path rather than piped over stdin; only
+    the decoded PCM comes back over a pipe (stdout), avoiding a temp output
+    file. `subprocess.run(capture_output=True)` drains stdout and stderr
+    concurrently, so there's no pipe-deadlock risk from ffmpeg's stderr
+    logging.
+
+    Raises FileNotFoundError if `path` doesn't exist, FfmpegNotFoundError if
+    the ffmpeg binary itself can't be located, and FfmpegDecodeError for a
+    non-zero exit, a timeout, or empty output.
+    """
+    if not path.is_file():
+        raise FileNotFoundError(f"no such file: {path}")
+
+    ffmpeg_bin = _ffmpeg_executable()
+    cmd = [
+        ffmpeg_bin,
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-i",
+        str(path),
+        "-f",
+        "s16le",
+        "-ac",
+        "1",
+        "-ar",
+        str(EXPECTED_SAMPLE_RATE_HZ),
+        "pipe:1",
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout_s)
+    except FileNotFoundError as exc:
+        raise FfmpegNotFoundError(
+            f"ffmpeg executable {ffmpeg_bin!r} was not found (checked FFMPEG_PATH, "
+            "then PATH) — install ffmpeg or set FFMPEG_PATH to its binary location"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise FfmpegDecodeError(
+            f"ffmpeg timed out after {timeout_s}s decoding {path}"
+        ) from exc
+
+    if result.returncode != 0:
+        stderr_tail = result.stderr.decode("utf-8", errors="replace").strip()[-500:]
+        raise FfmpegDecodeError(
+            f"ffmpeg exited {result.returncode} decoding {path}: {stderr_tail}"
+        )
+
+    if not result.stdout:
+        raise FfmpegDecodeError(f"ffmpeg produced no audio output decoding {path}")
+
+    pcm16 = np.frombuffer(result.stdout, dtype=np.int16)
+    return pcm16.astype(np.float32) / 32768.0
 
 
 class UnsupportedWavError(ValueError):

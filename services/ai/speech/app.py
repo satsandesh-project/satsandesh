@@ -1,11 +1,12 @@
 """
 Real ASR service — loads faster-whisper once at startup and serves
-POST /v1/transcribe against plain WAV files. See services/ai/speech/README.md
-for how to run it.
+POST /v1/transcribe. See services/ai/speech/README.md for how to run it.
 
-WAV-only for this phase: webm/opus needs ffmpeg, which isn't installed on this
-machine yet (see docs/AI_LANE_INVENTORY.md). Any other AudioFormat gets a real
-PipelineError, not a crash.
+wav_pcm16 decodes via the stdlib `wave` module; ogg_opus and mp3 decode via
+ffmpeg (see services/ai/speech/engine.py). A missing ffmpeg binary, a failed
+decode, or a timeout all become a real PipelineError, not a crash — see
+README's "Known open question" for the unresolved webm-vs-ogg container
+question this does NOT settle.
 """
 
 from __future__ import annotations
@@ -23,7 +24,14 @@ from contracts.ai.language import LanguageCode
 from contracts.ai.transcribe import TranscribeRequest, TranscribeResponse
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from services.ai.speech.engine import AsrEngine, UnsupportedWavError, decode_wav_pcm16
+from services.ai.speech.engine import (
+    AsrEngine,
+    FfmpegDecodeError,
+    FfmpegNotFoundError,
+    UnsupportedWavError,
+    decode_via_ffmpeg,
+    decode_wav_pcm16,
+)
 from services.ai.speech.settings import Settings
 
 logger = logging.getLogger("services.ai.speech.app")
@@ -116,22 +124,14 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse | JSONRes
             status_code=503,
         )
 
-    if request.audio.format != AudioFormat.WAV_PCM16:
-        return _pipeline_error(
-            ErrorCode.AUDIO_FETCH_FAILED,
-            f"unsupported audio format for this phase: {request.audio.format.value!r} "
-            "(only wav_pcm16 is implemented; webm/opus needs ffmpeg, which isn't "
-            "installed here yet — a later phase)",
-            stage="transcribe.decode",
-            status_code=422,
-            detail={"format": request.audio.format.value},
-        )
-
     path = _resolve_local_path(request.audio.uri)
+    decode_fn = (
+        decode_wav_pcm16 if request.audio.format == AudioFormat.WAV_PCM16 else decode_via_ffmpeg
+    )
 
     decode_start = time.perf_counter()
     try:
-        audio = decode_wav_pcm16(path)
+        audio = decode_fn(path)
     except (FileNotFoundError, UnsupportedWavError, wave.Error) as exc:
         return _pipeline_error(
             ErrorCode.AUDIO_FETCH_FAILED,
@@ -139,6 +139,23 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse | JSONRes
             stage="transcribe.decode",
             status_code=422,
             detail={"uri": request.audio.uri},
+        )
+    except FfmpegNotFoundError as exc:
+        return _pipeline_error(
+            ErrorCode.AUDIO_FETCH_FAILED,
+            f"ffmpeg is required to decode {request.audio.format.value!r} audio "
+            f"but was not found: {exc}",
+            stage="transcribe.decode",
+            status_code=422,
+            detail={"format": request.audio.format.value},
+        )
+    except FfmpegDecodeError as exc:
+        return _pipeline_error(
+            ErrorCode.AUDIO_FETCH_FAILED,
+            f"ffmpeg could not decode audio at {request.audio.uri!r}: {exc}",
+            stage="transcribe.decode",
+            status_code=422,
+            detail={"uri": request.audio.uri, "format": request.audio.format.value},
         )
     decode_duration_ms = (time.perf_counter() - decode_start) * 1000
 

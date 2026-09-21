@@ -11,7 +11,12 @@ from contracts.ai.errors import ErrorCode, PipelineError
 from contracts.ai.transcribe import TranscribeResponse
 from fastapi.testclient import TestClient
 
+_FIXTURES_DIR = speech_app._WARMUP_AUDIO_PATH.parent
 TONE_FIXTURE_URI = "file:///" + str(speech_app._WARMUP_AUDIO_PATH).replace("\\", "/")
+
+
+def _fixture_uri(name: str) -> str:
+    return "file:///" + str(_FIXTURES_DIR / name).replace("\\", "/")
 
 
 @pytest.fixture(scope="module")
@@ -20,10 +25,14 @@ def client():
         yield c
 
 
-def _transcribe_payload(audio_format: str = "wav_pcm16", language_hint: str | None = "en") -> dict:
+def _transcribe_payload(
+    audio_format: str = "wav_pcm16",
+    language_hint: str | None = "en",
+    uri: str | None = None,
+) -> dict:
     payload = {
         "audio": {
-            "uri": TONE_FIXTURE_URI,
+            "uri": uri if uri is not None else TONE_FIXTURE_URI,
             "format": audio_format,
             "duration_ms": 2000,
             "sample_rate_hz": 16000,
@@ -82,15 +91,6 @@ def test_transcribe_wav_returns_well_formed_response(client: TestClient) -> None
     assert parsed.degraded.active is False
 
 
-def test_transcribe_unsupported_format_returns_pipeline_error(client: TestClient) -> None:
-    resp = client.post("/v1/transcribe", json=_transcribe_payload(audio_format="mp3"))
-    assert resp.status_code == 422
-
-    parsed = PipelineError.model_validate(resp.json())  # raises if the shape is wrong
-    assert parsed.code == ErrorCode.AUDIO_FETCH_FAILED
-    assert parsed.stage == "transcribe.decode"
-
-
 def test_transcribe_missing_file_returns_pipeline_error(client: TestClient) -> None:
     payload = _transcribe_payload()
     payload["audio"]["uri"] = "file:///C:/does/not/exist.wav"
@@ -99,3 +99,55 @@ def test_transcribe_missing_file_returns_pipeline_error(client: TestClient) -> N
 
     parsed = PipelineError.model_validate(resp.json())
     assert parsed.code == ErrorCode.AUDIO_FETCH_FAILED
+
+
+def test_transcribe_ogg_opus_returns_well_formed_response(client: TestClient) -> None:
+    payload = _transcribe_payload(audio_format="ogg_opus", uri=_fixture_uri("tone_2s.opus"))
+    resp = client.post("/v1/transcribe", json=payload)
+    assert resp.status_code == 200
+
+    body = resp.json()
+    parsed = TranscribeResponse.model_validate(body)
+    assert parsed.detected_language.value == "en"
+    stage_names = [s.stage for s in parsed.stage_timings]
+    assert stage_names == ["decode", "inference", "postprocess"]
+    assert parsed.degraded.active is False
+
+
+def test_transcribe_mp3_returns_well_formed_response(client: TestClient) -> None:
+    payload = _transcribe_payload(audio_format="mp3", uri=_fixture_uri("tone_2s.mp3"))
+    resp = client.post("/v1/transcribe", json=payload)
+    assert resp.status_code == 200
+
+    body = resp.json()
+    parsed = TranscribeResponse.model_validate(body)
+    assert parsed.detected_language.value == "en"
+    stage_names = [s.stage for s in parsed.stage_timings]
+    assert stage_names == ["decode", "inference", "postprocess"]
+    assert parsed.degraded.active is False
+
+
+def test_transcribe_corrupt_file_returns_pipeline_error(client: TestClient) -> None:
+    payload = _transcribe_payload(
+        audio_format="mp3", uri=_fixture_uri("tone_2s_corrupt.mp3")
+    )
+    resp = client.post("/v1/transcribe", json=payload)
+    assert resp.status_code == 422
+
+    parsed = PipelineError.model_validate(resp.json())
+    assert parsed.code == ErrorCode.AUDIO_FETCH_FAILED
+    assert parsed.stage == "transcribe.decode"
+
+
+def test_transcribe_ffmpeg_not_found_returns_clean_pipeline_error(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FFMPEG_PATH", "this-binary-does-not-exist-anywhere")
+    payload = _transcribe_payload(audio_format="ogg_opus", uri=_fixture_uri("tone_2s.opus"))
+    resp = client.post("/v1/transcribe", json=payload)
+    assert resp.status_code == 422
+
+    parsed = PipelineError.model_validate(resp.json())
+    assert parsed.code == ErrorCode.AUDIO_FETCH_FAILED
+    assert parsed.stage == "transcribe.decode"
+    assert "not found" in parsed.message.lower()
