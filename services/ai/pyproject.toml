@@ -22,6 +22,20 @@ dev = [
 moderation = [
     "llama-cpp-python==0.3.35",
 ]
+# MT bring-up (Week 6 Phase 1, not yet implemented — see
+# docs/MT_ENVIRONMENT_DECISION.md for the environment spike this pin came out
+# of). Kept out of `dependencies` until services/ai/mt/ actually exists.
+# transformers is pinned, not left open: indictranstoolkit's own dependency
+# declaration doesn't bound it, and the newest transformers (5.x at spike
+# time) restructured transformers.tokenization_utils in a way that breaks
+# IndicTransToolkit's collator import (`ImportError: cannot import name
+# 'PreTrainedTokenizerBase'`). 4.44.2 is the version verified working in the
+# spike, in both a throwaway venv and services/ai/.venv itself — do not bump
+# without re-running that smoke test.
+mt = [
+    "indictranstoolkit",
+    "transformers==4.44.2",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "moderation/tests"]
