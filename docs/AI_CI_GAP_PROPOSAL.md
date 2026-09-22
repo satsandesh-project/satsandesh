@@ -1,5 +1,59 @@
 # Proposal: wire services/ai/'s tests into CI
 
+## SUPERSEDED — 2026-09-22
+
+**This proposal is superseded. `main` already has a working fix.** Two new
+jobs, `gateway-tests` and `ai-tests`, were added to `.github/workflows/ci.yml`
+by Sainathan/M4 (see that file's own header comments, and
+`docs/journal/sainathan.md`, 2026-09-22) — separately from, and slightly
+differently than, what this proposal spelled out below. `lint-and-test` (the
+original job, running bare `pytest` from the repo root against
+`tests/test_placeholder.py`) is untouched.
+
+**One thing this proposal didn't anticipate:** it explicitly recommended
+*against* `pip install -e services/ai[dev]`, reasoning that
+`services/ai/pyproject.toml` "has no `[build-system]` table and its venv has
+no `setuptools` installed." The shipped `ai-tests` job does exactly that
+(`pip install -e ".[dev]"` from `services/ai/`) — and at some point between
+this proposal and today that command genuinely failed with `Multiple
+top-level packages discovered in a flat-layout` (setuptools' auto-discovery
+tripping over `services/ai/` having more than one top-level package —
+`mock/`, `moderation/`, `speech/`). That got fixed properly, in
+`services/ai/pyproject.toml` itself (commit `3567e09`, `fix(ai): keep pip
+install -e .[dev] working with more than one package in services/ai`, adding
+an explicit `[tool.setuptools]\npackages = []`), not by avoiding the editable
+install as this proposal suggested.
+
+**Re-verified today, standalone**, on `feat/ai-speech-asr-w5`'s current
+state (merged up to date with `main`):
+
+```
+services\ai\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+```
+succeeds cleanly — no "Multiple top-level packages discovered" error, no
+other error. Then, bare `pytest` from inside `services/ai/`, exactly as the
+`ai-tests` job runs it:
+
+```
+services\ai\.venv\Scripts\python.exe -m pytest
+111 passed, 1 warning in 1.94s
+```
+
+So the `ai-tests` job as it exists on `main` today would pass.
+
+**The one real remaining action item — not this lane's to fix:** per
+`.github/workflows/ci.yml`'s own trailing comment, branch protection on
+`main` currently only requires `lint-and-test`. `gateway-tests` and
+`ai-tests` are not yet added to the required status checks, so a red run in
+either currently cannot block a merge. That's a repo-admin
+(`satsandesh-project`) setting, not something owned by whoever wrote this
+proposal or works in `services/ai/`.
+
+The original proposal is kept below, unedited, as the historical record of
+what the gap looked like before the fix landed.
+
+---
+
 **Date:** 2026-09-19
 **Status:** proposal only — not applied. Both files this touches are outside
 `services/ai/` and `docs/`, which is this phase's scope, so this document exists
