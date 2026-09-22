@@ -954,15 +954,47 @@ SAVE_QUIET_HOURS_JS_TEMPLATE = """
 # START_RECORDING_JS/STOP_RECORDING_JS above: a Python round-trip per
 # press/release would be slower and no more reliable than a plain
 # setTimeout, and nothing here needs to touch Reflex state at all.
+#
+# Second round of review (PR #45): an earlier version of this removed
+# on_click entirely and routed the real action through on_mouse_up
+# instead, gated on whether the hold fired. That broke keyboard
+# activation -- pressing Enter/Space on a focused <button> fires a native
+# click with no mousedown/mouseup at all, so a button with no on_click
+# does nothing for a keyboard user. This version keeps on_click as the
+# one real action for both mouse and keyboard, and instead suppresses
+# *only* the specific click that follows a completed mouse hold, at the
+# DOM level, before Reflex's own click handler ever sees it -- a
+# keyboard-triggered click never touches mousedown, so it's never a
+# candidate for suppression in the first place.
 # ---------------------------------------------------------------------------
 
 _AUDIO_LABEL_HOLD_MS = 450
 
 AUDIO_LABEL_HOLD_START_JS_TEMPLATE = """
 (() => {
+    // Installed once, lazily, on the first hold anywhere on the page --
+    // a single document-level capture-phase listener, not one per
+    // button, since only one hold can be in progress at a time anyway
+    // (the timer/flag below are already page-global for the same
+    // reason). Capture phase means this runs before the click ever
+    // reaches the button's own on_click handler.
+    if (!window.__satAudioHoldGuardInstalled) {
+        window.__satAudioHoldGuardInstalled = true;
+        document.addEventListener("click", (e) => {
+            if (window.__satAudioHoldJustFired) {
+                window.__satAudioHoldJustFired = false;
+                e.preventDefault();
+                e.stopImmediatePropagation();
+            }
+        }, true);
+    }
     if (window.__satAudioHoldTimer) clearTimeout(window.__satAudioHoldTimer);
     window.__satAudioHoldTimer = setTimeout(async () => {
         window.__satAudioHoldTimer = null;
+        // Set synchronously, the instant the hold threshold is reached --
+        // this is what the click-guard above checks, and it must be true
+        // before the eventual mouseup's click can arrive, not after.
+        window.__satAudioHoldJustFired = true;
         try {
             const resp = await fetch(
                 %(gateway_url)s + "/audio-labels/" + %(label)s + "?lang=" + %(lang)s
@@ -985,31 +1017,19 @@ AUDIO_LABEL_HOLD_START_JS_TEMPLATE = """
 })()
 """
 
-# Read on release, not just cleared: whether the timer above is still
-# pending tells the caller whether this was a genuine short tap ("short",
-# timer never fired, safe to run the real action) or the end of a preview
-# that already played ("held", the setTimeout callback already nulled the
-# timer itself). Without this distinction, a plain on_click alongside
-# on_mouse_down/up double-fired the real action even on a long hold --
-# a mouseup on the same element always fires a click in the browser,
-# regardless of how long the press lasted. Flagged in review, PR #45.
-AUDIO_LABEL_HOLD_RELEASE_JS = """
-(() => {
-    if (window.__satAudioHoldTimer) {
-        clearTimeout(window.__satAudioHoldTimer);
-        window.__satAudioHoldTimer = null;
-        return "short";
-    }
-    return "held";
-})()
-"""
-
+# Cancels a still-pending hold (released or left before the threshold),
+# and always clears the "just fired" flag too, not only the timer --
+# without that second part, holding past the threshold and then dragging
+# off the button (mouseleave, no click ever arrives to consume the flag)
+# would leave it set for whatever the *next*, unrelated click on the page
+# happens to be.
 AUDIO_LABEL_HOLD_CANCEL_JS = """
 (() => {
     if (window.__satAudioHoldTimer) {
         clearTimeout(window.__satAudioHoldTimer);
         window.__satAudioHoldTimer = null;
     }
+    window.__satAudioHoldJustFired = false;
 })()
 """
 
@@ -1439,65 +1459,27 @@ class State(rx.State):
     def cancel_audio_label_hold(self):
         return rx.call_script(AUDIO_LABEL_HOLD_CANCEL_JS)
 
-    # -- Release handlers: one pair per button carrying the tap-and-hold
-    # affordance. Each checks AUDIO_LABEL_HOLD_RELEASE_JS's verdict before
-    # running that button's real action, so holding it to preview never
-    # also performs it (see AUDIO_LABEL_HOLD_RELEASE_JS's own comment for
-    # why on_click alone can't be trusted here).
-
-    def release_back(self):
-        return rx.call_script(AUDIO_LABEL_HOLD_RELEASE_JS, callback=State.on_release_back)
-
-    def on_release_back(self, result: str):
-        if result == "short":
-            return self.go_home()
-
-    def release_send(self):
-        return rx.call_script(AUDIO_LABEL_HOLD_RELEASE_JS, callback=State.on_release_send)
-
-    def on_release_send(self, result: str):
-        if result == "short":
-            return self.send_live_message()
-
-    def release_satsang_tab(self):
-        return rx.call_script(AUDIO_LABEL_HOLD_RELEASE_JS, callback=State.on_release_satsang_tab)
-
-    def on_release_satsang_tab(self, result: str):
-        if result == "short":
-            self.set_active_tab("satsang")
-
-    def release_add_person(self):
-        return rx.call_script(AUDIO_LABEL_HOLD_RELEASE_JS, callback=State.on_release_add_person)
-
-    def on_release_add_person(self, result: str):
-        if result == "short":
-            self.open_add_contact()
-
-    def release_quiet_hours_save(self):
-        return rx.call_script(
-            AUDIO_LABEL_HOLD_RELEASE_JS, callback=State.on_release_quiet_hours_save
-        )
-
-    def on_release_quiet_hours_save(self, result: str):
-        if result == "short":
-            return self.save_quiet_hours()
-
 
 # ---------------------------------------------------------------------------
 # Shared style helpers
 # ---------------------------------------------------------------------------
 
 
-def hold_to_hear(label: str, release_handler) -> dict:
-    """Tap-and-hold-to-hear-it-read-aloud event props for a single button:
-    press starts the preview timer, release runs `release_handler` (which
-    itself decides real-action-or-not via AUDIO_LABEL_HOLD_RELEASE_JS),
-    leaving mid-press cancels silently. Replaces a 3-line
-    on_mouse_down/up/leave block that was hand-copied across all five
-    buttons carrying this affordance -- flagged in review, PR #45."""
+def hold_to_hear(label: str) -> dict:
+    """Tap-and-hold-to-hear-it-read-aloud event props, shared by all five
+    buttons that carry this affordance. Deliberately does NOT touch
+    on_click -- that stays each button's own, unchanged, real action, for
+    both mouse and keyboard use. Double-firing on a genuine mouse hold is
+    prevented at the DOM level instead (see
+    AUDIO_LABEL_HOLD_START_JS_TEMPLATE's click-guard), specifically so
+    keyboard activation (Enter/Space on a focused button, which never
+    touches mousedown at all) keeps working -- an earlier version routed
+    the real action through on_mouse_up instead and broke exactly that.
+    Replaces a 3-line on_mouse_down/up/leave block that was hand-copied
+    across all five buttons -- flagged in review, PR #45."""
     return {
         "on_mouse_down": lambda: State.start_audio_label_hold(label),
-        "on_mouse_up": release_handler,
+        "on_mouse_up": State.cancel_audio_label_hold,
         "on_mouse_leave": State.cancel_audio_label_hold,
     }
 
@@ -1810,7 +1792,8 @@ def quiet_hours_card() -> rx.Component:
             rx.cond(
                 State.quiet_hours_saved, State.t["quiet_hours_saved"], State.t["quiet_hours_save"]
             ),
-            **hold_to_hear("settings", State.release_quiet_hours_save),
+            on_click=State.save_quiet_hours,
+            **hold_to_hear("settings"),
             style={
                 "min_height": "52px",
                 "padding": "0 20px",
@@ -2010,7 +1993,8 @@ def add_contact_form() -> rx.Component:
 def add_person_button() -> rx.Component:
     return rx.button(
         State.t["add_person"],
-        **hold_to_hear("new_message", State.release_add_person),
+        on_click=State.open_add_contact,
+        **hold_to_hear("new_message"),
         style={
             "width": "100%",
             "min_height": "72px",
@@ -2486,7 +2470,8 @@ def bottom_tabs() -> rx.Component:
         ),
         rx.button(
             State.t["tab_satsang"],
-            **hold_to_hear("circle", State.release_satsang_tab),
+            on_click=lambda: State.set_active_tab("satsang"),
+            **hold_to_hear("circle"),
             style={
                 "flex": "1",
                 "min_height": "88px",
@@ -2599,7 +2584,8 @@ def chat_screen() -> rx.Component:
         rx.hstack(
             rx.button(
                 State.t["back"],
-                **hold_to_hear("back", State.release_back),
+                on_click=State.go_home,
+                **hold_to_hear("back"),
                 style={
                     "min_height": "56px",
                     "font_size": "18px",
@@ -2698,7 +2684,8 @@ def chat_screen() -> rx.Component:
             ),
             rx.button(
                 State.t["send"],
-                **hold_to_hear("send_button", State.release_send),
+                on_click=State.send_live_message,
+                **hold_to_hear("send_button"),
                 style={
                     "min_height": "60px",
                     "min_width": "100px",

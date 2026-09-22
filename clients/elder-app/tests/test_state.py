@@ -1,127 +1,89 @@
-"""Tests for elder_app.elder_app.State -- the Week 5 accessibility pass
-(PR #45): quiet-hours settings and the tap-and-hold-to-hear-it audio
-labels.
+"""Tests for elder_app.elder_app -- the Week 5 accessibility pass (PR #45):
+quiet-hours settings and the tap-and-hold-to-hear-it audio labels.
 
 Reflex blocks direct State instantiation outside its own runtime unless
 `PYTEST_CURRENT_TEST` is set (`reflex.state.is_testing_env`) -- true
 under plain `pytest`, so no harness/fixture is needed to construct one
 here.
 
-The double-fire regression (release handlers)
-----------------------------------------------
-Reviewed on PR #45: a plain `on_click` alongside `on_mouse_down`/`up`
-double-fired the real action even on a long hold, because a mouseup on
-the same element always fires a click in the browser regardless of press
-duration -- holding "Send" to preview it also actually sent the message.
-Fixed by routing every real action through the button's `on_mouse_up`
-only, gated on `AUDIO_LABEL_HOLD_RELEASE_JS`'s "short"/"held" verdict
-(see that constant's own comment in elder_app.py for the JS-side half of
-this). These tests are the Python-side regression coverage for that fix:
-"held" must never perform the real action, "short" always must. The JS
-timer itself isn't practical to unit test headless, so it's exercised
-only through this boundary.
+The double-fire / keyboard-access regression
+---------------------------------------------
+Two rounds of review on PR #45, on the same five buttons:
+
+1. A plain `on_click` alongside `on_mouse_down`/`up` double-fired the
+   real action even on a long hold -- a mouseup on the same element
+   always fires a click in the browser regardless of press duration, so
+   holding "Send" to preview it also actually sent the message.
+2. The fix for #1 removed `on_click` and routed the real action through
+   `on_mouse_up` instead -- which broke keyboard activation, since
+   pressing Enter/Space on a focused button fires a native click with no
+   mousedown/mouseup at all.
+
+The actual fix keeps `on_click` as the one real action (mouse and
+keyboard both), and suppresses only the specific click that follows a
+completed mouse hold, at the DOM level, via a capture-phase listener
+installed by `AUDIO_LABEL_HOLD_START_JS_TEMPLATE`. That JS-level
+click-guard isn't practical to unit test headless (no DOM here) --
+`test_all_five_hold_buttons_keep_their_on_click` below is the
+Python-side regression coverage available: a plain structural check that
+every button carrying the hold affordance still has its own `on_click`
+wired, so a future edit can't silently drop it again the way review
+round 1 did.
 """
 
-from elder_app.elder_app import State
+from elder_app.elder_app import (
+    State,
+    add_person_button,
+    bottom_tabs,
+    chat_screen,
+    quiet_hours_card,
+)
 
 
 def _fresh_state() -> State:
     return State()
 
 
-def test_release_back_short_goes_home():
-    state = _fresh_state()
-    state.current_contact_id = "abc"
-    state.current_circle_id = "def"
-
-    state.on_release_back("short")
-
-    assert state.current_contact_id == ""
-    assert state.current_circle_id == ""
+def _has_event_trigger(component, name: str) -> bool:
+    return name in component.event_triggers
 
 
-def test_release_back_held_does_not_go_home():
-    state = _fresh_state()
-    state.current_contact_id = "abc"
-    state.current_circle_id = "def"
+def test_all_five_hold_buttons_keep_their_on_click():
+    # add_person_button() and quiet_hours_card() are each a single button
+    # (well, quiet_hours_card's Save button, the only button in it).
+    # bottom_tabs() and chat_screen() contain more than one -- walk their
+    # children to find the ones that also carry on_mouse_down (the hold
+    # affordance), and assert each still has on_click too.
+    def hold_buttons(component):
+        found = []
+        if _has_event_trigger(component, "on_mouse_down") and _has_event_trigger(
+            component, "on_click"
+        ):
+            found.append(component)
+        elif _has_event_trigger(component, "on_mouse_down"):
+            # Has the hold wiring but not on_click -- exactly the
+            # regression this test exists to catch. Still record it so
+            # the assertion below fails with a clear count, not a
+            # silent pass.
+            found.append(component)
+        for child in getattr(component, "children", []):
+            found.extend(hold_buttons(child))
+        return found
 
-    state.on_release_back("held")
+    candidates = (
+        hold_buttons(add_person_button())
+        + hold_buttons(quiet_hours_card())
+        + hold_buttons(bottom_tabs())
+        + hold_buttons(chat_screen())
+    )
 
-    assert state.current_contact_id == "abc"
-    assert state.current_circle_id == "def"
-
-
-def test_release_send_short_triggers_send_event():
-    state = _fresh_state()
-
-    event = state.on_release_send("short")
-
-    assert event is not None
-
-
-def test_release_send_held_triggers_nothing():
-    state = _fresh_state()
-
-    event = state.on_release_send("held")
-
-    assert event is None
-
-
-def test_release_satsang_tab_short_switches_tab():
-    state = _fresh_state()
-    state.active_tab = "people"
-
-    state.on_release_satsang_tab("short")
-
-    assert state.active_tab == "satsang"
-
-
-def test_release_satsang_tab_held_leaves_tab_alone():
-    state = _fresh_state()
-    state.active_tab = "people"
-
-    state.on_release_satsang_tab("held")
-
-    assert state.active_tab == "people"
-
-
-def test_release_add_person_short_opens_the_form():
-    state = _fresh_state()
-    state.add_contact_open = False
-
-    state.on_release_add_person("short")
-
-    assert state.add_contact_open is True
-
-
-def test_release_add_person_held_leaves_form_closed():
-    state = _fresh_state()
-    state.add_contact_open = False
-
-    state.on_release_add_person("held")
-
-    assert state.add_contact_open is False
-
-
-def test_release_quiet_hours_save_short_triggers_save():
-    state = _fresh_state()
-    state.quiet_hours_saved = True  # a stale "Saved" flash from a previous save
-
-    event = state.on_release_quiet_hours_save("short")
-
-    assert event is not None
-    # save_quiet_hours() itself clears this before issuing the save call.
-    assert state.quiet_hours_saved is False
-
-
-def test_release_quiet_hours_save_held_triggers_nothing():
-    state = _fresh_state()
-    state.quiet_hours_saved = True
-
-    event = state.on_release_quiet_hours_save("held")
-
-    assert event is None
-    assert state.quiet_hours_saved is True  # untouched
+    assert len(candidates) == 5, f"expected 5 hold-affordance buttons, found {len(candidates)}"
+    for component in candidates:
+        assert _has_event_trigger(component, "on_click"), (
+            f"{component} carries the tap-and-hold affordance (on_mouse_down) "
+            "but lost its on_click -- this is exactly the keyboard-access "
+            "regression from PR #45's review round 2."
+        )
 
 
 def test_on_settings_loaded_parses_hh_mm_ss_into_hh_mm():
