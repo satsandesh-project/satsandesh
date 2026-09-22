@@ -16,9 +16,15 @@ dev = [
     "mypy>=1.9",
     "ruff>=0.4",
 ]
+# Real moderation backend (services/ai/moderation/, MOD_BACKEND=llama_cpp).
+# Kept out of `dependencies`: the stub backend and the whole test suite run
+# without it, and llama-cpp-python compiles native code on install.
+moderation = [
+    "llama-cpp-python==0.3.35",
+]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "moderation/tests"]
 markers = [
     "integration: requires real model weights and a CUDA GPU; skipped by default",
 ]
