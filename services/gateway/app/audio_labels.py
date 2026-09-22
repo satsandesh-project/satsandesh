@@ -32,12 +32,20 @@ _DURATION_S = 0.3
 # (a placeholder tone, not real TTS) — the catalog carries it anyway so
 # wiring in a real TTS call later is a one-line change to _synth_stub, not
 # a rewrite of this catalog or the route around it.
+#
+# `te` (Telugu) added here (PR #45 review, Week 5): clients/elder-app/'s
+# only two languages are `en`/`te`, but this catalog only ever had
+# `en`/`hi` — every Telugu-preference elder silently got the English clip
+# from `_resolve_lang`'s fallback below, no error, no indication. Inert
+# today since `_synth_stub` is a placeholder tone regardless of language,
+# but a real, latent correctness gap that would silently break the moment
+# real TTS replaces the stub.
 _LABELS: dict[str, dict[str, str]] = {
-    "send_button": {"en": "Send", "hi": "भेजें"},
-    "back": {"en": "Back", "hi": "वापस"},
-    "new_message": {"en": "New message", "hi": "नया संदेश"},
-    "circle": {"en": "Circle", "hi": "मंडली"},
-    "settings": {"en": "Settings", "hi": "सेटिंग्स"},
+    "send_button": {"en": "Send", "hi": "भेजें", "te": "పంపండి"},
+    "back": {"en": "Back", "hi": "वापस", "te": "వెనుకకు"},
+    "new_message": {"en": "New message", "hi": "नया संदेश", "te": "కొత్త సందేశం"},
+    "circle": {"en": "Circle", "hi": "मंडली", "te": "సర్కిల్"},
+    "settings": {"en": "Settings", "hi": "सेटिंग्स", "te": "సెట్టింగ్‌లు"},
 }
 
 _FALLBACK_LANG = "en"
