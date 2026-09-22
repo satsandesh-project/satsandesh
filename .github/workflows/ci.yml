@@ -90,7 +90,40 @@ jobs:
         working-directory: services/gateway
         run: python -m pytest tests/
 
-  # services/auth/ (M4's) is not added here: it doesn't exist in the repo
-  # yet (checked -- no such directory, no reference to it anywhere else in
-  # the repo). Nothing to flag to M4 today; when it lands, its job belongs
-  # next to gateway-tests above, following the same pattern.
+  ai-tests:
+    # Same root cause gateway-tests fixes, one directory over: root
+    # pyproject.toml's testpaths never reached services/ai/, so its contract,
+    # fixture and mock-server tests (and, once merged, services/ai/moderation/
+    # -- M4's lane) never ran in CI either. No database needed: everything
+    # under services/ai/ runs against Pydantic models and in-process
+    # TestClients. Model-weight tests are marked `integration` and skipped by
+    # services/ai/pyproject.toml's addopts, so this job stays fast and
+    # download-free.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install AI service dependencies
+        # The same command services/ai/README.md gives developers, so CI and
+        # a laptop resolve identical versions from one pyproject.toml.
+        working-directory: services/ai
+        run: pip install -e ".[dev]"
+
+      - name: Run AI service tests
+        # Bare pytest: services/ai/pyproject.toml's testpaths decides what
+        # runs (tests/ today; moderation/tests too once #60 lands), and its
+        # conftest puts the repo root on sys.path for `contracts.*` and
+        # `services.ai.*`. New suites under services/ai/<service>/tests
+        # are picked up by adding them to that testpaths list, not here.
+        working-directory: services/ai
+        run: python -m pytest
+
+  # Branch protection currently requires `lint-and-test` only. gateway-tests
+  # and ai-tests need adding to the required status checks by the repo admin
+  # (satsandesh-project) -- otherwise a red run here does not block a merge.
+  # Tracked in docs/journal/sainathan.md, 2026-09-22.
