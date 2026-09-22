@@ -28,3 +28,69 @@ jobs:
 
       - name: Run tests
         run: pytest
+
+  gateway-tests:
+    # New job, added alongside lint-and-test (which is untouched above).
+    # Root pyproject.toml's testpaths = ["tests"] means the existing job's
+    # bare `pytest` only ever runs tests/test_placeholder.py -- it has
+    # never run services/gateway/'s real suite. This job does, against a
+    # throwaway postgres:16 service container, the same version the
+    # gateway's own README documents for local dev.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: devpass
+          # One database here, not the dev+test pair services/gateway/README.md
+          # describes -- there's no dev data to protect in a throwaway CI
+          # run, so DATABASE_URL and TEST_DATABASE_URL below both point at
+          # this same database.
+          POSTGRES_DB: satsandesh_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Same names services/gateway/app/config.py requires with no default
+      # (see its own comment on why a missing one crashes at startup
+      # rather than silently). Placeholder values, matching the pattern
+      # .env.example already uses for local dev.
+      DATABASE_URL: postgresql://postgres:devpass@localhost:5432/satsandesh_test
+      TEST_DATABASE_URL: postgresql+psycopg2://postgres:devpass@localhost:5432/satsandesh_test
+      JWT_SECRET: ci-placeholder-secret
+      VAPID_PRIVATE_KEY: ci-placeholder-vapid-private
+      VAPID_PUBLIC_KEY: ci-placeholder-vapid-public
+      VAPID_SUBJECT: mailto:ci@example.com
+      # Deliberately NOT set: CORS_ORIGINS. tests/test_config.py::test_settings_load_from_env
+      # asserts it defaults to [] when absent -- setting it here would make
+      # that specific test fail for a CI-environment reason unrelated to
+      # the code being tested.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install gateway dependencies
+        working-directory: services/gateway
+        run: pip install -r requirements.txt
+
+      - name: Apply migrations
+        working-directory: services/gateway
+        run: python -m alembic upgrade head
+
+      - name: Run gateway tests
+        working-directory: services/gateway
+        run: python -m pytest tests/
+
+  # services/auth/ (M4's) is not added here: it doesn't exist in the repo
+  # yet (checked -- no such directory, no reference to it anywhere else in
+  # the repo). Nothing to flag to M4 today; when it lands, its job belongs
+  # next to gateway-tests above, following the same pattern.
