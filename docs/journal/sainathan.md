@@ -339,18 +339,31 @@ saying so. Then a six-line PR replacing the ADR's "Not recorded either way:
 Sainathan (M4)" with a pointer to the comment, dated, per `OWNERSHIP.md` R6
 (ADR edits go through a PR every owner sees).
 
-**Corrected:** Nothing in the content. The timing is the correction: this
-should have been written before #43 merged, and the ADR now says that
-rather than restating the record as if I had been there.
+**Corrected — and this is the entry that matters most today:** the comment
+was drafted, I believed I had posted it, and **it never went up.** #57 was
+opened and merged citing a comment that did not exist. Kshitiz checked
+issue #35 directly (every comment there is his or Veerendra's), flagged it
+on #57, and when nobody answered before the merge, Veerendra opened #66 to
+revert the line with a correction note. Neither of us — me or the
+assistant that drafted the ADR line on my say-so — verified the link before
+citing it. The ADR's own approval-record section exists precisely because
+"overstating the approval here would repeat that in a quieter form", and
+#57 did exactly that. The original version of *this* journal entry said
+"Verified by: comment visible on #35" — it was not; that line is corrected
+here rather than deleted.
 
 **Decided differently:** Read all eleven comments on #35 before drafting, so
 the position engages with Veerendra's and Kshitiz's analyses instead of
-restating them.
+restating them. After the miss: approve #66 as written (the correction note
+is the accurate trail), post the comment for real, and cite the actual
+comment URL in a follow-up PR — not amend #66 to pretend the sequence was
+otherwise.
 
-**Verified by:** Comment visible on #35 under `sainathanv`; #57 opened by
-`sainathanv`.
+**Verified by:** Nothing, at the time — that was the failure. As of this
+correction: GitHub API, `issues/35/comments` filtered by author
+`sainathanv` → zero results.
 
-**Where it ran:** local (the comment was posted by hand in the browser).
+**Where it ran:** local.
 
 ## 2026-09-22 — Ethics approval request and interview consent form (Week 5 · PR #58)
 
