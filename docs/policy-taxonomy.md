@@ -17,8 +17,24 @@ here like code. Policy changes are pull requests, not verbal agreements._
 
 _Organization-authored examples go here — used in the zero-shot
 moderation prompt. Add devotional idioms that trip the filter as they're
-discovered during red-teaming (Month 5)._
+discovered during red-teaming (Week 9 of the compressed plan)._
+
+_Pending the organisation workshop. Candidate exemplars, boundary cases,
+policy knobs and sender-notice drafts for that workshop are in
+`docs/policy-taxonomy-workshop.md`; only what the organisation keeps or
+edits there lands here, via a PR the policy liaison approves._
+
+## Policy settings
+
+_Filled from the workshop's knob decisions (`docs/policy-taxonomy-workshop.md` §5)._
+
+## Sender notices
+
+_Filled from the workshop (`docs/policy-taxonomy-workshop.md` §6), then
+translated and recorded as audio._
 
 ## Changelog
 
 - 2026-07-24: Initial taxonomy scaffold created (pending org workshop).
+- 2026-09-22: Workshop pack prepared (`docs/policy-taxonomy-workshop.md`);
+  sections added for policy settings and sender notices, still empty.
