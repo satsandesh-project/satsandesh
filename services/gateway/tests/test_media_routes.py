@@ -57,8 +57,12 @@ def test_same_upload_retried_returns_the_same_reference_and_stores_one_copy(
     login_as(alice)
 
     audio = b"identical-bytes-sent-twice-because-the-ack-never-arrived"
-    first = client.post("/media", params={"format": "ogg_opus", "duration_ms": "3000"}, content=audio)
-    second = client.post("/media", params={"format": "ogg_opus", "duration_ms": "3000"}, content=audio)
+    first = client.post(
+        "/media", params={"format": "ogg_opus", "duration_ms": "3000"}, content=audio
+    )
+    second = client.post(
+        "/media", params={"format": "ogg_opus", "duration_ms": "3000"}, content=audio
+    )
 
     assert first.status_code == 200
     assert second.status_code == 200
@@ -66,11 +70,7 @@ def test_same_upload_retried_returns_the_same_reference_and_stores_one_copy(
 
     from app.db.models import MediaObject
 
-    rows = (
-        db_session.query(MediaObject)
-        .filter(MediaObject.author_id == alice.id)
-        .all()
-    )
+    rows = db_session.query(MediaObject).filter(MediaObject.author_id == alice.id).all()
     assert len(rows) == 1, f"expected exactly one stored copy, found {len(rows)}"
 
 
@@ -125,14 +125,14 @@ def test_rejected_upload_leaves_no_orphaned_row(client, db_session, login_as):
     assert rows == []
 
 
-def test_rejected_upload_leaves_no_orphaned_file(client, db_session, login_as, tmp_path, monkeypatch):
+def test_rejected_upload_leaves_no_orphaned_file(client, db_session, login_as):
     # Same guarantee as the row-level test above, checked from the other
-    # side: the configured storage root must contain nothing after a
-    # rejected upload, not a partial/truncated file.
-    monkeypatch.setenv("MEDIA_STORAGE_ROOT", str(tmp_path))
-    from app.config import get_settings as _get_settings
+    # side: the configured storage root must gain no new file from a
+    # rejected upload -- not a partial/truncated one, not any.
+    from pathlib import Path
 
-    _get_settings.cache_clear()
+    storage_root = Path(get_settings().MEDIA_STORAGE_ROOT)
+    before = set(storage_root.iterdir()) if storage_root.exists() else set()
 
     alice = _make_db_user(db_session, "Alice")
     login_as(alice)
@@ -141,8 +141,8 @@ def test_rejected_upload_leaves_no_orphaned_file(client, db_session, login_as, t
     oversized = b"x" * (max_bytes + 1)
     client.post("/media", params={"format": "wav_pcm16"}, content=oversized)
 
-    assert list(tmp_path.iterdir()) == []
-    _get_settings.cache_clear()
+    after = set(storage_root.iterdir()) if storage_root.exists() else set()
+    assert after == before, f"rejected upload left new file(s): {after - before}"
 
 
 def test_upload_rejects_an_unknown_format(client, db_session, login_as):

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.db.models import (
     Circle,
     Conversation,
+    MediaObject,
     Membership,
     Message,
     MessageDelivery,
@@ -39,6 +40,11 @@ _PK_MESSAGE_DELIVERIES = "message_deliveries_pkey"
 # concurrent-provisioning race live (two requests racing to provision the
 # same fresh token's users row).
 _PK_USERS = "users_pkey"
+# Week 6: verified against
+# alembic/versions/59e01551d1f1_add_media_objects_table_for_voice_note_.py's
+# UniqueConstraint(name=...) arg, same as every other _UQ_*/_PK_* constant
+# above.
+_UQ_MEDIA_AUTHOR_SHA256 = "uq_media_author_sha256"
 
 
 def _violated_constraint_name(exc: IntegrityError) -> str | None:
@@ -534,3 +540,74 @@ def list_push_subscriptions_for_user(
         .scalars()
         .all()
     )
+
+
+def find_media_object(
+    session: Session, *, author_id: uuid.UUID, sha256_hex: str
+) -> MediaObject | None:
+    """Idempotency lookup for a media upload -- same author, same content
+    hash. Read-only counterpart used both to let app/media.py short-circuit
+    a retry BEFORE writing anything to storage (the overwhelmingly common
+    case -- a client on a flaky network retries sequentially, not truly
+    concurrently with itself, so this fast path avoids a redundant file
+    write on nearly every retry) and, on the rare genuine race, to recover
+    the winner's row after create_media_object's own insert below lost to
+    the UNIQUE (author_id, sha256_hex) constraint."""
+    return session.execute(
+        select(MediaObject).where(
+            MediaObject.author_id == author_id, MediaObject.sha256_hex == sha256_hex
+        )
+    ).scalar_one_or_none()
+
+
+def create_media_object(
+    session: Session,
+    *,
+    media_id: uuid.UUID,
+    author_id: uuid.UUID,
+    format: str,
+    sha256_hex: str,
+    size_bytes: int,
+    duration_ms: int | None = None,
+) -> tuple[MediaObject, bool]:
+    """Insert a media row for bytes app/media.py has ALREADY written to
+    storage at media_id -- this function only ever touches the database,
+    same "no FastAPI, no I/O beyond the session" rule as every other
+    function in this module (the actual filesystem write happens in
+    app/media.py, not here, deliberately -- see its own module docstring
+    for why the orchestration lives at the route layer rather than mixed
+    into this DB-only one, the same split app/onboarding.py's invite/QR
+    flow already uses for its own DB-plus-non-DB concern).
+
+    Returns (row, True) if this call performed the insert, (row, False) if
+    a concurrent identical upload from the same author won the race --
+    app/media.py uses the flag to know whether it must delete the file it
+    just wrote (it lost) or keep it (it won). Same SAVEPOINT-recovery
+    pattern as create_message's own idempotency (_create_message_impl):
+    try the insert, catch the UNIQUE (author_id, sha256_hex) conflict
+    specifically, re-select the winner; any other IntegrityError is a real
+    failure, not a race to recover from, and is re-raised so app/media.py's
+    caller can clean up the file it wrote before propagating it."""
+    media = MediaObject(
+        id=media_id,
+        author_id=author_id,
+        format=format,
+        sha256_hex=sha256_hex,
+        size_bytes=size_bytes,
+        duration_ms=duration_ms,
+    )
+    try:
+        with session.begin_nested():
+            session.add(media)
+            session.flush()
+    except IntegrityError as exc:
+        if _violated_constraint_name(exc) != _UQ_MEDIA_AUTHOR_SHA256:
+            raise
+        media = find_media_object(session, author_id=author_id, sha256_hex=sha256_hex)
+        assert media is not None  # the constraint that just fired guarantees a row exists
+        return media, False
+    return media, True
+
+
+def get_media_object(session: Session, media_id: uuid.UUID) -> MediaObject | None:
+    return session.get(MediaObject, media_id)
