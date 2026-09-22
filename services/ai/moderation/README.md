@@ -132,10 +132,23 @@ MOD_BACKEND=llama_cpp MOD_MODEL_PATH=/path/to/qwen2.5-3b-instruct-q4_k_m.gguf PY
 
 `LlamaCppClassifier` runs at temperature 0 with a JSON schema constraint,
 so the parser's strictness is belt-and-braces, not the only defence. Model
-weights are never committed; pin the exact file (name + sha256) in this
-README when the bring-up picks one. Not covered by the test suite — mark
-any test that needs weights `@pytest.mark.integration` (already configured
-to skip by default in `services/ai/pyproject.toml`).
+weights are never committed. Not covered by the test suite — mark any test
+that needs weights `@pytest.mark.integration` (already configured to skip
+by default in `services/ai/pyproject.toml`).
+
+**Pinned model (bring-up 2026-09-22):** `qwen2.5-3b-instruct-q4_k_m.gguf`
+from `huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF`, 2,104,932,768 bytes,
+sha256 `626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d`.
+
+**Measured** (`bringup-2026-09-22.md`, i5-8250U CPU, no GPU, zero
+exemplars): 26/26 valid verdicts, 21/26 correct actions, 0 false-holds on
+A/B, 0 missed harm on E, both prompt-injection attempts refused; median
+9.5 s / p90 14 s per message after the first call. Quality is usable before
+the workshop; CPU latency is the open problem — the recommended fix is a
+two-pass output (label + confidence first, rationale only for non-ALLOW).
+
+Bench: `tools/bench.py` (see its docstring). Its `bench_*.json` output is
+gitignored — copy numbers into a dated report like the one above.
 
 ## Tests
 
