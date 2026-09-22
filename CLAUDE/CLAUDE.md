@@ -41,6 +41,10 @@ PostgreSQL, Docker Compose deployment. See `README.md` for the full picture.
 
 ## Security checklist (apply on every route/endpoint touched)
 
+The full checklist — this per-PR gate plus the per-lane Week-12 passes and sign-off
+table — lives in `docs/security-checklist.md`. The five bullets below are the
+minimum for every PR:
+
 - Authorization check present on every route — no endpoint trusts the caller by default.
 - No secrets, tokens, or credentials in source, logs, or commit history.
 - All SQL is parameterized — never string-formatted or concatenated queries.
