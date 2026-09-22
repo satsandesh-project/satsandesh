@@ -493,3 +493,49 @@ showing `has_exemplars: false` and correct stub classifications. CI
 still means only ruff ran.
 
 **Where it ran:** local.
+
+## 2026-09-22 — Classifier bring-up: Qwen2.5-3B on CPU, first real numbers (Week 6, pulled forward · on PR #60)
+
+**Asked for:** "Move on to the model bring-up", then "yes" to the 2.1 GB
+download, then "run the benchmark once the download finishes."
+
+**Produced:** `llama-cpp-python==0.3.35` installed (Python 3.11 venv);
+`qwen2.5-3b-instruct-q4_k_m.gguf` downloaded to `D:/…/SatSandesh/models/`
+(outside the repo), size and sha256 verified and pinned in the README;
+`services/ai/moderation/tools/bench.py` driving the service's real path over
+26 messages from the workshop pack; two runs; the report
+`services/ai/moderation/bringup-2026-09-22.md`. Numbers on an i5-8250U with
+no GPU and zero exemplars: 26/26 valid verdicts, 21/26 correct actions, 0
+false-holds on A/B, 0 missed harm on E, both prompt injections refused;
+median 9.5 s / p90 14 s per message after the first call (22.7 s, prompt
+cached thereafter). A rationale cap + 8 threads bought only 10–20 %.
+
+**Corrected:**
+- The campus web filter blocked `pip` fetching the wheel from GitHub
+  release assets ("av_unscannable") and the local AV then locked the temp
+  file; the same URL via `urllib` to a local file installed fine. Recorded
+  in the report so the next person doesn't lose an hour to it.
+- Git-bash `curl` failed the HuggingFace CDN's certificate revocation check
+  (schannel); Python's `urllib` did not. Used Python for the download.
+- My first benchmark run crashed on my own argument parsing (`--threads 4`
+  left the `4` as a positional and `load_policy("4")` failed). Fixed.
+- I had guessed the wheel's release URL and got a 404; read the index page
+  instead of guessing.
+
+**Decided differently:**
+- Measured on this laptop knowing it is not the deployment host, and said
+  so in every table: a CPU floor is a real number; a guess about the RTX
+  2050 is not.
+- Did not treat 20/26 label accuracy as the headline. Action accuracy and
+  the *direction* of each miss are what the product cares about: four of
+  the six misses hold for a human, one is action-identical, exactly one
+  (the chain message) is permissive.
+- Did not switch to the 1.5B model on the strength of one run. Recommended
+  a two-pass output (label + confidence first; rationale only for non-ALLOW)
+  as the next step — it keeps the 3B's judgement, and 85–95 % of traffic is
+  expected to auto-allow anyway.
+
+**Verified by:** Both runs' JSON kept locally (gitignored); every number in
+the report is copied from them. `ruff` clean; 111 tests still green.
+
+**Where it ran:** local.
