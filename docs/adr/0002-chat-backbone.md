@@ -528,7 +528,12 @@ and that should be visible rather than implied:
 - **Verbal only:** Sandesh (M3) accepted the reversal verbally. He did not
   post a written confirmation on #35 or approve a document recording it,
   despite being asked directly there more than once.
-- **Not recorded either way:** Sainathan (M4).
+- **Written, on the record — after the merge:** Sainathan (M4) posted an
+  independent position on issue #35 on 2026-09-22, agreeing with the
+  reversal on the stewardship-lane grounds (server-side moderation is
+  incompatible with E2EE; one authorization model for the moderator
+  console). Fourteen days after this PR merged, so it does not change
+  the fact that the merge itself had three of four owners on record.
 
 So this reversal does **not** yet meet the standard R6 sets — an ADR status
 change reviewed in a PR by every owner. **This PR is the vehicle for

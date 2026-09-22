@@ -36,10 +36,14 @@ PostgreSQL, Docker Compose deployment. See `README.md` for the full picture.
 - **Lint/format before finishing:** code should pass `ruff check .` and
   `ruff format --check .` (config in `pyproject.toml`). Run these before declaring a
   task done.
-- **Log the work.** After any notable feature or fix, add a one-line entry to
-  `Prompt Journal/Prompt_Journal.md` (date, name, prompt/task) — see template below.
+- **Log the work.** After any notable feature or fix, add an entry to your own
+  journal, `docs/journal/<your-name>.md` — see the "Prompt journal" section below.
 
 ## Security checklist (apply on every route/endpoint touched)
+
+The full checklist — this per-PR gate plus the per-lane Week-12 passes and sign-off
+table — lives in `docs/security-checklist.md`. The five bullets below are the
+minimum for every PR:
 
 - Authorization check present on every route — no endpoint trusts the caller by default.
 - No secrets, tokens, or credentials in source, logs, or commit history.
@@ -77,14 +81,14 @@ giving guidance, and every member should follow them:
 
 ## Prompt journal
 
-Location: `Prompt Journal/Prompt_Journal.md`. One row per notable prompt/task:
+Location: one file per member, `docs/journal/<your-name>.md`. Convention, field
+definitions and the index of existing journals: `docs/journal/README.md`. Template
+to copy: `docs/journal/_template.md`.
 
-| Date | Name | Prompt |
-|---|---|---|
-| DD-MM-YYYY | Your name | Short description of what you asked Claude Code to do |
-
-Add an entry any time Claude Code produces a non-trivial chunk of work (a feature, a
-fix that took real back-and-forth, an architecture decision). Trivial formatting
+One entry per PR, decision, or blocked session — heading `## YYYY-MM-DD — task
+(Week N · PR #x)` with **Asked for / Produced / Corrected / Decided differently /
+Verified by / Where it ran**. The field that matters for the final report is
+**Corrected**: what Claude got wrong and how you found out. Trivial formatting
 fixes don't need an entry.
 
 ## When something is genuinely blocked

@@ -25,9 +25,15 @@ tools = [
     "sounddevice>=0.4",
     "soundfile>=0.12",
 ]
+# Real moderation backend (services/ai/moderation/, MOD_BACKEND=llama_cpp).
+# Kept out of `dependencies`: the stub backend and the whole test suite run
+# without it, and llama-cpp-python compiles native code on install.
+moderation = [
+    "llama-cpp-python==0.3.35",
+]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "moderation/tests"]
 markers = [
     "integration: requires real model weights and a CUDA GPU; skipped by default",
 ]
@@ -40,3 +46,11 @@ strict = true
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.setuptools]
+# This directory is a service tree run with the repo root on PYTHONPATH
+# (`services.ai.*`, `contracts.*`), not an importable distribution. An
+# editable install exists only to pull dependencies; with more than one
+# top-level package here (mock/, moderation/, speech/) setuptools' auto-
+# discovery refuses a flat layout, so discovery is turned off explicitly.
+packages = []

@@ -202,6 +202,13 @@ TEXTS = {
         "status_sent": "Sent",
         "status_delivered": "Delivered",
         "status_cancelled": "Cancelled",
+        "quiet_hours_title": "Quiet hours",
+        "quiet_hours_hint": "No message sounds or push alerts between these times.",
+        "quiet_hours_start_label": "Starts",
+        "quiet_hours_end_label": "Ends",
+        "quiet_hours_save": "Save",
+        "quiet_hours_saved": "Saved",
+        "quiet_hours_off_hint": "Leave both blank for no quiet hours.",
     },
     "te": {
         "app_name": "సత్‌సందేశ్",
@@ -262,6 +269,13 @@ TEXTS = {
         "status_sent": "పంపబడింది",
         "status_delivered": "అందింది",
         "status_cancelled": "రద్దు చేయబడింది",
+        "quiet_hours_title": "నిశ్శబ్ద సమయం",
+        "quiet_hours_hint": "ఈ సమయాల మధ్య సందేశ శబ్దాలు లేదా పుష్ నోటిఫికేషన్లు రావు.",
+        "quiet_hours_start_label": "మొదలు",
+        "quiet_hours_end_label": "ముగింపు",
+        "quiet_hours_save": "సేవ్ చేయి",
+        "quiet_hours_saved": "సేవ్ అయ్యింది",
+        "quiet_hours_off_hint": "నిశ్శబ్ద సమయం వద్దంటే రెండూ ఖాళీగా ఉంచండి.",
     },
 }
 
@@ -882,6 +896,143 @@ STOP_RECORDING_JS = """
 })()
 """
 
+# ---------------------------------------------------------------------------
+# Client-side JS: quiet hours (GET/PATCH /me/settings -- Week 5's
+# accessibility pass). The DB columns and the push-suppression read side
+# (app/push.py's is_quiet_hours) have existed since Month 1; app/users.py
+# is the write path that never did, until now.
+# ---------------------------------------------------------------------------
+
+LOAD_SETTINGS_JS_TEMPLATE = """
+(async () => {
+    try {
+        const resp = await fetch(%(gateway_url)s + "/me/settings", {
+            headers: { Authorization: "Bearer " + window.__satToken },
+        });
+        if (!resp.ok) return "";
+        return JSON.stringify(await resp.json());
+    } catch (err) {
+        return "";
+    }
+})()
+"""
+
+# quiet_hours_start/end travel as "HH:MM:SS" (Pydantic's `time` JSON
+# encoding) but <input type="time"> wants "HH:MM" -- and an empty input
+# must PATCH as an explicit `null`, not an omitted field, so a value the
+# elder clears actually clears server-side rather than leaving the old
+# one in place (see contracts/chat/users.py::QuietHoursUpdate and
+# app/db/repository.py::update_quiet_hours's set_start/set_end split).
+SAVE_QUIET_HOURS_JS_TEMPLATE = """
+(async () => {
+    const toWire = (hhmm) => (hhmm ? hhmm + ":00" : null);
+    try {
+        const resp = await fetch(%(gateway_url)s + "/me/settings", {
+            method: "PATCH",
+            headers: {
+                Authorization: "Bearer " + window.__satToken,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                quiet_hours_start: toWire(%(start)s),
+                quiet_hours_end: toWire(%(end)s),
+            }),
+        });
+        if (!resp.ok) return "error:" + resp.status;
+        return "ok";
+    } catch (err) {
+        return "error:network";
+    }
+})()
+"""
+
+# ---------------------------------------------------------------------------
+# Client-side JS: audio labels (tap-and-hold to hear a button read aloud --
+# GET /audio-labels/{label}, services/gateway/app/audio_labels.py, built
+# Week 4 but never wired into any button until this Week 5 pass). The
+# hold timer lives entirely in JS, same reasoning as
+# START_RECORDING_JS/STOP_RECORDING_JS above: a Python round-trip per
+# press/release would be slower and no more reliable than a plain
+# setTimeout, and nothing here needs to touch Reflex state at all.
+#
+# Second round of review (PR #45): an earlier version of this removed
+# on_click entirely and routed the real action through on_mouse_up
+# instead, gated on whether the hold fired. That broke keyboard
+# activation -- pressing Enter/Space on a focused <button> fires a native
+# click with no mousedown/mouseup at all, so a button with no on_click
+# does nothing for a keyboard user. This version keeps on_click as the
+# one real action for both mouse and keyboard, and instead suppresses
+# *only* the specific click that follows a completed mouse hold, at the
+# DOM level, before Reflex's own click handler ever sees it -- a
+# keyboard-triggered click never touches mousedown, so it's never a
+# candidate for suppression in the first place.
+# ---------------------------------------------------------------------------
+
+_AUDIO_LABEL_HOLD_MS = 450
+
+AUDIO_LABEL_HOLD_START_JS_TEMPLATE = """
+(() => {
+    // Installed once, lazily, on the first hold anywhere on the page --
+    // a single document-level capture-phase listener, not one per
+    // button, since only one hold can be in progress at a time anyway
+    // (the timer/flag below are already page-global for the same
+    // reason). Capture phase means this runs before the click ever
+    // reaches the button's own on_click handler.
+    if (!window.__satAudioHoldGuardInstalled) {
+        window.__satAudioHoldGuardInstalled = true;
+        document.addEventListener("click", (e) => {
+            if (window.__satAudioHoldJustFired) {
+                window.__satAudioHoldJustFired = false;
+                e.preventDefault();
+                e.stopImmediatePropagation();
+            }
+        }, true);
+    }
+    if (window.__satAudioHoldTimer) clearTimeout(window.__satAudioHoldTimer);
+    window.__satAudioHoldTimer = setTimeout(async () => {
+        window.__satAudioHoldTimer = null;
+        // Set synchronously, the instant the hold threshold is reached --
+        // this is what the click-guard above checks, and it must be true
+        // before the eventual mouseup's click can arrive, not after.
+        window.__satAudioHoldJustFired = true;
+        try {
+            const resp = await fetch(
+                %(gateway_url)s + "/audio-labels/" + %(label)s + "?lang=" + %(lang)s
+            );
+            if (!resp.ok) return;
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            // Release the blob URL once playback actually finishes, or
+            // immediately if it never started -- URL.createObjectURL
+            // otherwise leaks for the page's lifetime (flagged in review,
+            // PR #45).
+            audio.addEventListener("ended", () => URL.revokeObjectURL(url));
+            audio.play().catch(() => URL.revokeObjectURL(url));
+        } catch (err) {
+            // Best-effort accessibility aid -- a failed fetch/playback here
+            // must never surface as a visible error mid-tap.
+        }
+    }, %(hold_ms)s);
+})()
+"""
+
+# Cancels a still-pending hold (released or left before the threshold),
+# and always clears the "just fired" flag too, not only the timer --
+# without that second part, holding past the threshold and then dragging
+# off the button (mouseleave, no click ever arrives to consume the flag)
+# would leave it set for whatever the *next*, unrelated click on the page
+# happens to be.
+AUDIO_LABEL_HOLD_CANCEL_JS = """
+(() => {
+    if (window.__satAudioHoldTimer) {
+        clearTimeout(window.__satAudioHoldTimer);
+        window.__satAudioHoldTimer = null;
+    }
+    window.__satAudioHoldJustFired = false;
+})()
+"""
+
 
 class State(rx.State):
     language: str = "en"
@@ -926,6 +1077,16 @@ class State(rx.State):
     mic_recording: bool = False
     mic_permission_denied: bool = False
     last_recording_data_url: str = ""
+
+    # Quiet hours (GET/PATCH /me/settings -- Week 5 accessibility pass).
+    # "HH:MM" strings matching <input type="time">'s own value format, not
+    # the wire's "HH:MM:SS" -- SAVE_QUIET_HOURS_JS_TEMPLATE does that
+    # conversion at the JS boundary, same split as every other
+    # client-shape-vs-wire-shape field in this file.
+    quiet_hours_start_input: str = ""
+    quiet_hours_end_input: str = ""
+    quiet_hours_saved: bool = False
+    quiet_hours_error: bool = False
 
     @rx.var
     def t(self) -> dict[str, str]:
@@ -989,6 +1150,7 @@ class State(rx.State):
             rx.call_script(LOAD_NAME_JS, callback=State.on_name_loaded),
             rx.call_script(LOAD_CONTACTS_JS, callback=State.on_contacts_loaded),
             self.load_circles(),
+            self.load_settings(),
         ]
 
     def on_name_loaded(self, name: str):
@@ -1231,10 +1393,95 @@ class State(rx.State):
     def discard_recording(self):
         self.last_recording_data_url = ""
 
+    # -- Quiet hours (GET/PATCH /me/settings) -----------------------------
+    # NOTE: /me/settings doesn't exist on services/gateway/ yet -- that's
+    # M2's (Veerendra's) side to build, tracked separately. This client
+    # side is written against the contract shape now so nothing here needs
+    # to change once she ships it; until then LOAD fails soft (fields stay
+    # blank) and SAVE reports the error rather than pretending it worked.
+
+    def load_settings(self):
+        js = LOAD_SETTINGS_JS_TEMPLATE % {"gateway_url": json.dumps(GATEWAY_PUBLIC_URL)}
+        return rx.call_script(js, callback=State.on_settings_loaded)
+
+    def on_settings_loaded(self, result: str):
+        if not result:
+            return
+        try:
+            parsed = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            return
+        # Wire shape is "HH:MM:SS" (or null); <input type="time"> wants
+        # "HH:MM" -- slice rather than round-trip through a datetime parse
+        # for a format this fixed.
+        start = parsed.get("quiet_hours_start")
+        end = parsed.get("quiet_hours_end")
+        self.quiet_hours_start_input = start[:5] if start else ""
+        self.quiet_hours_end_input = end[:5] if end else ""
+
+    def set_quiet_hours_start_input(self, value: str):
+        self.quiet_hours_start_input = value
+        self.quiet_hours_saved = False
+
+    def set_quiet_hours_end_input(self, value: str):
+        self.quiet_hours_end_input = value
+        self.quiet_hours_saved = False
+
+    def save_quiet_hours(self):
+        self.quiet_hours_saved = False
+        self.quiet_hours_error = False
+        js = SAVE_QUIET_HOURS_JS_TEMPLATE % {
+            "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
+            "start": json.dumps(self.quiet_hours_start_input),
+            "end": json.dumps(self.quiet_hours_end_input),
+        }
+        return rx.call_script(js, callback=State.on_quiet_hours_saved)
+
+    def on_quiet_hours_saved(self, result: str):
+        if result == "ok":
+            self.quiet_hours_saved = True
+        else:
+            self.quiet_hours_error = True
+
+    # -- Audio labels: tap-and-hold to hear a button read aloud -----------
+    # (GET /audio-labels/{label}, services/gateway/app/audio_labels.py --
+    # built Week 4, never wired to a button until this Week 5 pass.)
+
+    def start_audio_label_hold(self, label: str):
+        js = AUDIO_LABEL_HOLD_START_JS_TEMPLATE % {
+            "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
+            "label": json.dumps(label),
+            "lang": json.dumps(self.language),
+            "hold_ms": _AUDIO_LABEL_HOLD_MS,
+        }
+        return rx.call_script(js)
+
+    def cancel_audio_label_hold(self):
+        return rx.call_script(AUDIO_LABEL_HOLD_CANCEL_JS)
+
 
 # ---------------------------------------------------------------------------
 # Shared style helpers
 # ---------------------------------------------------------------------------
+
+
+def hold_to_hear(label: str) -> dict:
+    """Tap-and-hold-to-hear-it-read-aloud event props, shared by all five
+    buttons that carry this affordance. Deliberately does NOT touch
+    on_click -- that stays each button's own, unchanged, real action, for
+    both mouse and keyboard use. Double-firing on a genuine mouse hold is
+    prevented at the DOM level instead (see
+    AUDIO_LABEL_HOLD_START_JS_TEMPLATE's click-guard), specifically so
+    keyboard activation (Enter/Space on a focused button, which never
+    touches mousedown at all) keeps working -- an earlier version routed
+    the real action through on_mouse_up instead and broke exactly that.
+    Replaces a 3-line on_mouse_down/up/leave block that was hand-copied
+    across all five buttons -- flagged in review, PR #45."""
+    return {
+        "on_mouse_down": lambda: State.start_audio_label_hold(label),
+        "on_mouse_up": State.cancel_audio_label_hold,
+        "on_mouse_leave": State.cancel_audio_label_hold,
+    }
 
 
 def pill_button_style(active: bool) -> dict:
@@ -1472,6 +1719,103 @@ def your_id_card() -> rx.Component:
     )
 
 
+def quiet_hours_card() -> rx.Component:
+    """Week 5 accessibility pass: the DB columns and push-suppression read
+    side have existed since Month 1 (app/db/models.py, app/push.py's
+    is_quiet_hours) but nothing let an elder actually set them until now.
+    The Save button also doubles as the "settings" tap-and-hold-to-hear
+    anchor (services/gateway/app/audio_labels.py's catalog has no
+    dedicated settings screen to attach to yet)."""
+    return rx.vstack(
+        rx.text(
+            State.t["quiet_hours_title"],
+            style={
+                "font_family": FONT_LATIN,
+                "font_weight": "700",
+                "font_size": "1.05rem",
+                "color": COLOR["green_ink"],
+            },
+        ),
+        rx.text(
+            State.t["quiet_hours_hint"],
+            style={"font_size": "0.85rem", "color": COLOR["muted_ink"]},
+        ),
+        rx.hstack(
+            rx.vstack(
+                rx.text(
+                    State.t["quiet_hours_start_label"],
+                    style={"font_size": "0.8rem", "color": COLOR["muted_ink"]},
+                ),
+                rx.input(
+                    type="time",
+                    value=State.quiet_hours_start_input,
+                    on_change=State.set_quiet_hours_start_input,
+                    style={
+                        "min_height": "52px",
+                        "font_size": "18px",
+                        "padding": "0 12px",
+                        "border_radius": "10px",
+                        "border": f"1px solid {COLOR['warm_border']}",
+                    },
+                ),
+                spacing="1",
+                align_items="flex-start",
+            ),
+            rx.vstack(
+                rx.text(
+                    State.t["quiet_hours_end_label"],
+                    style={"font_size": "0.8rem", "color": COLOR["muted_ink"]},
+                ),
+                rx.input(
+                    type="time",
+                    value=State.quiet_hours_end_input,
+                    on_change=State.set_quiet_hours_end_input,
+                    style={
+                        "min_height": "52px",
+                        "font_size": "18px",
+                        "padding": "0 12px",
+                        "border_radius": "10px",
+                        "border": f"1px solid {COLOR['warm_border']}",
+                    },
+                ),
+                spacing="1",
+                align_items="flex-start",
+            ),
+            spacing="3",
+            width="100%",
+        ),
+        rx.text(
+            State.t["quiet_hours_off_hint"],
+            style={"font_size": "0.78rem", "color": COLOR["muted_ink"]},
+        ),
+        rx.button(
+            rx.cond(
+                State.quiet_hours_saved, State.t["quiet_hours_saved"], State.t["quiet_hours_save"]
+            ),
+            on_click=State.save_quiet_hours,
+            **hold_to_hear("settings"),
+            style={
+                "min_height": "52px",
+                "padding": "0 20px",
+                "border_radius": "12px",
+                "font_weight": "700",
+                "cursor": "pointer",
+                "align_self": "flex-start",
+                **pill_button_style(True),
+            },
+        ),
+        spacing="2",
+        align_items="flex-start",
+        style={
+            "margin": "16px 20px 0",
+            "padding": "16px 18px",
+            "background": COLOR["card_cream"],
+            "border": f"1px solid {COLOR['warm_border']}",
+            "border_radius": "18px",
+        },
+    )
+
+
 def section_heading() -> rx.Component:
     return rx.heading(
         State.t["heading"],
@@ -1650,6 +1994,7 @@ def add_person_button() -> rx.Component:
     return rx.button(
         State.t["add_person"],
         on_click=State.open_add_contact,
+        **hold_to_hear("new_message"),
         style={
             "width": "100%",
             "min_height": "72px",
@@ -2126,6 +2471,7 @@ def bottom_tabs() -> rx.Component:
         rx.button(
             State.t["tab_satsang"],
             on_click=lambda: State.set_active_tab("satsang"),
+            **hold_to_hear("circle"),
             style={
                 "flex": "1",
                 "min_height": "88px",
@@ -2154,6 +2500,7 @@ def home_screen() -> rx.Component:
             app_header(),
             thought_card(),
             your_id_card(),
+            quiet_hours_card(),
             recording_banner(),
             section_heading(),
             rx.cond(State.active_tab == "people", contact_list(), circle_list()),
@@ -2238,6 +2585,7 @@ def chat_screen() -> rx.Component:
             rx.button(
                 State.t["back"],
                 on_click=State.go_home,
+                **hold_to_hear("back"),
                 style={
                     "min_height": "56px",
                     "font_size": "18px",
@@ -2337,6 +2685,7 @@ def chat_screen() -> rx.Component:
             rx.button(
                 State.t["send"],
                 on_click=State.send_live_message,
+                **hold_to_hear("send_button"),
                 style={
                     "min_height": "60px",
                     "min_width": "100px",

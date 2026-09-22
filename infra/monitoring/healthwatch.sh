@@ -37,7 +37,12 @@
 # a config change, not a script change.
 set -uo pipefail
 
-CONTAINERS="${CONTAINERS:-liveapp-gateway-1 liveapp-elder-app-1 liveapp-ai-services-1 liveapp-postgres-1 liveapp-matrix-circle-service-1 liveapp-tuwunel-1}"
+# liveapp-matrix-circle-service-1 and liveapp-tuwunel-1 are no longer
+# listed: both services were retired from docker-compose.yml after ADR
+# 0002's 2026-09-08 reversal to Option B. Left here, every run would
+# ALERT "not found" for containers that were deliberately removed, not
+# down -- permanent false alerts drowning out real ones.
+CONTAINERS="${CONTAINERS:-liveapp-gateway-1 liveapp-elder-app-1 liveapp-ai-services-1 liveapp-postgres-1}"
 LOG_FILE="${LOG_FILE:-$HOME/healthwatch.log}"
 RESTART_RECHECK_DELAY="${RESTART_RECHECK_DELAY:-15}"
 
