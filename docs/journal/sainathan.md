@@ -268,7 +268,7 @@ leaves the detail inside the document.
 
 **Where it ran:** local.
 
-## 2026-09-22 — Prompt-journal convention, template and this backfill (Week 5 · PR pending)
+## 2026-09-22 — Prompt-journal convention, template and this backfill (Week 5 · PR #55)
 
 **Asked for:** "Move on to the prompt-journal template."
 
@@ -292,5 +292,204 @@ the ADR link to the former; both are other members' files. The index in
 
 **Verified by:** Not applicable — docs. The real test is whether the next
 three PRs from other members carry an entry.
+
+**Where it ran:** local.
+
+## 2026-09-22 — Month-1 retrospective and Month-2 backlog (Week 4 carry-in · PR #56)
+
+**Asked for:** "Move on to the Month-1 retro."
+
+**Produced:** `docs/retro/month-1.md`, from the record rather than memory:
+the schedule's 16 week/member cells with the outcome and PR in each; the
+exit gate clause by clause; per-member numbers; what went well; what went
+wrong with evidence and the fix already made; the changes the team already
+made; carry-ins with owners; the Week 5–8 backlog condensed from the
+dependency map; an actions list; six open questions collected for SRS §5.
+
+**Corrected:** Three numbers I had written from a first pass were wrong when
+counted properly — PRs per member (18/6/8/6, not 15/6/9/5), the total (40,
+not 44) and M3's commit count — fixed before committing. And one claim I
+almost made without checking turned out to be a finding: the API shows 40
+of M3's commits authored with the shared project email are attributed to
+`satsandesh-project` on GitHub, not to `Master-ff`. Attribution leaked
+three ways in Month 1, not one.
+
+**Decided differently:** Wrote my own lane's failure plainly in §5.5 (3 of 13
+delivered) instead of spreading it across the table. A retro by the weakest
+lane that soft-pedals that is not worth reading. Also: did not re-litigate
+the gateway collision — `docs/OWNERSHIP.md` already does it better; cited it.
+
+**Verified by:** Every PR number, date and merge state from the GitHub API
+on 22 Sep; CI hollowness confirmed from `pyproject.toml`'s `testpaths` and
+PR #51's own description.
+
+**Where it ran:** local.
+
+## 2026-09-22 — ADR 0002 position on issue #35, and the record line (Week 5 · PR #57)
+
+**Asked for:** "Draft the issue #35 comment for me", then "show me where to
+post it and raise the PR."
+
+**Produced:** A comment agreeing with the reversal to Option B on the
+stewardship lane's own grounds — server-side moderation is incompatible
+with E2EE (proposal §15 said so in July), one authorisation model for the
+moderator console's role tier, and `contracts/ai/moderation.py` having no
+backbone dependency at all — posted fourteen days after #43 merged and
+saying so. Then a six-line PR replacing the ADR's "Not recorded either way:
+Sainathan (M4)" with a pointer to the comment, dated, per `OWNERSHIP.md` R6
+(ADR edits go through a PR every owner sees).
+
+**Corrected:** Nothing in the content. The timing is the correction: this
+should have been written before #43 merged, and the ADR now says that
+rather than restating the record as if I had been there.
+
+**Decided differently:** Read all eleven comments on #35 before drafting, so
+the position engages with Veerendra's and Kshitiz's analyses instead of
+restating them.
+
+**Verified by:** Comment visible on #35 under `sainathanv`; #57 opened by
+`sainathanv`.
+
+**Where it ran:** local (the comment was posted by hand in the browser).
+
+## 2026-09-22 — Ethics approval request and interview consent form (Week 5 · PR #58)
+
+**Asked for:** "Start with the ethics note and consent form."
+
+**Produced:** `docs/research/ethics-approval-request.md` — two asks on two
+clocks (interviews now, pilot by Week 10), participants, what is and isn't
+collected (the sensitive point stated plainly: moderators can read holds;
+research use of content is the ~300-message eval set, identity-stripped,
+measure-never-train), consent, anonymisation with the code→name sheet held
+outside the repo, risks, timeline, four questions for the supervisor.
+`docs/research/interview-consent.md` — spoken script, one-page large-type
+consent record with two separate decisions (take part / record audio) and
+signature, thumbprint or witnessed spoken consent as equals, interviewer
+checklist, participant-code scheme.
+
+**Corrected:** Nothing yet — the supervisor's answers will be the
+correction. Two things I knowingly left as owed rather than faked: the
+Telugu/Hindi translations (need a bilingual reader) and the audio
+recordings of the script.
+
+**Decided differently:** Wrote the consent form elder-first rather than
+legal-first: every line is one thing the elder can say yes or no to, read
+aloud, never handed over to read alone. "We are testing the app, not you"
+is in the script, not left to the interviewer's manner.
+
+**Verified by:** Cross-checked against proposal §15 line by line (consent
+wording verbatim, 30-day purge, DPDP grievance contact, anonymised
+publication). Not yet reviewed by the supervisor — that is the test.
+
+**Where it ran:** local.
+
+## 2026-09-22 — Taxonomy workshop pack for the organisation (Week 5 · PR #59)
+
+**Asked for:** "Move on to the taxonomy workshop pack."
+
+**Produced:** `docs/policy-taxonomy-workshop.md` — 90-minute agenda; the
+system in two minutes for the room; ~64 invented candidate exemplars A–E
+written as the English pivot text the classifier reads; 15 boundary cases
+that decide the false-hold rate; 15 policy knobs with defaults; sender-
+notice drafts for C/D/E plus a separate outreach text for a person in
+distress; a decision-record section that becomes the PR; what M4 does with
+the result. `docs/policy-taxonomy.md` gets a pointer, two empty sections
+for the output, and its stale "Month 5" reference fixed.
+
+**Corrected:** Nothing in the session. The correction is structural: the
+proposal wants organisation-*authored* exemplars and I cannot author them —
+so the pack is drafted-by-us, edited-by-them, and nothing in it is policy
+until the liaison approves the follow-up PR. Two knobs (who the moderators
+are; who is told about a person in distress) are marked "answer in the
+room" because Week 7 cannot proceed without them.
+
+**Decided differently:** Put E6 ("I do not want to live any more") in E not
+because the sender did wrong but because it must reach a human immediately,
+and said so in the pack — and gave it its own notice that is an outreach,
+not a block.
+
+**Verified by:** Exemplars checked against `contracts/ai/moderation.py`'s
+label enum and the mock's decision shape so the post-workshop PR drops in.
+
+**Where it ran:** local.
+
+## 2026-09-22 — Reviews owed on #45, #47, #49, #51, #52 (Week 5 · no PR)
+
+**Asked for:** "Draft the review comments for all five PRs separately", then
+"what PRs can I merge?"
+
+**Produced:** Five reviews. Approve on #47 (LICENSE), #49 (branch-protection
+journal), #51 (gateway tests in CI — with "make `gateway-tests` a required
+check or it's still hollow", and a correction to its `services/auth/`
+comment). Request changes on #45: neither new fetch is routed by Caddy
+(`/audio-labels*` absent, `/me` exact-match so `/me/settings` falls to the
+Reflex catch-all) and the hold-to-hear gesture is mouse-only, so on Android
+the timer starts at release and never fires. Request changes on #52: any
+local path is accepted as `audio.uri`, no size/duration cap, and sync
+inference inside `async def` freezes the loop for the whole transcription.
+Then a merge map: #47/#49 already satisfied protection; #51 was gated on my
+approval; #45 would merge but shouldn't; #52 had red CI.
+
+**Corrected:** I initially listed "services/ai tests never run in CI" as a
+#51 comment and then realised it applies to my own #60 too — became the
+`ai-tests` job (next entry).
+
+**Decided differently:** Reviewed from my lane, not as a generalist — #45's
+touch-event problem is an elder-first product problem; #52's three items
+are the security checklist's Part A applied to a teammate's code before
+Week 8 makes it reachable. Wrote them as coordination, not criticism, since
+Caddy is M2's and ASR is M3's.
+
+**Verified by:** Read every diff; confirmed the Caddyfile handles and
+`GATEWAY_PUBLIC_URL` default on `main`; confirmed `_resolve_local_path`
+and `async def transcribe` in #52's diff. Merged #47, #49, #51 after
+posting.
+
+**Where it ran:** local.
+
+## 2026-09-22 — Moderation classifier v1 scaffold (Week 6, pulled forward · PR #60)
+
+**Asked for:** "Move on to the classifier scaffold."
+
+**Produced:** `services/ai/moderation/` mirroring #52's `speech/` layout:
+`policy.py` (the policy document is the prompt's source of truth —
+taxonomy, exemplars, notices, `policy_version` from the changelog),
+`prompt.py` (delimited content-to-classify, strict JSON parse),
+`decide.py` (the gate: hold 0.70, block 0.85, no verdict → HOLD +
+degraded), `engine.py` (keyword stub + llama.cpp behind one Protocol),
+`app.py` (bounded input, one-slot semaphore released only when inference
+really ends, plain `def` route, health endpoints). 45 tests, full
+`services/ai` suite 111 green, root ruff clean, smoke-tested against the
+real `docs/policy-taxonomy.md`.
+
+**Corrected:**
+- First test run: 13 errors — a module-scoped `client` fixture requesting
+  function-scoped path fixtures (ScopeMismatch). Made the path fixtures
+  session-scoped. I had first tried `from .conftest import …`, which needs
+  the tests directory to be a package and would have imported the
+  `moderation` package under two names; fixtures were the right fix.
+- Ruff: 18 findings on the first pass — import sorting (the repo's isort
+  config treats `services.*` as first-party, no blank line after
+  `contracts.*`), ISC004 on every multi-line string in the prompt builder,
+  a `dict()` literal, one stale `noqa`. All mechanical; I read the
+  scripted fixes before committing.
+
+**Decided differently:**
+- Applied the two things I had just asked M3 to change on #52 (plain `def`
+  route; bounded input) rather than shipping the same fault.
+- The fail-closed decision needs a `label` because the contract requires
+  one; used `D_DISPUTATIONAL` + confidence 0.0 + `degraded` and raised it as
+  a contract question rather than inventing an enum value in M3's file.
+- Pinned `llama-cpp-python==0.3.35` exactly (my own checklist) but as an
+  optional extra — it compiles native code and the stub path needs nothing.
+- Did not download weights or run the real model. That is the Week-6
+  bring-up and it produces the first latency number; a scaffold that
+  claimed a number would have been a guess.
+
+**Verified by:** `pytest` 111 passed; `ruff check .` + `ruff format --check .`
+from the root; a TestClient smoke run against the committed policy file
+showing `has_exemplars: false` and correct stub classifications. CI
+`lint-and-test` green on the PR — which, until an `ai-tests` job exists,
+still means only ruff ran.
 
 **Where it ran:** local.
