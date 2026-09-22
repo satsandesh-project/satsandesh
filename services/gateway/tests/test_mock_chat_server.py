@@ -6,6 +6,7 @@ first. Mirrors services/ai/tests/test_mock_server.py.
 
 import pytest
 from contracts.chat.envelope import SyncBatch
+from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut
 from contracts.chat.mock.app import app
 from fastapi.testclient import TestClient
@@ -74,7 +75,7 @@ def test_voice_message_is_pending_until_transcribed(client: TestClient) -> None:
             "target_type": "circle",
             "target_id": "circle-1",
             "kind": "voice",
-            "media_ref": {"uri": "mock://audio/a.wav"},
+            "media_ref": {"uri": "mock://audio/a.wav", "format": "wav_pcm16"},
         },
     )
     ack = AckOut.model_validate(resp.json())
@@ -187,3 +188,68 @@ def test_ws_unknown_frame_type_gets_error_frame(client: TestClient) -> None:
         ws.send_json({"type": "message.ack", "data": {}})
         frame = ws.receive_json()
         assert frame["type"] == "error"
+
+
+# -- Media upload/fetch (Week 6) -------------------------------------------
+
+
+def test_upload_media_returns_a_media_ref_shaped_response(client: TestClient) -> None:
+    resp = client.post(
+        "/media",
+        params={"format": "webm_opus", "duration_ms": "4200"},
+        content=b"pretend-this-is-webm-opus-bytes",
+    )
+    assert resp.status_code == 200
+    out = MediaUploadOut.model_validate(resp.json())
+    assert out.format.value == "webm_opus"
+    assert out.duration_ms == 4200
+    # This mock's own indirection scheme -- see contracts/chat/common.py's
+    # validate_media_uri and DECISIONS.md #13.
+    assert out.uri.startswith("media:")
+
+
+def test_upload_media_rejects_an_empty_body(client: TestClient) -> None:
+    resp = client.post("/media", params={"format": "wav_pcm16"}, content=b"")
+    assert resp.status_code == 422
+
+
+def test_upload_media_rejects_an_unknown_format(client: TestClient) -> None:
+    resp = client.post("/media", params={"format": "flac"}, content=b"x")
+    assert resp.status_code == 422
+
+
+def test_fetch_media_round_trips_the_uploaded_bytes(client: TestClient) -> None:
+    uploaded = client.post("/media", params={"format": "mp3"}, content=b"pretend-mp3-bytes").json()
+    media_id = uploaded["uri"].removeprefix("media:")
+    resp = client.get(f"/media/{media_id}")
+    assert resp.status_code == 200
+    assert resp.content == b"pretend-mp3-bytes"
+    assert resp.headers["content-type"] == "audio/mpeg"
+
+
+def test_fetch_media_unknown_id_returns_404(client: TestClient) -> None:
+    resp = client.get("/media/does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_message_out_carries_the_uploaded_media_ref_end_to_end(client: TestClient) -> None:
+    uploaded = client.post(
+        "/media", params={"format": "ogg_opus", "duration_ms": "3000"}, content=b"ogg-bytes"
+    ).json()
+    resp = client.post(
+        "/messages",
+        json={
+            "client_msg_id": "99999999-9999-9999-9999-999999999999",
+            "target_type": "circle",
+            "target_id": "circle-1",
+            "kind": "voice",
+            "media_ref": uploaded,
+        },
+    )
+    assert resp.status_code == 200
+    sync = client.get("/messages", params={"target_type": "circle", "target_id": "circle-1"})
+    batch = SyncBatch.model_validate(sync.json())
+    voice_messages = [m for m in batch.messages if m.kind.value == "voice"]
+    assert voice_messages, "expected at least one voice message in the synced batch"
+    assert voice_messages[-1].media_ref is not None
+    assert voice_messages[-1].media_ref.uri == uploaded["uri"]

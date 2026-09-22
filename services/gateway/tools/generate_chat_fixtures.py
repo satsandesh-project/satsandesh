@@ -18,9 +18,10 @@ from contracts.chat.circles import (
     MembershipCreate,
     MembershipRole,
 )
-from contracts.chat.common import MessageKind, MessageStatus, TargetType
+from contracts.chat.common import AudioFormat, MediaRef, MessageKind, MessageStatus, TargetType
 from contracts.chat.envelope import SyncBatch, SyncRequest
 from contracts.chat.errors import ErrorCode, ErrorPayload
+from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
 from pydantic import BaseModel
 
@@ -120,6 +121,14 @@ def main() -> None:
                     target_id="circle-satsang-evening",
                     kind=MessageKind.VOICE,
                     text=None,
+                    # Week 6: a real media_ref, demonstrating the
+                    # OPEN_QUESTIONS.md #1 fix -- this fixture previously had
+                    # no way to say where a voice message's audio is.
+                    media_ref=MediaRef(
+                        uri="media:7c1e6e2a-9b0e-4c4a-8f2e-4a2e6b1c9d3a",
+                        format=AudioFormat.WEBM_OPUS,
+                        duration_ms=4200,
+                    ),
                     created_at="2026-08-17T09:00:00Z",
                     status=MessageStatus.PENDING,
                 ),
@@ -134,6 +143,15 @@ def main() -> None:
             code=ErrorCode.NOT_FOUND,
             message="circle 'circle-does-not-exist' does not exist",
             detail={"circle_id": "circle-does-not-exist"},
+        ),
+    )
+
+    _write(
+        "media_upload_out.json",
+        MediaUploadOut(
+            uri="media:7c1e6e2a-9b0e-4c4a-8f2e-4a2e6b1c9d3a",
+            format=AudioFormat.WEBM_OPUS,
+            duration_ms=4200,
         ),
     )
 

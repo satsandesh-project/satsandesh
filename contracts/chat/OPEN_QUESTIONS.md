@@ -6,16 +6,11 @@ proposal against these; nothing below blocks the client developer building
 against `contracts/chat/mock/app.py` today, but all of it affects the real
 shape once settled. Mirrors `services/ai/OPEN_QUESTIONS.md`.
 
-1. **`MessageOut` has no `media_ref`.** The task's field list for
-   `MessageOut` is `id, author_id, target_type, target_id, kind, text,
-   created_at, status` — no field for referencing rendered/stored audio.
-   Implemented exactly as specified, but this means a `kind: "voice"`
-   message currently has no wire representation of *where the audio is* on
-   the read side, only on the write side (`MessageIn.media_ref`). Either
-   `MessageOut` needs a `media_ref` added (a real contract change, would
-   bump `CONTRACTS_VERSION`), or there's a separate mechanism (e.g. a
-   follow-up render/fetch call once transcription and TTS finish) that
-   hasn't been specified yet.
+1. ~~**`MessageOut` has no `media_ref`.**~~ **Closed, Week 6.**
+   `MessageOut.media_ref` was added (`CONTRACTS_VERSION` bumped to
+   `0.2.0`) — see `DECISIONS.md` #15. A `kind: "voice"` message now has a
+   read-side wire representation of where its audio is, matching
+   `MessageIn.media_ref` on the write side.
 
 2. **The mock does not deduplicate retried `client_msg_id`s.**
    Design decision #2 in `README.md` justifies `client_msg_id` specifically
@@ -82,3 +77,22 @@ shape once settled. Mirrors `services/ai/OPEN_QUESTIONS.md`.
    semantics meeting the client's rendering needs (spinner vs. checkmark
    vs. "awaiting review" banner), not something to settle unilaterally
    from the contracts side.
+
+9. **Should `contracts/ai/common.AudioFormat` gain its own `WEBM_OPUS`
+   value, or does something transcode real WebM into what it already
+   accepts?** `contracts.chat.common.AudioFormat` (Week 6, `DECISIONS.md`
+   #14) added `WEBM_OPUS` — what a browser's `MediaRecorder` actually
+   produces — because a browser upload needs an honest label regardless of
+   what the AI pipeline can currently consume. `contracts/ai/`'s own
+   `AudioFormat` doesn't have this value; `services/ai/`'s real ASR
+   service (PR #52) already decodes `wav_pcm16` natively and `ogg_opus`/
+   `mp3` via ffmpeg, and its own README documents this exact container
+   mismatch as an open question, offering the same two resolutions: add
+   `WEBM_OPUS` to `contracts/ai/common.AudioFormat` (cheap — the ffmpeg
+   decode path already handles real WebM bytes regardless of the label),
+   or transcode chat-side `webm_opus` into a format `contracts/ai/`
+   already recognizes before ever calling the ASR service (a Week 7
+   orchestrator concern). Not settled here — `contracts/ai/` is
+   `services/ai/`'s owner's file, not this package's, and this question
+   needs that person's (or the team's) agreement, not a unilateral pick
+   from the chat-contract side.
