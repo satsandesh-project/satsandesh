@@ -173,6 +173,9 @@ TEXTS = {
         "recording_label": "Recording...",
         "recorded_label": "Voice message recorded",
         "discard": "Discard",
+        "voice_send": "Send",
+        "voice_uploading": "Sending voice message...",
+        "voice_send_failed": "Couldn't send. Tap to try again.",
         "mic_permission_denied": "Microphone access was denied. "
         "Allow microphone access to record a voice message.",
         "back": "< Back",
@@ -241,6 +244,9 @@ TEXTS = {
         "recording_label": "రికార్డ్ అవుతోంది...",
         "recorded_label": "వాయిస్ సందేశం రికార్డ్ చేయబడింది",
         "discard": "తొలగించు",
+        "voice_send": "పంపండి",
+        "voice_uploading": "వాయిస్ సందేశం పంపుతోంది...",
+        "voice_send_failed": "పంపలేకపోయాం. మళ్ళీ ప్రయత్నించడానికి నొక్కండి.",
         "mic_permission_denied": "మైక్రోఫోన్ యాక్సెస్ నిరాకరించబడింది. దయచేసి అనుమతించండి.",
         "back": "< వెనుకకు",
         "type_placeholder": "సందేశం టైప్ చేయండి...",
@@ -492,11 +498,24 @@ window.__satsandeshWsInit = true;
         who.textContent = (msg.author_id || "").slice(0, 8);
         bubble.appendChild(who);
       }
-      const text = document.createElement("div");
-      text.style.fontSize = "20px";
-      text.style.color = "#2A2118";
-      text.textContent = msg.text;
-      bubble.appendChild(text);
+      if (msg.kind === "voice" && msg.media_ref) {
+        // media_ref.uri is this package's own opaque "media:<id>" scheme
+        // (contracts/chat/common.py's validate_media_uri) -- GET
+        // /media/{id} resolves it; playback UI beyond a plain player
+        // (speed control, original-always-one-tap-away) is Week 7's job,
+        // not this week's (Week 6 is capture and send, not receive).
+        const audio = document.createElement("audio");
+        audio.controls = true;
+        audio.style.maxWidth = "220px";
+        audio.src = GATEWAY_URL + "/media/" + msg.media_ref.uri.replace(/^media:/, "");
+        bubble.appendChild(audio);
+      } else {
+        const text = document.createElement("div");
+        text.style.fontSize = "20px";
+        text.style.color = "#2A2118";
+        text.textContent = msg.text;
+        bubble.appendChild(text);
+      }
       if (isOwn) {
         const status = document.createElement("div");
         status.style.fontSize = "12px";
@@ -569,19 +588,18 @@ window.__satsandeshWsInit = true;
   }
   window.__satCancelMessage = cancelMessage;
 
-  function sendMessageFrame(contactId, text, clientMsgId, targetType) {
+  function sendMessageFrame(contactId, payload, clientMsgId, targetType) {
+    // payload carries whatever varies by message kind (text: {kind, text};
+    // voice: {kind, media_ref}) -- client_msg_id/target_type/target_id are
+    // the same for every kind, so they're filled in here once rather than
+    // duplicated at each call site.
     window.__satPendingSendTarget = window.__satPendingSendTarget || {};
     window.__satPendingSendTarget[clientMsgId] = contactId;
-    ws.send(JSON.stringify({
-      type: "message.send",
-      data: {
-        client_msg_id: clientMsgId,
-        target_type: targetType || "user",
-        target_id: contactId,
-        kind: "text",
-        text: text,
-      },
-    }));
+    const data = Object.assign(
+      { client_msg_id: clientMsgId, target_type: targetType || "user", target_id: contactId },
+      payload
+    );
+    ws.send(JSON.stringify({ type: "message.send", data: data }));
   }
   window.__satSendMessage = sendMessageFrame;
 
@@ -616,7 +634,11 @@ window.__satsandeshWsInit = true;
           msg.client_msg_id &&
           msg.status !== "failed"
         ) {
-          sendMessageFrame(contactId, msg.text, msg.client_msg_id, msg.target_type);
+          const payload =
+            msg.kind === "voice"
+              ? { kind: "voice", media_ref: msg.media_ref }
+              : { kind: "text", text: msg.text };
+          sendMessageFrame(contactId, payload, msg.client_msg_id, msg.target_type);
         }
       }
     }
@@ -647,7 +669,9 @@ window.__satsandeshWsInit = true;
         author_id: data.author_id,
         target_id: data.target_id,
         target_type: data.target_type,
+        kind: data.kind,
         text: data.text,
+        media_ref: data.media_ref,
         status: data.status,
       });
       if (data.author_id !== window.__satUserId) sendDeliveredAck(data.id);
@@ -673,7 +697,9 @@ window.__satsandeshWsInit = true;
         author_id: m.author_id,
         target_id: m.target_id,
         target_type: m.target_type,
+        kind: m.kind,
         text: m.text,
+        media_ref: m.media_ref,
         status: m.status,
       }));
       for (const m of data.messages) {
@@ -783,11 +809,12 @@ CHAT_SEND_JS = """
         author_id: window.__satUserId,
         target_id: contactId,
         target_type: targetType,
+        kind: "text",
         text: text,
         status: "pending",
     });
     if (window.__satRenderCurrentThread) window.__satRenderCurrentThread();
-    window.__satSendMessage(contactId, text, clientMsgId, targetType);
+    window.__satSendMessage(contactId, { kind: "text", text: text }, clientMsgId, targetType);
     input.value = "";
     return "sent";
 })()
@@ -869,6 +896,7 @@ START_RECORDING_JS = """
         recorder.start();
         window.__satRecorder = recorder;
         window.__satStream = stream;
+        window.__satRecordingStartedAt = Date.now();
         return "started";
     } catch (err) {
         return "error:" + (err && err.message ? err.message : "unknown");
@@ -883,6 +911,14 @@ STOP_RECORDING_JS = """
     const done = new Promise((resolve) => {
         recorder.onstop = () => {
             const blob = new Blob(window.__satChunks || [], { type: "audio/webm" });
+            // Kept as a real Blob for upload (Week 6: POST /media wants raw
+            // bytes, not a data URL) alongside the data URL below, which
+            // stays purely for the local <audio> preview -- two different
+            // consumers, no reason to make one derive from the other.
+            window.__satLastRecordingBlob = blob;
+            window.__satLastRecordingDurationMs = window.__satRecordingStartedAt
+                ? Date.now() - window.__satRecordingStartedAt
+                : 0;
             const reader = new FileReader();
             reader.onloadend = () => resolve(reader.result || "");
             reader.readAsDataURL(blob);
@@ -893,6 +929,88 @@ STOP_RECORDING_JS = """
         window.__satStream.getTracks().forEach((t) => t.stop());
     }
     return await done;
+})()
+"""
+
+DISCARD_RECORDING_JS = """
+(() => {
+    window.__satLastRecordingBlob = null;
+    window.__satLastRecordingDurationMs = 0;
+})()
+"""
+
+# Week 6: upload the recorded blob (POST /media, services/gateway/app/media.py)
+# then send it as a real voice message over the same WS the text path already
+# uses (window.__satSendMessage, CHAT_CONNECT_JS_TEMPLATE) -- reusing that
+# function rather than a parallel send path is why sendMessageFrame's
+# signature changed from a bare `text` argument to a `payload` object above.
+UPLOAD_AND_SEND_VOICE_JS_TEMPLATE = """
+(async () => {
+    const blob = window.__satLastRecordingBlob;
+    if (!blob) return "error:no_recording";
+    const targetId = window.__satCurrentContactId;
+    const targetType = window.__satCurrentTargetType || "user";
+    if (!targetId || !window.__satSendMessage) return "error:no_target";
+    const durationMs = window.__satLastRecordingDurationMs || 0;
+
+    async function attemptUpload() {
+        const resp = await fetch(
+            %(gateway_url)s + "/media?format=webm_opus&duration_ms=" + durationMs,
+            {
+                method: "POST",
+                headers: { Authorization: "Bearer " + window.__satToken },
+                body: blob,
+            }
+        );
+        if (!resp.ok) throw new Error("upload failed: " + resp.status);
+        return await resp.json();
+    }
+
+    let uploaded = null;
+    let lastErr = null;
+    // One silent retry for a transient blip -- the "weak network" case
+    // this feature exists for -- before surfacing a real failure the
+    // elder has to explicitly retry. Same two-tier shape as
+    // app/auth.py's own retry-once-then-surface pattern server-side.
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            uploaded = await attemptUpload();
+            break;
+        } catch (err) {
+            lastErr = err;
+            if (attempt === 0) await new Promise((r) => setTimeout(r, 1000));
+        }
+    }
+    if (!uploaded) {
+        return "error:" + (lastErr ? lastErr.message : "upload_failed");
+    }
+
+    const clientMsgId = window.__satUuidV4();
+    const mediaRef = {
+        uri: uploaded.uri,
+        format: uploaded.format,
+        duration_ms: uploaded.duration_ms,
+    };
+    if (!window.__satConversations[targetId]) window.__satConversations[targetId] = [];
+    window.__satConversations[targetId].push({
+        client_msg_id: clientMsgId,
+        author_id: window.__satUserId,
+        target_id: targetId,
+        target_type: targetType,
+        kind: "voice",
+        media_ref: mediaRef,
+        text: null,
+        status: "pending",
+    });
+    if (window.__satCurrentContactId === targetId && window.__satRenderCurrentThread) {
+        window.__satRenderCurrentThread();
+    }
+    window.__satSendMessage(
+        targetId, { kind: "voice", media_ref: mediaRef }, clientMsgId, targetType
+    );
+    window.__satLastRecordingBlob = null;
+    window.__satLastRecordingDurationMs = 0;
+    return "ok";
 })()
 """
 
@@ -1077,6 +1195,13 @@ class State(rx.State):
     mic_recording: bool = False
     mic_permission_denied: bool = False
     last_recording_data_url: str = ""
+
+    # Voice send (Week 6): "" (idle/preview), "uploading", or "failed".
+    # Never "sent" -- once the upload+send call returns "ok", the recording
+    # banner closes (last_recording_data_url reset) and the message itself
+    # is tracked the same way a text message is, by the existing WS
+    # pending/sent/delivered machinery, not by this flag.
+    voice_send_status: str = ""
 
     # Quiet hours (GET/PATCH /me/settings -- Week 5 accessibility pass).
     # "HH:MM" strings matching <input type="time">'s own value format, not
@@ -1392,6 +1517,20 @@ class State(rx.State):
 
     def discard_recording(self):
         self.last_recording_data_url = ""
+        self.voice_send_status = ""
+        return rx.call_script(DISCARD_RECORDING_JS)
+
+    def send_voice_recording(self):
+        self.voice_send_status = "uploading"
+        js = UPLOAD_AND_SEND_VOICE_JS_TEMPLATE % {"gateway_url": json.dumps(GATEWAY_PUBLIC_URL)}
+        return rx.call_script(js, callback=State.on_voice_send_result)
+
+    def on_voice_send_result(self, result: str):
+        if result == "ok":
+            self.voice_send_status = ""
+            self.last_recording_data_url = ""
+        else:
+            self.voice_send_status = "failed"
 
     # -- Quiet hours (GET/PATCH /me/settings) -----------------------------
     # NOTE: /me/settings doesn't exist on services/gateway/ yet -- that's
@@ -2375,27 +2514,69 @@ def recording_banner() -> rx.Component:
         ),
         rx.cond(
             State.last_recording_data_url != "",
-            rx.hstack(
-                rx.text(
-                    State.t["recorded_label"],
-                    style={"font_weight": "700", "color": COLOR["ink"], "flex": "1"},
+            rx.vstack(
+                rx.hstack(
+                    rx.text(
+                        rx.cond(
+                            State.voice_send_status == "failed",
+                            State.t["voice_send_failed"],
+                            State.t["recorded_label"],
+                        ),
+                        style={
+                            "font_weight": "700",
+                            "color": rx.cond(
+                                State.voice_send_status == "failed", "#8A3E0F", COLOR["ink"]
+                            ),
+                            "flex": "1",
+                        },
+                    ),
+                    rx.audio(src=State.last_recording_data_url, controls=True),
+                    spacing="3",
+                    align="center",
+                    width="100%",
                 ),
-                rx.audio(src=State.last_recording_data_url, controls=True),
-                rx.button(
-                    State.t["discard"],
-                    on_click=State.discard_recording,
-                    style={
-                        "background": "transparent",
-                        "border": f"2px solid {COLOR['warm_border']}",
-                        "border_radius": "14px",
-                        "padding": "8px 14px",
-                        "font_weight": "700",
-                        "color": COLOR["muted_ink"],
-                        "cursor": "pointer",
-                    },
+                rx.hstack(
+                    rx.button(
+                        State.t["discard"],
+                        on_click=State.discard_recording,
+                        disabled=State.voice_send_status == "uploading",
+                        style={
+                            "background": "transparent",
+                            "border": f"2px solid {COLOR['warm_border']}",
+                            "border_radius": "14px",
+                            "padding": "8px 14px",
+                            "font_weight": "700",
+                            "color": COLOR["muted_ink"],
+                            "cursor": "pointer",
+                        },
+                    ),
+                    rx.button(
+                        rx.cond(
+                            State.voice_send_status == "uploading",
+                            State.t["voice_uploading"],
+                            rx.cond(
+                                State.voice_send_status == "failed",
+                                State.t["voice_send_failed"],
+                                State.t["voice_send"],
+                            ),
+                        ),
+                        on_click=State.send_voice_recording,
+                        disabled=State.voice_send_status == "uploading",
+                        style={
+                            "background": COLOR["deep_green"],
+                            "color": COLOR["card_cream"],
+                            "border": "none",
+                            "border_radius": "14px",
+                            "padding": "8px 16px",
+                            "font_weight": "700",
+                            "cursor": "pointer",
+                        },
+                    ),
+                    spacing="3",
                 ),
                 spacing="3",
-                align="center",
+                align="start",
+                width="100%",
                 style={
                     "margin": "16px 20px 0",
                     "padding": "14px 18px",
@@ -2501,12 +2682,10 @@ def home_screen() -> rx.Component:
             thought_card(),
             your_id_card(),
             quiet_hours_card(),
-            recording_banner(),
             section_heading(),
             rx.cond(State.active_tab == "people", contact_list(), circle_list()),
             style={"flex": "1", "min_height": "0", "overflow_y": "auto"},
         ),
-        mic_button(),
         bottom_tabs(),
         style={
             "min_height": "100vh",
@@ -2668,6 +2847,8 @@ def chat_screen() -> rx.Component:
                 "padding": "12px 4px",
             },
         ),
+        recording_banner(),
+        mic_button(),
         rx.hstack(
             rx.input(
                 id="live-chat-input",
