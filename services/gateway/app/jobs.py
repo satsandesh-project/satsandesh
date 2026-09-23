@@ -20,11 +20,11 @@ import uuid
 from collections.abc import Callable
 
 import httpx
-from sqlalchemy.orm import Session
 
 from contracts.ai.common import AudioFormat as AiAudioFormat
 from contracts.ai.common import AudioRef
 from contracts.ai.transcribe import TranscribeRequest, TranscribeResponse
+from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.base import SessionLocal
