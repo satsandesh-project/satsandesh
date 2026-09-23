@@ -17,15 +17,26 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Circle, Conversation, Membership, Message, PushSubscription, User
+from app.db.models import (
+    Circle,
+    Conversation,
+    MediaObject,
+    Membership,
+    Message,
+    PushSubscription,
+    User,
+)
 from app.db.repository import (
     _get_or_create_conversation,
     add_member,
     create_circle,
+    create_media_object,
     create_message,
     create_message_with_created_flag,
     delete_push_subscription,
     find_conversation_id,
+    find_media_object,
+    get_media_object,
     get_messages_since,
     is_circle_member,
     list_circles_for_user,
@@ -738,3 +749,125 @@ def test_list_push_subscriptions_for_user(db_session):
     result = list_push_subscriptions_for_user(db_session, user_id=alice.id)
 
     assert {s.endpoint for s in result} == {"https://a.example/1", "https://a.example/2"}
+
+
+def test_create_media_object_persists_and_returns_row(db_session):
+    alice = _make_user(db_session, "Alice")
+
+    media, created = create_media_object(
+        db_session,
+        media_id=uuid.uuid4(),
+        author_id=alice.id,
+        format="webm_opus",
+        sha256_hex="a" * 64,
+        size_bytes=1024,
+        duration_ms=3000,
+    )
+
+    assert created is True
+    assert media.id is not None
+    assert media.author_id == alice.id
+    assert media.format == "webm_opus"
+    assert media.size_bytes == 1024
+
+
+def test_create_media_object_idempotent_on_author_and_content_hash(db_session):
+    # Mirrors test_create_message_idempotent_on_client_msg_id above, but
+    # keyed on (author_id, sha256_hex) rather than client_msg_id -- see
+    # app/media.py's module docstring for why: POST /media has no
+    # client-supplied idempotency key to key off of, so the content hash
+    # of the bytes themselves is it.
+    alice = _make_user(db_session, "Alice")
+    shared_hash = "b" * 64
+
+    first, first_created = create_media_object(
+        db_session,
+        media_id=uuid.uuid4(),
+        author_id=alice.id,
+        format="ogg_opus",
+        sha256_hex=shared_hash,
+        size_bytes=2048,
+    )
+    second, second_created = create_media_object(
+        db_session,
+        # A different media_id -- simulates the caller (app/media.py)
+        # already having written a second file to a different path before
+        # this insert discovers the row already exists; the row returned
+        # must still be the FIRST one, so the caller knows to delete its
+        # own redundant file.
+        media_id=uuid.uuid4(),
+        author_id=alice.id,
+        format="ogg_opus",
+        sha256_hex=shared_hash,
+        size_bytes=2048,
+    )
+
+    assert first_created is True
+    assert second_created is False
+    assert second.id == first.id
+
+    rows = (
+        db_session.execute(
+            select(MediaObject).where(
+                MediaObject.author_id == alice.id, MediaObject.sha256_hex == shared_hash
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+
+
+def test_create_media_object_different_authors_same_bytes_get_separate_rows(db_session):
+    # Idempotency is scoped per-author, same as messages' own
+    # (author_id, client_msg_id) uniqueness -- two different people
+    # uploading byte-identical content are not "the same upload."
+    alice = _make_user(db_session, "Alice")
+    bob = _make_user(db_session, "Bob")
+    shared_hash = "c" * 64
+
+    alice_media, _ = create_media_object(
+        db_session,
+        media_id=uuid.uuid4(),
+        author_id=alice.id,
+        format="mp3",
+        sha256_hex=shared_hash,
+        size_bytes=512,
+    )
+    bob_media, bob_created = create_media_object(
+        db_session,
+        media_id=uuid.uuid4(),
+        author_id=bob.id,
+        format="mp3",
+        sha256_hex=shared_hash,
+        size_bytes=512,
+    )
+
+    assert bob_created is True
+    assert bob_media.id != alice_media.id
+
+
+def test_find_media_object_returns_none_when_not_present(db_session):
+    alice = _make_user(db_session, "Alice")
+    assert find_media_object(db_session, author_id=alice.id, sha256_hex="d" * 64) is None
+
+
+def test_get_media_object_returns_none_for_unknown_id(db_session):
+    assert get_media_object(db_session, uuid.uuid4()) is None
+
+
+def test_get_media_object_returns_the_row_by_id(db_session):
+    alice = _make_user(db_session, "Alice")
+    media, _ = create_media_object(
+        db_session,
+        media_id=uuid.uuid4(),
+        author_id=alice.id,
+        format="wav_pcm16",
+        sha256_hex="e" * 64,
+        size_bytes=256,
+    )
+
+    fetched = get_media_object(db_session, media.id)
+
+    assert fetched is not None
+    assert fetched.id == media.id
