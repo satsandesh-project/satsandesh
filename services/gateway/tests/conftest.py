@@ -31,6 +31,9 @@ import pytest
 # app/db/repository.py's functions directly and never needs this
 # running.
 os.environ.setdefault("JOB_WORKER_ENABLED", "false")
+# Same reasoning, same fixture, same lifespan -- see app/retention.py's
+# sweep loop, wired into app/main.py's lifespan alongside the job worker.
+os.environ.setdefault("MEDIA_RETENTION_SWEEP_ENABLED", "false")
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",

@@ -16,6 +16,7 @@ from app.messages import router as messages_router
 from app.models import User
 from app.onboarding import router as onboarding_router
 from app.push import router as push_router
+from app.retention import run_retention_sweep_loop
 from app.ws import router as ws_router
 
 # Called at import time, not inside a request handler: a missing DATABASE_URL
@@ -34,16 +35,27 @@ async def lifespan(app: FastAPI):
     # to True for a real deployment; tests/conftest.py sets it False so
     # route tests (which trigger this same lifespan via TestClient's
     # context manager) don't get a live worker racing their db_session.
+    # Week 6 Step 1: the retention sweeper (app/retention.py) runs the
+    # same way, on its own timer, for the same reason -- a background loop
+    # inside this process, not a separate cron job, so it survives however
+    # this service is actually deployed without needing a second thing to
+    # configure. MEDIA_RETENTION_SWEEP_ENABLED gets the same test-disable
+    # treatment as JOB_WORKER_ENABLED, same reason.
     stop_event = asyncio.Event()
     worker_task: asyncio.Task | None = None
+    retention_task: asyncio.Task | None = None
     if settings.JOB_WORKER_ENABLED:
         worker_task = asyncio.create_task(run_worker_loop(stop_event, this_worker_id=worker_id()))
+    if settings.MEDIA_RETENTION_SWEEP_ENABLED:
+        retention_task = asyncio.create_task(run_retention_sweep_loop(stop_event))
     try:
         yield
     finally:
         stop_event.set()
         if worker_task is not None:
             await worker_task
+        if retention_task is not None:
+            await retention_task
 
 
 app = FastAPI(

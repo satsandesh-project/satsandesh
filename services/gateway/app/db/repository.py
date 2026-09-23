@@ -730,3 +730,27 @@ def fail_job(session: Session, job_id: uuid.UUID, *, error: str) -> str:
     session.flush()
     session.refresh(job)
     return new_status
+
+
+def find_expired_media(session: Session, *, older_than: datetime) -> list[MediaObject]:
+    """Every media_objects row whose created_at is strictly before
+    `older_than` -- the retention sweeper's candidate list (app/retention.py).
+    Read-only: doesn't touch storage or delete anything itself, same split
+    as create_media_object/app/media.py (DB-only here, the actual file I/O
+    stays with the caller)."""
+    return list(
+        session.execute(
+            select(MediaObject).where(MediaObject.created_at < older_than)
+        ).scalars()
+    )
+
+
+def delete_media_object(session: Session, media_id: uuid.UUID) -> None:
+    """Deletes the media_objects row itself -- the retention sweeper
+    (app/retention.py) calls this only AFTER it has already deleted the
+    underlying bytes via MediaStorage.delete, same file-then-row ordering
+    app/media.py's own cleanup-on-lost-race path uses, just inverted (there
+    the DB row already exists and a losing file gets removed; here the row
+    is what's being removed once the file is already gone)."""
+    session.execute(delete(MediaObject).where(MediaObject.id == media_id))
+    session.flush()
