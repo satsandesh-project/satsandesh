@@ -66,6 +66,13 @@ jobs:
       VAPID_PRIVATE_KEY: ci-placeholder-vapid-private
       VAPID_PUBLIC_KEY: ci-placeholder-vapid-public
       VAPID_SUBJECT: mailto:ci@example.com
+      # Week 6 media storage (#63/#69): app/config.py requires this with no
+      # default too, same reasoning as DATABASE_URL/JWT_SECRET above. Landed
+      # on main via #69 without this job's env block being updated for it,
+      # so alembic upgrade head (below) failed Settings() validation before
+      # any test ran. A plain writable path is all this job needs -- no
+      # volume, no persistence, this container is thrown away after the run.
+      MEDIA_STORAGE_ROOT: /tmp/satsandesh-media-ci
       # Deliberately NOT set: CORS_ORIGINS. tests/test_config.py::test_settings_load_from_env
       # asserts it defaults to [] when absent -- setting it here would make
       # that specific test fail for a CI-environment reason unrelated to
