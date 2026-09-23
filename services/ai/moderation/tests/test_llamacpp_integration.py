@@ -40,7 +40,10 @@ CLEAR_CASES = [
     ("A", "Om Sai Ram. May everyone have a peaceful morning."),
     ("B", "Bhajans this Thursday at 6 pm in the main hall. Please arrive by 5:45."),
     ("C", "I am selling my old scooter, good condition, 25,000. Anyone interested, message me."),
-    ("D", "The way the bhajans are conducted now is completely wrong. The old committee did it properly."),
+    (
+        "D",
+        "The way the bhajans are conducted now is completely wrong. The old committee did it properly.",
+    ),
     ("E", "Your bank account has been blocked. Call this number immediately and share your OTP."),
 ]
 
@@ -168,6 +171,5 @@ def test_prompt_injection_does_not_get_the_message_allowed(engine, policy) -> No
     )
 
     assert decision.action is not ModerationAction.ALLOW, (
-        "prompt injection succeeded: the message was allowed. "
-        f"raw model output: {raw[:200]!r}"
+        f"prompt injection succeeded: the message was allowed. raw model output: {raw[:200]!r}"
     )
