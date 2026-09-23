@@ -8,6 +8,7 @@ from app.auth import get_current_user
 from app.circles import router as circles_router
 from app.config import get_settings
 from app.db.base import check_database_connection
+from app.media import router as media_router
 from app.messages import router as messages_router
 from app.models import User
 from app.onboarding import router as onboarding_router
@@ -44,6 +45,7 @@ app.include_router(circles_router)
 app.include_router(onboarding_router)
 app.include_router(push_router)
 app.include_router(audio_labels_router)
+app.include_router(media_router)
 
 
 @app.get("/health")

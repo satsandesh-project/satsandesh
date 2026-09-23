@@ -283,6 +283,64 @@ class MessageDelivery(Base):
     )
 
 
+class MediaObject(Base):
+    """Week 6: a stored voice-note upload -- backs `contracts/chat/media.py`'s
+    `MediaUploadOut` and `contracts/chat/common.py`'s `MediaRef.format`
+    (see that file for the four allowed values, mirrored here in
+    `ck_media_format`). One row per distinct uploaded file; the actual
+    bytes live in whatever `app/media_storage.py`'s `MediaStorage`
+    interface backs (local disk for now -- see app/media_storage.py's own
+    module docstring) at a path derived purely from `id`, never stored as
+    a separate column here, so there's exactly one source of truth for
+    where a given object's bytes are.
+
+    Not yet referenced by a foreign key from `messages` -- `messages.
+    original_media_ref` (this table's precursor, still just a plain text
+    URI column) is unchanged in this phase; wiring `app/messages.py`'s
+    routes to this table is separate, later work, not this phase's
+    (storage only).
+
+    `(author_id, sha256_hex)` is the idempotency key: the SAME author
+    re-uploading the SAME bytes (a retry after a dropped ack -- expected
+    to happen constantly on the elder pilot's target networks, same
+    reasoning as `messages`'s own `(author_id, client_msg_id)`
+    uniqueness) must get back the SAME row, not a second copy. Content-
+    hash-based, not a client-supplied key, because `POST /media`
+    (contracts/chat/README.md) has no id-like parameter for a client to
+    make one up with -- the bytes themselves are the only thing that's
+    the same across a retry."""
+
+    __tablename__ = "media_objects"
+    __table_args__ = (
+        sa.UniqueConstraint("author_id", "sha256_hex", name="uq_media_author_sha256"),
+        sa.CheckConstraint(
+            "format IN ('webm_opus', 'ogg_opus', 'wav_pcm16', 'mp3')",
+            name="ck_media_format",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=generate_uuid7
+    )
+    author_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        # RESTRICT, not CASCADE -- same reasoning as messages.author_id
+        # (module docstring): a stored voice note is part of message
+        # history, an audit trail that should survive the uploader's own
+        # user row being removed, not owned-and-meaningless-without-them
+        # the way PushSubscription/Invite are.
+        sa.ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    format: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    sha256_hex: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(sa.Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+
 class PushSubscription(Base):
     """Week 3 Phase 7: one row per browser/device Web Push subscription. A
     user can have several (one per device/browser they've enabled push

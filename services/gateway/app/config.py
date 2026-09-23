@@ -51,6 +51,28 @@ class Settings(BaseSettings):
     # for the in-memory scheduler this drives.
     UNDO_WINDOW_SECONDS: int = 30
 
+    # Week 6: media storage (voice-note uploads, app/media.py). Required,
+    # no default -- same fail-loud-at-startup reasoning as DATABASE_URL/
+    # JWT_SECRET above, and deliberately never a hardcoded path here: the
+    # real directory is an infrastructure choice (a mounted Docker volume
+    # in docker-compose.yml, a plain local folder for bare development),
+    # not something this file should silently pick on anyone's behalf. A
+    # wrong value here doesn't corrupt anything (app/media_storage.py's
+    # LocalDiskMediaStorage creates the directory on first use if it's
+    # missing) but does mean every upload lands somewhere nobody chose on
+    # purpose -- exactly the failure mode requiring this be set explicitly
+    # avoids.
+    MEDIA_STORAGE_ROOT: str
+    # 2 MiB default: generous headroom over a 30-second Opus voice note's
+    # real size (~100KB, see app/media_storage.py's module docstring for
+    # the estimate and its basis) -- a 10-minute note would still fit --
+    # while still bounding worst-case memory/disk use per upload.
+    # Overridable per-deployment; unlike MEDIA_STORAGE_ROOT this has a
+    # sane default and getting it wrong fails loudly per-request (413),
+    # not at startup, so it doesn't need the same required-with-no-default
+    # treatment.
+    MEDIA_MAX_UPLOAD_BYTES: int = 2 * 1024 * 1024
+
 
 @lru_cache
 def get_settings() -> Settings:
