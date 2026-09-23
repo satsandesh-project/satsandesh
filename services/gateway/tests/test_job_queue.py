@@ -20,8 +20,8 @@ from sqlalchemy.orm import Session
 from app.db.models import Job
 from app.db.repository import (
     claim_next_job,
-    compute_backoff_seconds,
     complete_job,
+    compute_backoff_seconds,
     enqueue_job,
     fail_job,
 )
@@ -252,7 +252,7 @@ def test_a_claimed_job_whose_worker_died_is_reclaimable(db_session):
 
 
 def test_a_job_whose_lease_has_not_expired_is_not_reclaimable(db_session):
-    job = enqueue_job(db_session, job_type="media.process", payload={})
+    enqueue_job(db_session, job_type="media.process", payload={})
     claim_next_job(db_session, worker_id="worker-1", lease_seconds=300)
     db_session.commit()
 
