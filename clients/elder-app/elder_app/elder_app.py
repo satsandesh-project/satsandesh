@@ -212,6 +212,14 @@ TEXTS = {
         "quiet_hours_save": "Save",
         "quiet_hours_saved": "Saved",
         "quiet_hours_off_hint": "Leave both blank for no quiet hours.",
+        "content_language_title": "Language for voice messages",
+        "content_language_hint": "What language should voice notes be translated into for you?",
+        "lang_option_en": "English",
+        "lang_option_hi": "Hindi",
+        "lang_option_te": "Telugu",
+        "tts_title": "Read messages aloud",
+        "tts_on_label": "On",
+        "tts_off_label": "Off",
     },
     "te": {
         "app_name": "సత్‌సందేశ్",
@@ -282,6 +290,14 @@ TEXTS = {
         "quiet_hours_save": "సేవ్ చేయి",
         "quiet_hours_saved": "సేవ్ అయ్యింది",
         "quiet_hours_off_hint": "నిశ్శబ్ద సమయం వద్దంటే రెండూ ఖాళీగా ఉంచండి.",
+        "content_language_title": "వాయిస్ సందేశాల భాష",
+        "content_language_hint": "మీ కోసం వాయిస్ నోట్స్ ఏ భాషలో అనువదించాలి?",
+        "lang_option_en": "ఇంగ్లీష్",
+        "lang_option_hi": "హిందీ",
+        "lang_option_te": "తెలుగు",
+        "tts_title": "సందేశాలను చదివి వినిపించు",
+        "tts_on_label": "ఆన్",
+        "tts_off_label": "ఆఫ్",
     },
 }
 
@@ -1041,7 +1057,15 @@ LOAD_SETTINGS_JS_TEMPLATE = """
 # elder clears actually clears server-side rather than leaving the old
 # one in place (see contracts/chat/users.py::QuietHoursUpdate and
 # app/db/repository.py::update_quiet_hours's set_start/set_end split).
-SAVE_QUIET_HOURS_JS_TEMPLATE = """
+#
+# Week 7: also saves preferred_language (en/hi/te, contracts/ai's
+# LanguageCode values -- the content-rendering language a receiver wants
+# incoming voice notes translated into, a different concept from
+# State.language, which only ever controlled this app's own UI chrome
+# text and stays en/te-only) and tts_on. One PATCH, one Save button,
+# since all three already live in the one settings card -- no reason to
+# round-trip three times for three fields a person sets together.
+SAVE_SETTINGS_JS_TEMPLATE = """
 (async () => {
     const toWire = (hhmm) => (hhmm ? hhmm + ":00" : null);
     try {
@@ -1054,6 +1078,8 @@ SAVE_QUIET_HOURS_JS_TEMPLATE = """
             body: JSON.stringify({
                 quiet_hours_start: toWire(%(start)s),
                 quiet_hours_end: toWire(%(end)s),
+                preferred_language: %(preferred_language)s,
+                tts_on: %(tts_on)s,
             }),
         });
         if (!resp.ok) return "error:" + resp.status;
@@ -1203,15 +1229,27 @@ class State(rx.State):
     # pending/sent/delivered machinery, not by this flag.
     voice_send_status: str = ""
 
-    # Quiet hours (GET/PATCH /me/settings -- Week 5 accessibility pass).
-    # "HH:MM" strings matching <input type="time">'s own value format, not
-    # the wire's "HH:MM:SS" -- SAVE_QUIET_HOURS_JS_TEMPLATE does that
-    # conversion at the JS boundary, same split as every other
+    # Settings (GET/PATCH /me/settings). Quiet hours: Week 5 accessibility
+    # pass. "HH:MM" strings matching <input type="time">'s own value
+    # format, not the wire's "HH:MM:SS" -- SAVE_SETTINGS_JS_TEMPLATE does
+    # that conversion at the JS boundary, same split as every other
     # client-shape-vs-wire-shape field in this file.
     quiet_hours_start_input: str = ""
     quiet_hours_end_input: str = ""
-    quiet_hours_saved: bool = False
-    quiet_hours_error: bool = False
+
+    # Week 7: preferred_language is the content-rendering language (what
+    # an incoming voice note gets translated into) -- deliberately not
+    # the same field as `language` above (this app's own UI chrome,
+    # en/te only). Defaults to whatever `language` currently is at
+    # onboarding time (see join_circle) so picking a UI language once
+    # sets a sensible starting content preference too, without the two
+    # ever being forced to stay in lockstep afterward -- a receiver can
+    # read the app in Telugu and still ask for English audio.
+    preferred_language_input: str = "en"
+    tts_on_input: bool = True
+
+    settings_saved: bool = False
+    settings_error: bool = False
 
     @rx.var
     def t(self) -> dict[str, str]:
@@ -1320,6 +1358,10 @@ class State(rx.State):
         return [
             rx.call_script(SAVE_NAME_JS_TEMPLATE % {"name": json.dumps(name)}),
             self.connect_chat(),
+            # Persists the language picked on this same screen -- fails
+            # soft like every other /me/settings call until M2 ships the
+            # endpoint (see save_settings's own docstring note).
+            self.save_settings(),
         ]
 
     def enter_chat(self):
@@ -1532,12 +1574,14 @@ class State(rx.State):
         else:
             self.voice_send_status = "failed"
 
-    # -- Quiet hours (GET/PATCH /me/settings) -----------------------------
-    # NOTE: /me/settings doesn't exist on services/gateway/ yet -- that's
-    # M2's (Veerendra's) side to build, tracked separately. This client
-    # side is written against the contract shape now so nothing here needs
-    # to change once she ships it; until then LOAD fails soft (fields stay
-    # blank) and SAVE reports the error rather than pretending it worked.
+    # -- Settings: quiet hours, preferred content language, TTS on/off ----
+    # (GET/PATCH /me/settings) -- NOTE: /me/settings doesn't exist on
+    # services/gateway/ yet, still tracked as M2's (Veerendra's) side to
+    # build, flagged first in Week 5's PR #45. This client side is written
+    # against the contract shape now so nothing here needs to change once
+    # he ships it; until then LOAD fails soft (fields stay at their
+    # defaults) and SAVE reports the error rather than pretending it
+    # worked.
 
     def load_settings(self):
         js = LOAD_SETTINGS_JS_TEMPLATE % {"gateway_url": json.dumps(GATEWAY_PUBLIC_URL)}
@@ -1557,30 +1601,48 @@ class State(rx.State):
         end = parsed.get("quiet_hours_end")
         self.quiet_hours_start_input = start[:5] if start else ""
         self.quiet_hours_end_input = end[:5] if end else ""
+        # Only overwrite these if the server actually sent them -- an
+        # older/not-yet-updated /me/settings response (or the endpoint
+        # still not existing at all, per the note above) must leave
+        # today's join-time default standing, not silently reset it.
+        if "preferred_language" in parsed and parsed["preferred_language"]:
+            self.preferred_language_input = parsed["preferred_language"]
+        if "tts_on" in parsed and parsed["tts_on"] is not None:
+            self.tts_on_input = parsed["tts_on"]
 
     def set_quiet_hours_start_input(self, value: str):
         self.quiet_hours_start_input = value
-        self.quiet_hours_saved = False
+        self.settings_saved = False
 
     def set_quiet_hours_end_input(self, value: str):
         self.quiet_hours_end_input = value
-        self.quiet_hours_saved = False
+        self.settings_saved = False
 
-    def save_quiet_hours(self):
-        self.quiet_hours_saved = False
-        self.quiet_hours_error = False
-        js = SAVE_QUIET_HOURS_JS_TEMPLATE % {
+    def set_preferred_language_input(self, value: str):
+        self.preferred_language_input = value
+        self.settings_saved = False
+
+    def set_tts_on_input(self, value: bool):
+        self.tts_on_input = value
+        self.settings_saved = False
+
+    def save_settings(self):
+        self.settings_saved = False
+        self.settings_error = False
+        js = SAVE_SETTINGS_JS_TEMPLATE % {
             "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
             "start": json.dumps(self.quiet_hours_start_input),
             "end": json.dumps(self.quiet_hours_end_input),
+            "preferred_language": json.dumps(self.preferred_language_input),
+            "tts_on": json.dumps(self.tts_on_input),
         }
-        return rx.call_script(js, callback=State.on_quiet_hours_saved)
+        return rx.call_script(js, callback=State.on_settings_saved)
 
-    def on_quiet_hours_saved(self, result: str):
+    def on_settings_saved(self, result: str):
         if result == "ok":
-            self.quiet_hours_saved = True
+            self.settings_saved = True
         else:
-            self.quiet_hours_error = True
+            self.settings_error = True
 
     # -- Audio labels: tap-and-hold to hear a button read aloud -----------
     # (GET /audio-labels/{label}, services/gateway/app/audio_labels.py --
@@ -1858,14 +1920,78 @@ def your_id_card() -> rx.Component:
     )
 
 
-def quiet_hours_card() -> rx.Component:
-    """Week 5 accessibility pass: the DB columns and push-suppression read
-    side have existed since Month 1 (app/db/models.py, app/push.py's
-    is_quiet_hours) but nothing let an elder actually set them until now.
+def language_option_button(code: str, label_key: str) -> rx.Component:
+    """One pill in the Week 7 content-language picker. Three big buttons,
+    not a <select>, matching this app's own large-target design
+    principle -- same reasoning as bottom_tabs' tab buttons rather than
+    a dropdown."""
+    return rx.button(
+        State.t[label_key],
+        on_click=lambda: State.set_preferred_language_input(code),
+        disabled=State.preferred_language_input == code,
+        style={
+            "flex": "1",
+            "min_height": "56px",
+            "border_radius": "14px",
+            "font_weight": "700",
+            "cursor": "pointer",
+            **pill_button_style(False),
+        },
+    )
+
+
+def settings_card() -> rx.Component:
+    """Week 5 accessibility pass (quiet hours) plus Week 7 (content
+    language, TTS on/off) -- all three live in one card against the same
+    GET/PATCH /me/settings, one Save button. The DB columns and
+    push-suppression read side for quiet hours have existed since Month 1
+    (app/db/models.py, app/push.py's is_quiet_hours) but nothing let an
+    elder actually set any of this until Week 5 built the write path.
     The Save button also doubles as the "settings" tap-and-hold-to-hear
     anchor (services/gateway/app/audio_labels.py's catalog has no
     dedicated settings screen to attach to yet)."""
     return rx.vstack(
+        rx.text(
+            State.t["content_language_title"],
+            style={
+                "font_family": FONT_LATIN,
+                "font_weight": "700",
+                "font_size": "1.05rem",
+                "color": COLOR["green_ink"],
+            },
+        ),
+        rx.text(
+            State.t["content_language_hint"],
+            style={"font_size": "0.85rem", "color": COLOR["muted_ink"]},
+        ),
+        rx.hstack(
+            language_option_button("en", "lang_option_en"),
+            language_option_button("hi", "lang_option_hi"),
+            language_option_button("te", "lang_option_te"),
+            spacing="2",
+            width="100%",
+        ),
+        rx.hstack(
+            rx.text(
+                State.t["tts_title"],
+                style={"font_weight": "700", "color": COLOR["ink"], "flex": "1"},
+            ),
+            rx.button(
+                rx.cond(State.tts_on_input, State.t["tts_on_label"], State.t["tts_off_label"]),
+                on_click=lambda: State.set_tts_on_input(~State.tts_on_input),
+                style={
+                    "min_height": "44px",
+                    "padding": "0 20px",
+                    "border_radius": "12px",
+                    "font_weight": "700",
+                    "cursor": "pointer",
+                    **pill_button_style(True),
+                },
+            ),
+            width="100%",
+            align="center",
+            style={"margin_top": "4px"},
+        ),
         rx.text(
             State.t["quiet_hours_title"],
             style={
@@ -1873,6 +1999,7 @@ def quiet_hours_card() -> rx.Component:
                 "font_weight": "700",
                 "font_size": "1.05rem",
                 "color": COLOR["green_ink"],
+                "margin_top": "8px",
             },
         ),
         rx.text(
@@ -1929,9 +2056,9 @@ def quiet_hours_card() -> rx.Component:
         ),
         rx.button(
             rx.cond(
-                State.quiet_hours_saved, State.t["quiet_hours_saved"], State.t["quiet_hours_save"]
+                State.settings_saved, State.t["quiet_hours_saved"], State.t["quiet_hours_save"]
             ),
-            on_click=State.save_quiet_hours,
+            on_click=State.save_settings,
             **hold_to_hear("settings"),
             style={
                 "min_height": "52px",
@@ -2681,7 +2808,7 @@ def home_screen() -> rx.Component:
             app_header(),
             thought_card(),
             your_id_card(),
-            quiet_hours_card(),
+            settings_card(),
             section_heading(),
             rx.cond(State.active_tab == "people", contact_list(), circle_list()),
             style={"flex": "1", "min_height": "0", "overflow_y": "auto"},
@@ -2734,6 +2861,27 @@ def join_screen() -> rx.Component:
                     "border": f"1px solid {COLOR['warm_border']}",
                     "width": "100%",
                 },
+            ),
+            rx.vstack(
+                rx.text(
+                    State.t["content_language_title"],
+                    style={
+                        "font_family": FONT_LATIN,
+                        "font_weight": "700",
+                        "font_size": "0.95rem",
+                        "color": COLOR["green_ink"],
+                    },
+                ),
+                rx.hstack(
+                    language_option_button("en", "lang_option_en"),
+                    language_option_button("hi", "lang_option_hi"),
+                    language_option_button("te", "lang_option_te"),
+                    spacing="2",
+                    width="100%",
+                ),
+                spacing="2",
+                width="100%",
+                align_items="flex-start",
             ),
             rx.button(
                 State.t["join_button"],
