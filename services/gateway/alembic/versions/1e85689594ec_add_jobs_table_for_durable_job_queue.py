@@ -54,9 +54,7 @@ def upgrade() -> None:
     # next_attempt_at/lease_expires_at depending on branch, then orders by
     # next_attempt_at -- this covers the 'queued' branch (the common case)
     # without a full table scan as the queue grows.
-    op.create_index(
-        "ix_jobs_status_next_attempt_at", "jobs", ["status", "next_attempt_at"]
-    )
+    op.create_index("ix_jobs_status_next_attempt_at", "jobs", ["status", "next_attempt_at"])
 
 
 def downgrade() -> None:

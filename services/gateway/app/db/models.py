@@ -474,7 +474,9 @@ class Job(Base):
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'queued'"))
     attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
-    max_attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("5"))
+    max_attempts: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("5")
+    )
     last_error: Mapped[str | None] = mapped_column(sa.Text)
     claimed_by: Mapped[str | None] = mapped_column(sa.Text)
     lease_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

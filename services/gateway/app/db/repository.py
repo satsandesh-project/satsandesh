@@ -622,9 +622,7 @@ def compute_backoff_seconds(attempts: int, *, base: float = 5.0, cap: float = 30
     return min(base * (2 ** (attempts - 1)), cap)
 
 
-def enqueue_job(
-    session: Session, *, job_type: str, payload: dict, max_attempts: int = 5
-) -> Job:
+def enqueue_job(session: Session, *, job_type: str, payload: dict, max_attempts: int = 5) -> Job:
     job = Job(job_type=job_type, payload=payload, max_attempts=max_attempts)
     session.add(job)
     session.flush()
