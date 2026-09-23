@@ -39,7 +39,15 @@ class MessageOut(VersionedModel):
     frame. `id` is the server-authoritative identifier; it is kept as an
     opaque string rather than constrained to UUID so the service layer can
     later pick a sortable id scheme (e.g. UUIDv7/ULID) without a contract
-    change — see DECISIONS.md #3."""
+    change — see DECISIONS.md #3.
+
+    `media_ref` (Week 6): a `kind: "voice"` message previously had no
+    read-side representation of where its audio actually is — `MediaRef`
+    only ever appeared on `MessageIn`. Closes OPEN_QUESTIONS.md #1. `None`
+    for a text message; for a voice message, whatever `MediaRef` the storage
+    layer resolved at write time (see DECISIONS.md #15) — not necessarily
+    byte-identical to what the client uploaded, since a backend is free to
+    transcode before storing."""
 
     id: str
     author_id: str
@@ -47,6 +55,7 @@ class MessageOut(VersionedModel):
     target_id: str
     kind: MessageKind
     text: str | None = None
+    media_ref: MediaRef | None = None
     created_at: datetime
     status: MessageStatus
 

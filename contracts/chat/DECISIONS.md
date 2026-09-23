@@ -289,3 +289,96 @@ already owned the only `pyproject.toml` this task's scope allowed touching.
 the mock ever needs to be pip-installable standalone, is additive — it
 doesn't require undoing anything, since tests and tooling already work
 from `services/gateway/` today.
+
+## 13. `MediaRef.uri` is constrained to a scheme-qualified shape, not one specific scheme
+
+`uri` was a bare, unconstrained string because nobody owned storage yet
+(the field's own history — see `contracts/ai/common.AudioRef`'s identical
+starting point and `services/ai/OPEN_QUESTIONS.md` #2, which asked for
+exactly this). Now that this package owns the media surface, `uri` must
+match `<scheme>:<something>` (validated via `common.validate_media_uri`,
+shared with `MediaUploadOut` in `media.py`) — a bare filename or path is
+rejected.
+
+**Why not pick one scheme (e.g. always `s3://` or always a local path)?**
+Dev and staging would disagree about it, and pinning the contract to one
+storage backend's URI shape would make swapping backends a contract
+change instead of a server-side implementation detail — exactly the
+trap `services/ai/OPEN_QUESTIONS.md` #2 was trying to avoid by asking for
+"a validated URI scheme" rather than a hostname/bucket/path shape.
+
+**What this package's own mock actually hands out:** `media:<opaque-id>`
+— a scheme this package defines and owns, not a storage backend's. This
+mirrors `MessageOut.id`'s own precedent (decision #3): kept opaque so the
+service layer can change how it's generated, or what it points at,
+without a contract change. `GET /media/{id}` resolves it; the id is
+never assumed to be a filename, a database key, or anything else a real
+backend happens to use internally. A real (non-mock) implementation is
+free to keep using `media:` (and resolve it itself) or switch `uri` to a
+different scheme entirely (`s3://...`, a signed URL, whatever) — the
+validator only requires the shape, not this specific choice.
+
+**Reversal cost:** Low to loosen further (removing the constraint is
+backward compatible — any valid scheme-qualified uri today stays valid).
+Medium to tighten to one specific scheme later, if the team ever wants
+to standardize the whole fleet on one backend — every uri stored under a
+looser scheme would need auditing or migrating.
+
+## 14. `MediaRef.format` / `MediaUploadOut.format`: a separate `AudioFormat` enum, not an import of `contracts.ai.common.AudioFormat`
+
+Same blanket rule as decision #5 (this package doesn't import
+`contracts/ai/`) plus the same reasoning as decision #6 (`MessageStatus`
+kept separate from `ModerationAction`): the two contract packages are
+independently versioned, and coupling them would force one package's
+churn onto the other. `contracts.chat.common.AudioFormat` matches
+`contracts.ai.common.AudioFormat`'s three values one-for-one
+(`WAV_PCM16`, `OGG_OPUS`, `MP3`) and adds a fourth, `WEBM_OPUS` — the
+container a browser's `MediaRecorder` actually produces in Chrome/Edge,
+which `contracts/ai/`'s enum does not have.
+
+**Declared, not sniffed:** `format` is a required field, not inferred
+from the uploaded bytes — same philosophy as `contracts.ai.common.AudioRef.format`
+and `MessageIn.kind`: a caller states what something is, and the contract
+boundary can validate against a closed set, rather than every consumer
+re-implementing content-sniffing to find out.
+
+**The cross-lane question this leaves open, deliberately unresolved
+here:** whether `contracts/ai/`'s ASR service (`services/ai/`, PR #52)
+ever gains its own `WEBM_OPUS` value, or whether a transcode step
+normalizes chat-side `webm_opus` into an AI-pipeline-recognized format
+before it's ever sent there. That's `services/ai/`'s call, or a Week 7
+orchestrator decision — see `OPEN_QUESTIONS.md` #9. Adding `WEBM_OPUS`
+here doesn't require or assume either answer; it just names what a
+client actually uploads honestly, which is this package's job regardless
+of how the AI pipeline eventually consumes it.
+
+**Reversal cost:** Low to add more values later (additive, no consumer
+breaks). Medium to remove `WEBM_OPUS` if the team decides against ever
+storing raw WebM (every existing reference to it would need auditing).
+
+## 15. `MessageOut` gains `media_ref`; `CONTRACTS_VERSION` bumped to `0.2.0`
+
+Closes `OPEN_QUESTIONS.md` #1: a `kind: "voice"` message previously had
+no read-side way to say where its audio is — `MediaRef` only ever
+appeared on `MessageIn`. `MessageOut.media_ref` is `None` for a text
+message; for a voice message, it's whatever `MediaRef` the storage layer
+resolved at write time — not guaranteed to be byte-identical to what the
+client uploaded, since a backend may transcode before persisting (see
+decision #14's cross-lane note). `MessageStatusOut` deliberately does
+NOT gain this field — it's a status-only push frame, not the whole
+message, and adding it there would be scope creep beyond what
+`OPEN_QUESTIONS.md` #1 actually asked for.
+
+This, together with decisions #13 and #14 (a required `format` field and
+a constrained `uri` on `MediaRef`), is a real shape change, so
+`CONTRACTS_VERSION` moves `0.1.0` -> `0.2.0`. `OPEN_QUESTIONS.md` #6 (bump
+policy) is still genuinely unresolved — this bump doesn't claim to be
+"minor" in a semver sense the team hasn't agreed to yet, it's just a
+visibly different version string for a payload shape that changed.
+
+**Reversal cost:** Low to drop `media_ref` from `MessageOut` again
+(no consumer that doesn't already handle "field absent" breaks, since
+`None`/absent both parse the same way on an optional field). The
+`CONTRACTS_VERSION` bump itself isn't reversible in the sense that
+matters — once published, going back to `0.1.0` would just be confusing,
+not unsafe.
