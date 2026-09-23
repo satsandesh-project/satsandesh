@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections.abc import Callable
 
 from app.config import get_settings
@@ -25,15 +26,20 @@ logger = logging.getLogger(__name__)
 
 JobHandler = Callable[[dict], None]
 
-# Every job_type this worker knows how to run. "noop" exists to prove the
-# queue's own mechanics -- claim, complete, retry with backoff,
+# Every job_type this worker knows how to run. "noop" and "sleep" exist to
+# prove the queue's own mechanics -- claim, complete, retry with backoff,
 # dead-letter past max_attempts, lease-based reclaim -- durably survive a
 # real process kill (see Step 3's report for the actual kill-and-restart
-# transcript). Nothing in this repo enqueues real work through this queue
-# yet; wiring an actual feature onto it is separate, later work, same as
-# app/db/models.py's MediaObject noting it isn't wired to messages yet.
+# transcript; "sleep" specifically is what makes that transcript
+# reproducible rather than a timing coincidence -- it gives a real
+# `docker compose kill` a predictable window to land while a job is
+# genuinely still claimed and running). Nothing in this repo enqueues
+# real work through this queue yet; wiring an actual feature onto it is
+# separate, later work, same as app/db/models.py's MediaObject noting it
+# isn't wired to messages yet.
 _HANDLERS: dict[str, JobHandler] = {
     "noop": lambda payload: None,
+    "sleep": lambda payload: time.sleep(payload.get("seconds", 1)),
 }
 
 
