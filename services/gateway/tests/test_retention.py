@@ -43,13 +43,14 @@ def _make_aged_media(db_session, *, author_id, age_days, sha256_hex=None):
 def test_sweep_deletes_row_and_bytes_for_an_expired_artifact(db_session):
     alice = _make_db_user(db_session, "Alice")
     old = _make_aged_media(db_session, author_id=alice.id, age_days=31)
+    old_id = old.id
     db_session.commit()
 
     swept = sweep_expired_media(retention_days=30)
 
-    assert str(old.id) in swept
-    assert db_session.get(MediaObject, old.id) is None, "row must actually be gone"
-    assert get_media_storage().get(str(old.id)) is None, "bytes must actually be gone"
+    assert str(old_id) in swept
+    assert db_session.get(MediaObject, old_id) is None, "row must actually be gone"
+    assert get_media_storage().get(str(old_id)) is None, "bytes must actually be gone"
 
 
 def test_sweep_leaves_a_fresh_artifact_untouched(db_session):
@@ -81,6 +82,7 @@ def test_sweep_leaves_an_artifact_exactly_at_the_boundary_untouched(db_session):
 def test_sweep_window_is_configurable_not_a_fixed_30_days(db_session):
     alice = _make_db_user(db_session, "Alice")
     ten_days_old = _make_aged_media(db_session, author_id=alice.id, age_days=10)
+    ten_days_old_id = ten_days_old.id
     db_session.commit()
 
     # Same artifact, same age -- a 7-day window sweeps it, a 30-day window
@@ -88,20 +90,22 @@ def test_sweep_window_is_configurable_not_a_fixed_30_days(db_session):
     # not a hardcoded number reading as configurable.
     swept = sweep_expired_media(retention_days=7)
 
-    assert str(ten_days_old.id) in swept
-    assert db_session.get(MediaObject, ten_days_old.id) is None
+    assert str(ten_days_old_id) in swept
+    assert db_session.get(MediaObject, ten_days_old_id) is None
 
 
 def test_sweep_only_touches_expired_rows_when_several_exist(db_session):
     alice = _make_db_user(db_session, "Alice")
     old = _make_aged_media(db_session, author_id=alice.id, age_days=45)
+    old_id = old.id
     fresh = _make_aged_media(db_session, author_id=alice.id, age_days=1)
+    fresh_id = fresh.id
     db_session.commit()
 
     swept = sweep_expired_media(retention_days=30)
 
-    assert swept == [str(old.id)]
-    assert db_session.get(MediaObject, fresh.id) is not None
+    assert swept == [str(old_id)]
+    assert db_session.get(MediaObject, fresh_id) is not None
 
 
 def test_swept_media_404s_on_fetch_same_as_an_id_that_never_existed(client, db_session, login_as):
