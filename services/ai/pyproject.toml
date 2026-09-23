@@ -22,9 +22,24 @@ dev = [
 moderation = [
     "llama-cpp-python==0.3.35",
 ]
+# MT bring-up (Week 6 Phase 1, services/ai/mt/). transformers is pinned, not
+# left open: indictranstoolkit's own dependency declaration doesn't bound it,
+# and the newest transformers (5.x) restructured transformers.tokenization_utils
+# in a way that breaks IndicTransToolkit's collator import (`ImportError:
+# cannot import name 'PreTrainedTokenizerBase'`). 4.44.2 is the version
+# verified working in the Week 5 environment spike (see
+# docs/MT_ENVIRONMENT_DECISION.md on docs/mt-environment-and-ci-findings,
+# not yet merged to main as of this branch) — do not bump without
+# re-running that smoke test.
+mt = [
+    "indictranstoolkit",
+    "transformers==4.44.2",
+    "torch",
+    "sentencepiece",
+]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "moderation/tests"]
+testpaths = ["tests", "moderation/tests", "mt/tests"]
 markers = [
     "integration: requires real model weights and a CUDA GPU; skipped by default",
 ]
