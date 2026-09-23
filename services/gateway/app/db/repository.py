@@ -6,15 +6,16 @@ owns the transaction boundary and this module stays testable without HTTP.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import (
     Circle,
     Conversation,
+    Job,
     MediaObject,
     Membership,
     Message,
@@ -611,3 +612,123 @@ def create_media_object(
 
 def get_media_object(session: Session, media_id: uuid.UUID) -> MediaObject | None:
     return session.get(MediaObject, media_id)
+
+
+def compute_backoff_seconds(attempts: int, *, base: float = 5.0, cap: float = 300.0) -> float:
+    """Exponential backoff, capped. `attempts` is the job's attempts count
+    AFTER the failure being backed off from, so attempts=1 (first failure)
+    backs off `base` seconds, attempts=2 backs off 2*base, etc., up to
+    `cap`."""
+    return min(base * (2 ** (attempts - 1)), cap)
+
+
+def enqueue_job(
+    session: Session, *, job_type: str, payload: dict, max_attempts: int = 5
+) -> Job:
+    job = Job(job_type=job_type, payload=payload, max_attempts=max_attempts)
+    session.add(job)
+    session.flush()
+    return job
+
+
+def claim_next_job(
+    session: Session,
+    *,
+    worker_id: str,
+    lease_seconds: int = 300,
+    ignore_backoff: bool = False,
+) -> Job | None:
+    """Atomically claim the oldest eligible job: queued with its backoff
+    elapsed, or running with an expired lease (its previous worker died
+    without ever calling complete_job/fail_job). Increments `attempts` as
+    part of this same claiming UPDATE -- not left for the caller to do
+    once the job handler starts -- specifically so the count is committed
+    before any handler work runs; see app/db/models.py's Job docstring
+    and tests/test_job_queue.py's rollback test for why that ordering is
+    the point.
+
+    Two statements, not one: a SELECT to pick a candidate id, then a
+    conditional UPDATE that repeats the full eligibility condition in its
+    own WHERE clause (never `WHERE id = <candidate>` alone). That repeat
+    is what makes a second, concurrently-racing call's UPDATE affect zero
+    rows once the first one commits -- seeing app/db/models.py's Job
+    docstring again: a single `UPDATE ... WHERE id = (SELECT ... LIMIT
+    1)` doesn't give that guarantee, because Postgres only re-checks the
+    outer WHERE on a lock conflict, not the condition baked into the
+    subquery.
+
+    `ignore_backoff` skips the next_attempt_at check -- for tests, so
+    they don't have to sleep out a real backoff window. Production
+    callers should leave it False.
+
+    Returns the claimed row, or None if nothing was eligible or this call
+    lost a race for the one candidate it found."""
+    now = datetime.now(UTC)
+    due = true() if ignore_backoff else (Job.next_attempt_at <= now)
+    eligible = or_(
+        and_(Job.status == "queued", due),
+        and_(Job.status == "running", Job.lease_expires_at <= now),
+    )
+
+    candidate_id = session.execute(
+        select(Job.id).where(eligible).order_by(Job.next_attempt_at, Job.created_at).limit(1)
+    ).scalar_one_or_none()
+    if candidate_id is None:
+        return None
+
+    result = session.execute(
+        update(Job)
+        .where(Job.id == candidate_id, eligible)
+        .values(
+            status="running",
+            claimed_by=worker_id,
+            attempts=Job.attempts + 1,
+            lease_expires_at=now + timedelta(seconds=lease_seconds),
+        )
+    )
+    session.flush()
+    if result.rowcount == 0:
+        return None
+
+    # The UPDATE above went through Core, not the ORM unit of work, so a
+    # copy of this row already in the session's identity map (e.g. the one
+    # enqueue_job just returned) would otherwise still show its
+    # pre-claim attempts/status -- refresh forces a real read of what was
+    # just written.
+    job = session.get(Job, candidate_id)
+    session.refresh(job)
+    return job
+
+
+def complete_job(session: Session, job_id: uuid.UUID) -> None:
+    session.execute(update(Job).where(Job.id == job_id).values(status="done"))
+    session.flush()
+
+
+def fail_job(session: Session, job_id: uuid.UUID, *, error: str) -> str:
+    """Record a failed attempt, called by the worker that currently holds
+    this job's lease -- never a second claim, and never sharing a
+    transaction with whatever DB work the failing handler itself did (see
+    claim_next_job's docstring on why the attempts increment already
+    happened separately, before this call). Moves the job to 'dead' if
+    attempts has reached max_attempts, otherwise back to 'queued' with
+    next_attempt_at pushed out by compute_backoff_seconds. Returns the
+    resulting status ('queued' or 'dead')."""
+    job = session.get(Job, job_id)
+    assert job is not None
+
+    new_status = "dead" if job.attempts >= job.max_attempts else "queued"
+    values: dict = {
+        "status": new_status,
+        "last_error": error,
+        "claimed_by": None,
+        "lease_expires_at": None,
+    }
+    if new_status == "queued":
+        backoff = compute_backoff_seconds(job.attempts)
+        values["next_attempt_at"] = datetime.now(UTC) + timedelta(seconds=backoff)
+
+    session.execute(update(Job).where(Job.id == job_id).values(**values))
+    session.flush()
+    session.refresh(job)
+    return new_status

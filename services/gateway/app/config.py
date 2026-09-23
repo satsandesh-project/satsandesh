@@ -73,6 +73,21 @@ class Settings(BaseSettings):
     # treatment.
     MEDIA_MAX_UPLOAD_BYTES: int = 2 * 1024 * 1024
 
+    # Week 6: durable job queue (app/jobs.py, app/db/models.py's Job). All
+    # have sane defaults, unlike MEDIA_STORAGE_ROOT above -- getting one of
+    # these wrong doesn't corrupt data or point at nowhere, it just makes
+    # the worker loop faster/slower or more/less patient, so there's no
+    # fail-loud-at-startup reason to require them.
+    JOB_POLL_INTERVAL_SECONDS: float = 1.0
+    JOB_LEASE_SECONDS: int = 300
+    JOB_MAX_ATTEMPTS: int = 5
+    # Test-only escape hatch: tests/conftest.py's app fixture sets this to
+    # False so the background worker loop never starts inside a FastAPI
+    # TestClient's app -- tests that exercise the queue call
+    # app/db/repository.py's functions directly instead. Real deployments
+    # always leave this at the default True.
+    JOB_WORKER_ENABLED: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

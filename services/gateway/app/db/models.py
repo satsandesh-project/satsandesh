@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, time
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -410,3 +411,84 @@ class Invite(Base):
         nullable=False,
     )
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+
+class Job(Base):
+    """Week 6: a durable, polled job queue -- a table, not
+    app/undo.py's `dict[str, asyncio.Task]` (see that file's own
+    docstring: in-memory, single-process only, everything pending lost on
+    restart or invisible to a second gateway process). A row here
+    survives both.
+
+    `status` lifecycle: queued -> running -> done, or queued -> running ->
+    queued (retry, under max_attempts) -> ... -> dead (exhausted).
+    `claimed_by`/`lease_expires_at` are how a worker takes ownership --
+    app/db/repository.py's claim_next_job atomically moves a row from
+    queued to running with a single conditional UPDATE ... WHERE ...
+    RETURNING (same idiom as set_message_status below), never a
+    SELECT ... FOR UPDATE (not used anywhere in this codebase) and
+    never a bare `UPDATE ... WHERE id = (SELECT id FROM jobs WHERE
+    <condition> LIMIT 1)` -- that subquery form is not safe under
+    concurrent claims: Postgres's EvalPlanQual re-check on a lock
+    conflict only re-validates the outer `WHERE id = X`, not the
+    condition baked into the subquery, so two workers can both match the
+    same subquery result before either commits. Keeping the full
+    condition (status='queued' OR lease expired) directly in the
+    UPDATE's own WHERE clause is what makes the second worker's UPDATE
+    affect zero rows once the first one commits.
+
+    `attempts` is incremented by claim_next_job itself, in the same
+    committed UPDATE that claims the row -- not by the job handler, and
+    not in whatever transaction the handler's own work uses. That's the
+    fix for the recurring bug class services/auth/DECISIONS.md D11
+    records (services/auth/ doesn't exist in this repo, checked -- the
+    bug class is real regardless): a counter incremented inside a
+    transaction that then fails is rolled back with it, so a poisoned job
+    would retry forever without ever being counted toward
+    max_attempts. See tests/test_job_queue.py's
+    test_rollback_test_attempts_survives_a_failed_jobs_transaction for the
+    regression test proving this.
+
+    `payload` is JSONB, not a second table per job_type -- this queue is
+    deliberately generic (any job_type, any JSON-serializable payload),
+    matching the wire contract of nothing here being client-facing (no
+    contracts/ file defines this shape; it's purely an internal
+    implementation detail of app/jobs.py's worker loop)."""
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "status IN ('queued', 'running', 'done', 'dead')", name="ck_jobs_status"
+        ),
+        # claim_next_job's candidate SELECT filters on status plus
+        # next_attempt_at (the common 'queued' branch) and orders by
+        # next_attempt_at -- this index is what keeps that from becoming a
+        # full table scan as the queue grows.
+        sa.Index("ix_jobs_status_next_attempt_at", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=generate_uuid7
+    )
+    job_type: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'queued'"))
+    attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
+    max_attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("5"))
+    last_error: Mapped[str | None] = mapped_column(sa.Text)
+    claimed_by: Mapped[str | None] = mapped_column(sa.Text)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # When this job becomes eligible to be claimed again -- set to now() on
+    # enqueue, pushed forward by claim_next_job's backoff calculation each
+    # time fail_job records a retryable failure. A queued job whose
+    # next_attempt_at is still in the future is deliberately NOT claimed,
+    # even though its status is 'queued' -- this is the backoff delay, not
+    # a second status value, because "queued but not yet due" and "queued
+    # and due" both still mean queued from every other angle (counting,
+    # listing, dead-lettering).
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
