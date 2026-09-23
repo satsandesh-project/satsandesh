@@ -68,8 +68,7 @@ def sweep_expired_media(*, retention_days: int, now: datetime | None = None) -> 
             delete_media_object(session, media.id)
             session.commit()
             logger.info(
-                "retention sweep: deleted media_id=%s author_id=%s age_days=%d "
-                "(retention_days=%d)",
+                "retention sweep: deleted media_id=%s author_id=%s age_days=%d (retention_days=%d)",
                 media_id,
                 media.author_id,
                 age_days,

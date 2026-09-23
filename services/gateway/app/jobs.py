@@ -20,7 +20,6 @@ import uuid
 from collections.abc import Callable
 
 import httpx
-
 from contracts.ai.common import AudioFormat as AiAudioFormat
 from contracts.ai.common import AudioRef
 from contracts.ai.transcribe import TranscribeRequest, TranscribeResponse

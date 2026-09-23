@@ -739,9 +739,7 @@ def find_expired_media(session: Session, *, older_than: datetime) -> list[MediaO
     as create_media_object/app/media.py (DB-only here, the actual file I/O
     stays with the caller)."""
     return list(
-        session.execute(
-            select(MediaObject).where(MediaObject.created_at < older_than)
-        ).scalars()
+        session.execute(select(MediaObject).where(MediaObject.created_at < older_than)).scalars()
     )
 
 
