@@ -7,7 +7,11 @@ and again after the taxonomy workshop and in the Week-9 red-team.
 
 Run from the repository root:
 
-    PYTHONPATH=. python services/ai/moderation/tools/bench.py <model.gguf> [policy.md] [--threads N] [--tag name]
+    PYTHONPATH=. python services/ai/moderation/tools/bench.py <model.gguf> [policy.md] \n        [--threads N] [--tag name] [--n COUNT]
+
+Runs COUNT messages strictly sequentially (one at a time -- the same
+serialisation MOD_MAX_CONCURRENT=1 enforces in the service) and reports
+model load time, p50/p90 seconds per check, and peak process RAM.
 
 Requires the `moderation` extra (llama-cpp-python). Writes bench_<tag>.json
 next to this file; that file is gitignored -- copy numbers into a report.
@@ -145,6 +149,61 @@ LETTER = {
 EXPECTED_ACTION = {"A": "ALLOW", "B": "ALLOW", "C": "NUDGE", "D": "HOLD", "E": "BLOCK"}
 
 
+def peak_rss_mb() -> float | None:
+    """Peak resident memory of this process, in MiB. Stdlib only: Windows
+    via K32GetProcessMemoryInfo's PeakWorkingSetSize, POSIX via getrusage's
+    ru_maxrss. Returns None if the platform call is unavailable or fails.
+
+    argtypes/restype are declared explicitly: without them ctypes passes
+    the process HANDLE as a 32-bit int on Win64, the call fails with
+    ERROR_INVALID_HANDLE, and the result silently reads as 0.
+    """
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class _COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        try:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.K32GetProcessMemoryInfo.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(_COUNTERS),
+                wintypes.DWORD,
+            ]
+            kernel32.K32GetProcessMemoryInfo.restype = wintypes.BOOL
+            counters = _COUNTERS()
+            counters.cb = ctypes.sizeof(_COUNTERS)
+            if not kernel32.K32GetProcessMemoryInfo(
+                kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
+            ):
+                return None
+            return round(counters.PeakWorkingSetSize / (1024 * 1024), 1)
+        except (AttributeError, OSError):
+            return None
+    try:
+        import resource
+    except ImportError:  # pragma: no cover - Windows handled above
+        return None
+    maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports KiB, macOS bytes.
+    divisor = 1024 if sys.platform.startswith("linux") else 1024 * 1024
+    return round(maxrss / divisor, 1)
+
+
 def _take_flag(argv: list[str], flag: str, default: str) -> str:
     if flag in argv:
         i = argv.index(flag)
@@ -158,6 +217,7 @@ def main() -> None:
     argv = sys.argv[1:]
     threads = int(_take_flag(argv, "--threads", "4"))
     tag = _take_flag(argv, "--tag", "")
+    count = int(_take_flag(argv, "--n", str(len(CASES))))
     if not argv:
         raise SystemExit(__doc__)
     model_path = argv[0]
@@ -178,7 +238,14 @@ def main() -> None:
     )
 
     rows = []
-    for cid, expected, text in CASES:
+    # Cycle the labelled set when COUNT exceeds it, so a latency run of
+    # any length stays on real policy messages. Repeats are suffixed so
+    # the per-row output stays unambiguous.
+    schedule = [
+        (f"{cid}#{i // len(CASES) + 1}" if i >= len(CASES) else cid, expected, text)
+        for i, (cid, expected, text) in enumerate((CASES * (count // len(CASES) + 1))[:count])
+    ]
+    for cid, expected, text in schedule:
         messages = build_messages(policy, text)
         t = time.perf_counter()
         raw = clf.complete(messages)
@@ -221,6 +288,8 @@ def main() -> None:
         "exemplars": policy.exemplar_count(),
         "system_prompt_tokens": sys_tokens,
         "load_seconds": round(load_s, 1),
+        "peak_rss_mb": peak_rss_mb(),
+        "concurrency": 1,
         "n": len(rows),
         "label_accuracy": f"{sum(r['got'] == r['expected'] for r in rows)}/{len(rows)}",
         "action_accuracy": f"{sum(r['action'] == EXPECTED_ACTION[r['expected']] for r in rows)}/{len(rows)}",
@@ -231,8 +300,9 @@ def main() -> None:
         "missed_harm_on_E": sum(1 for r in rows if r["expected"] == "E" and r["action"] == "ALLOW"),
         "latency_s": {
             "first_call": secs[0],
-            "median_after_first": round(statistics.median(after_first), 2),
+            "p50_after_first": round(statistics.median(after_first), 2),
             "p90_after_first": after_first[int(0.9 * (len(after_first) - 1))],
+            "min_after_first": after_first[0],
             "max": max(secs),
         },
     }
