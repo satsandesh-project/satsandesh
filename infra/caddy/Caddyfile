@@ -32,6 +32,15 @@
 	handle /messages* {
 		reverse_proxy gateway:8000
 	}
+	# Week 6: voice-note storage (services/gateway/app/media.py). Missing
+	# until now (#64) -- with no explicit handler, a request here fell
+	# through every block above straight to the catch-all below, so
+	# GET /media/{id} returned the elder-app's own 404 page instead of
+	# the gateway's, and a voice note could never actually be played
+	# back even though the upload itself worked.
+	handle /media* {
+		reverse_proxy gateway:8000
+	}
 
 	# Everything else -- both the elder-app frontend itself (compiled
 	# pages, JS bundles) AND Reflex's own internal backend paths (/ping,
