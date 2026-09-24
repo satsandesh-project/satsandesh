@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -50,13 +51,29 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _check_input_device_available() -> None:
+class NoInputDeviceError(RuntimeError):
+    """No usable default microphone/input device."""
+
+
+def check_input_device_available() -> None:
+    """Raise NoInputDeviceError if there is no usable default input device.
+
+    Importable (raises, never exits) so other local tools — e.g.
+    services/ai/demo_console/ — can reuse this exact check.
+    """
     try:
         device_index = sd.default.device[0]
-        if device_index is None:
+        if device_index is None or device_index < 0:
             raise sd.PortAudioError("no default input device")
         sd.query_devices(device_index, "input")
     except (sd.PortAudioError, ValueError) as exc:
+        raise NoInputDeviceError(str(exc)) from exc
+
+
+def _check_input_device_available() -> None:
+    try:
+        check_input_device_available()
+    except NoInputDeviceError as exc:
         print(f"error: no audio input device is available: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -92,6 +109,37 @@ def record(seconds: float) -> np.ndarray:
     return audio
 
 
+@dataclass(frozen=True)
+class RecordingResult:
+    path: Path
+    requested_seconds: float
+    actual_seconds: float
+    peak_amplitude: int  # max |sample| in int16 units; ~0 means a silent/muted mic
+
+    @property
+    def ran_short(self) -> bool:
+        return int(self.actual_seconds * SAMPLE_RATE_HZ) < int(
+            self.requested_seconds * SAMPLE_RATE_HZ
+        )
+
+
+def record_to_file(seconds: float, output_path: Path) -> RecordingResult:
+    """Record `seconds` of audio and write it to `output_path` as mono 16kHz
+    PCM16 WAV, overwriting any existing file (callers decide overwrite policy —
+    the CLI refuses to overwrite via _resolve_output_path()).
+
+    Raises sd.PortAudioError on a device failure, same as record().
+    """
+    audio = record(seconds)
+    sf.write(output_path, audio, SAMPLE_RATE_HZ, subtype="PCM_16")
+    return RecordingResult(
+        path=output_path,
+        requested_seconds=seconds,
+        actual_seconds=audio.shape[0] / SAMPLE_RATE_HZ,
+        peak_amplitude=int(np.abs(audio.astype(np.int32)).max()) if audio.size else 0,
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
@@ -100,24 +148,18 @@ def main(argv: list[str] | None = None) -> None:
 
     _countdown()
     try:
-        audio = record(args.seconds)
+        result = record_to_file(args.seconds, output_path)
     except sd.PortAudioError as exc:
         print(f"error: recording failed (device hiccup?): {exc}", file=sys.stderr)
         sys.exit(1)
 
-    requested_frames = int(args.seconds * SAMPLE_RATE_HZ)
-    actual_frames = audio.shape[0]
-    actual_seconds = actual_frames / SAMPLE_RATE_HZ
-
-    sf.write(output_path, audio, SAMPLE_RATE_HZ, subtype="PCM_16")
-
-    if actual_frames < requested_frames:
+    if result.ran_short:
         print(
             f"WARNING: recording ran short — requested {args.seconds:.1f}s but only "
-            f"{actual_seconds:.1f}s was actually captured (possible device hiccup). "
+            f"{result.actual_seconds:.1f}s was actually captured (possible device hiccup). "
             "Check this file before trusting it as a full sample."
         )
-    print(f"Recording complete: saved {actual_seconds:.1f}s to {output_path}")
+    print(f"Recording complete: saved {result.actual_seconds:.1f}s to {output_path}")
 
 
 if __name__ == "__main__":
