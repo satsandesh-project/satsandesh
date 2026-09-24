@@ -1,5 +1,6 @@
 """Tests for elder_app.elder_app -- the Week 5 accessibility pass (PR #45):
-quiet-hours settings and the tap-and-hold-to-hear-it audio labels.
+quiet-hours settings and the tap-and-hold-to-hear-it audio labels; and
+Week 6's voice capture (record, upload, send).
 
 Reflex blocks direct State instantiation outside its own runtime unless
 `PYTEST_CURRENT_TEST` is set (`reflex.state.is_testing_env`) -- true
@@ -48,23 +49,25 @@ def _has_event_trigger(component, name: str) -> bool:
     return name in component.event_triggers
 
 
+def _on_mouse_down_handler_name(component) -> str | None:
+    chain = component.event_triggers.get("on_mouse_down")
+    if chain is None or not chain.events:
+        return None
+    return chain.events[0].handler.fn.__name__
+
+
 def test_all_five_hold_buttons_keep_their_on_click():
     # add_person_button() and quiet_hours_card() are each a single button
     # (well, quiet_hours_card's Save button, the only button in it).
     # bottom_tabs() and chat_screen() contain more than one -- walk their
-    # children to find the ones that also carry on_mouse_down (the hold
-    # affordance), and assert each still has on_click too.
+    # children to find the ones that carry the audio-label hold affordance
+    # specifically (on_mouse_down wired to start_audio_label_hold, not
+    # mic_button's own on_mouse_down=start_recording, which legitimately
+    # has no on_click -- it's a press-and-hold record control, not a tap
+    # action), and assert each still has on_click too.
     def hold_buttons(component):
         found = []
-        if _has_event_trigger(component, "on_mouse_down") and _has_event_trigger(
-            component, "on_click"
-        ):
-            found.append(component)
-        elif _has_event_trigger(component, "on_mouse_down"):
-            # Has the hold wiring but not on_click -- exactly the
-            # regression this test exists to catch. Still record it so
-            # the assertion below fails with a clear count, not a
-            # silent pass.
+        if _on_mouse_down_handler_name(component) == "start_audio_label_hold":
             found.append(component)
         for child in getattr(component, "children", []):
             found.extend(hold_buttons(child))
@@ -124,3 +127,59 @@ def test_on_settings_loaded_malformed_json_leaves_inputs_untouched():
     state.on_settings_loaded("not json")
 
     assert state.quiet_hours_start_input == "21:30"
+
+
+# -- Week 6: voice capture send/upload state -------------------------------
+#
+# The actual upload (POST /media) and the retry-once-then-surface logic
+# live entirely in UPLOAD_AND_SEND_VOICE_JS_TEMPLATE -- not practical to
+# unit test headless, same reasoning as the audio-label click-guard above.
+# What's tested here is the Python-side state machine around it: does
+# starting a send show the right "uploading" state, and does the result
+# callback land on the right outcome for "ok" vs any failure.
+
+
+def test_send_voice_recording_marks_uploading_and_returns_an_event():
+    state = _fresh_state()
+    state.voice_send_status = ""
+
+    event = state.send_voice_recording()
+
+    assert state.voice_send_status == "uploading"
+    assert event is not None
+
+
+def test_on_voice_send_result_ok_clears_the_recording():
+    state = _fresh_state()
+    state.voice_send_status = "uploading"
+    state.last_recording_data_url = "data:audio/webm;base64,abc123"
+
+    state.on_voice_send_result("ok")
+
+    assert state.voice_send_status == ""
+    assert state.last_recording_data_url == ""
+
+
+def test_on_voice_send_result_failure_keeps_the_recording_for_retry():
+    state = _fresh_state()
+    state.voice_send_status = "uploading"
+    state.last_recording_data_url = "data:audio/webm;base64,abc123"
+
+    state.on_voice_send_result("error:upload_failed")
+
+    assert state.voice_send_status == "failed"
+    # The recording itself must survive a failure -- discarding it here
+    # would mean a dropped connection costs the elder their whole
+    # recording, not just the upload attempt.
+    assert state.last_recording_data_url == "data:audio/webm;base64,abc123"
+
+
+def test_discard_recording_resets_both_the_url_and_the_send_status():
+    state = _fresh_state()
+    state.last_recording_data_url = "data:audio/webm;base64,abc123"
+    state.voice_send_status = "failed"
+
+    state.discard_recording()
+
+    assert state.last_recording_data_url == ""
+    assert state.voice_send_status == ""

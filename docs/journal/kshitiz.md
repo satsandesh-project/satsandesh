@@ -78,3 +78,60 @@ exactly why a real human review caught what that verification couldn't:
 the double-fire bug is an interaction bug, invisible to a component
 render check. Worth remembering next time I'm tempted to treat "it
 compiles" as "it works."
+
+## Week 6 — voice capture: record, upload, send
+
+**What shipped:** the mic button already recorded and previewed locally
+since Month 1 (per this file's own module docstring: "It does not send
+anywhere: there is no backend endpoint for voice notes yet"). Week 6
+closes that gap for real — upload to the actual `POST /media`
+(`services/gateway/app/media.py`, merged this week via #61/#63, not a
+mock) and send as a genuine `kind: "voice"` message over the same WS
+path text messages already use.
+
+**Design choices, and why:**
+
+- **Moved the mic button and recording banner from the Home screen into
+  the chat screen.** They floated on Home with no send target before —
+  which is exactly why sending was never wired up; there was nothing to
+  send *to*. Now they live where `current_contact_id`/`current_circle_id`
+  actually gives a real destination.
+- **Reused `sendMessageFrame` rather than building a parallel voice-send
+  path.** Its signature changed from a bare `text` argument to a
+  `payload` object (`{kind, text}` for text, `{kind, media_ref}` for
+  voice) — one function, one pending/ack/status/resend machinery for
+  both kinds, instead of two codepaths that could drift.
+- **"Upload with progress" is stage progress (recording → uploading →
+  sent/failed), not a byte-percentage bar.** Checked PR #63's own
+  numbers first: ~100KB for a 30-second note. A progress bar for a
+  sub-second upload wouldn't show anything meaningful; clear stage
+  feedback is what actually matters at this size. Documented as a
+  deliberate scope call, not a shortcut I'm hiding.
+- **Retry: one silent retry, then a manual "tap to retry" that keeps the
+  recording.** Mirrors `app/auth.py`'s own retry-once-then-surface
+  pattern server-side. The recording survives a failed upload — losing
+  the whole note to one dropped request would be a real elder-hostile
+  failure mode on the networks this app targets.
+- **Voice playback in the thread is a plain `<audio>` element, nothing
+  more.** Speed control, autoplay, "original always one tap away" are
+  explicitly Week 7's job ("Receiver experience"), not this week's
+  ("Voice capture" — sending, not receiving nicely).
+
+**Verification:** every touched component instantiated directly in a
+throwaway venv (same limitation as Week 5 — `reflex run` still doesn't
+serve locally here), plus 9 tests in `tests/test_state.py` (4 carried
+over from Week 5, 5 new): the upload/send state transitions
+(uploading → ok clears the recording; uploading → failure keeps it for
+retry; discard resets both fields). The upload and retry logic itself
+lives in JS (`UPLOAD_AND_SEND_VOICE_JS_TEMPLATE`) and isn't practical to
+unit test headless, same reasoning as Week 5's click-guard — this is the
+Python-side coverage that's actually possible without a browser.
+
+**Caught my own mistake before it shipped:** first draft of the
+structural on_click regression test (from Week 5) started failing after
+this change — not because of a real regression, but because it checked
+for *any* `on_mouse_down`, which now also matched the mic button's own
+`on_mouse_down=start_recording` (correctly has no `on_click` — it's a
+press-and-hold record control, not a tap action). Fixed by checking for
+the specific `start_audio_label_hold` handler instead of any
+`on_mouse_down` at all, so the test means what it says again.
