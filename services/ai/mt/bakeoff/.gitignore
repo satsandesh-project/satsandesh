@@ -1,0 +1,12 @@
+# Real, human-provided community sentences and anything derived from them
+# (translations, latency numbers, adequacy ratings/notes) are never tracked,
+# regardless of the fact that FLORES-derived results might be mixed in
+# alongside them in the same file -- these three files are never committed,
+# under any circumstance. See services/ai/mt/bakeoff/README.md.
+#
+# flores_samples.json (public FLORES-200 benchmark data) and
+# community_samples_template.txt (empty template, no real content) are NOT
+# covered by this ignore and are committed normally.
+community_samples.txt
+results.json
+ratings.json

@@ -1,0 +1,33 @@
+# community_samples_template.txt
+#
+# This is a TEMPLATE -- it intentionally contains no real sentences. Do not
+# fill it in here; copy it to `community_samples.txt` (same directory) and
+# fill THAT file in instead. `community_samples.txt` is gitignored and will
+# never be committed -- see services/ai/mt/bakeoff/README.md for why.
+#
+# What to add: about 10 real Telugu and/or Hindi sentences, written the way
+# an elder would actually speak them into a voice note -- informal, spoken
+# register, not textbook sentences. Aim for a mix covering:
+#
+#   - a greeting (e.g. how you'd open a message to a family circle)
+#   - a devotional phrase or reference
+#   - asking about a family member's health or wellbeing
+#   - sharing routine news (what you did today, a plan for tomorrow, etc.)
+#   - at least one sentence that naturally code-mixes in an English word or
+#     two, the way real bilingual speech does (a name, a place, a common
+#     loanword like "phone" or "hospital") -- don't force it if it feels
+#     unnatural, but include it if it's how you'd really say it
+#
+# Format: ONE sentence per line, tagged with the source language at the
+# start of the line using [te] or [hi]. For example (illustrative shape
+# only -- do not copy this literal example as a real sample):
+#
+#   [te] <your actual Telugu sentence here>
+#   [hi] <your actual Hindi sentence here>
+#
+# Blank lines and lines starting with # are ignored by run_batch.py.
+#
+# ---------------------------------------------------------------------------
+# Add your real sentences below this line (in community_samples.txt, not
+# here):
+# ---------------------------------------------------------------------------

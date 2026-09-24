@@ -1,0 +1,147 @@
+{
+  "source": "FLORES-200 devtest (dl.fbaipublicfiles.com/nllb/flores200_dataset.tar.gz)",
+  "license": "CC-BY-SA 4.0 (see FLORES-200 README)",
+  "note": "Sentences are taken verbatim from the official devtest release by real line index -- not written, edited, or paraphrased by any tool.",
+  "samples": [
+    {
+      "language_pair": "te-en",
+      "source_language": "te",
+      "line_index": 0,
+      "source_text": "\"\"\"\"\"\"\"ఇప్పుడు మావద్ద 4 నెలల వయస్సు గల ఎలుకలు ఉన్నాయి, అవి మధుమేహం లేనివి, అవి మధుమేహవ్యాధిగా ఉన్నాయి,\"\"\"\" అని ఆయన అన్నారు.\"\"\"",
+      "reference_text": "\"We now have 4-month-old mice that are non-diabetic that used to be diabetic,\" he added."
+    },
+    {
+      "language_pair": "te-en",
+      "source_language": "te",
+      "line_index": 101,
+      "source_text": "అయినప్పటికీ, క్షయ వ్యాధి గల సమూహం మొత్తంలో ఇప్పటికీ XDR-TB శాతం తక్కువగా ఉన్నట్లు కనిపిస్తుంది; దక్షిణాఫ్రికాలో ఏ సమయంలోనైనా మొత్తం 330,000 మందిలో 6,000 మందికి సోకింది.",
+      "reference_text": "However, the percentage of XDR-TB in the entire group of people with tuberculosis still seems to be low; 6,000 of the total 330,000 people infected at any particular moment in South Africa."
+    },
+    {
+      "language_pair": "te-en",
+      "source_language": "te",
+      "line_index": 202,
+      "source_text": "పురుషుల సిట్టింగ్ సూపర్-జిలో మెక్సికోకు చెందిన ఆర్లీ వెలాస్క్వెజ్ పదిహేనవ స్థానంలో నిలిచాడు. పురుషుల స్టాండింగ్ సూపర్-జిలో న్యూజిలాండ్ ఆడమ్ హాల్ తొమ్మిదో స్థానంలో నిలిచాడు. ",
+      "reference_text": "Arly Velasquez of Mexico finished fifteenth in the men's sitting Super-G. New Zealand's Adam Hall finished ninth in the men's standing Super-G."
+    },
+    {
+      "language_pair": "te-en",
+      "source_language": "te",
+      "line_index": 303,
+      "source_text": "పరికరాలకు సంబంధించిన 27 ప్రమాదాల గురించి అవగాహన ఉందని  జపాన్ ఆర్థిక, వాణిజ్య, పరిశ్రమల మంత్రిత్వ శాఖ (METI) తెలిపింది.",
+      "reference_text": "Japan's Ministry of Economy, Trade and Industry (METI) said that it had been aware of 27 accidents related to the devices."
+    },
+    {
+      "language_pair": "te-en",
+      "source_language": "te",
+      "line_index": 404,
+      "source_text": "ఇది ఎవరు రాశారో ఎవరికీ తెలియనప్పటికీ, దీని గురుంచి చాలా కాలం నుండి తెలుసు, పెద్ద పార్చ్మెంట్ డాక్యుమెంట్‌ను (దీని కొలత 29¾ inches x 24½ inches ఉంటుంది) స్టోర్ చేయడానికి రోల్ చేయబడింది.",
+      "reference_text": "While no one knows for certain who wrote it, it is known that early in its life, the large parchment document (it measures 29¾ inches by 24½ inches) was rolled up for storage."
+    },
+    {
+      "language_pair": "te-en",
+      "source_language": "te",
+      "line_index": 505,
+      "source_text": "ఫెరల్ పిల్లలు విడిచిపెట్టడానికి లేదా పారిపోవడానికి ముందు తీవ్రమైన పిల్లల వేధింపులకు లేదా గాయపడి ఉండవచ్చు.",
+      "reference_text": "Feral children may have experienced severe child abuse or trauma before being abandoned or running away."
+    },
+    {
+      "language_pair": "te-en",
+      "source_language": "te",
+      "line_index": 606,
+      "source_text": "ఒక ఉదాహరణ బోర్నియోలో సందర్శించడం, ఫోటో తీయడం మరియు ఒరాంగుటాన్లను గురించి తెలుసుకోవడం.",
+      "reference_text": "An example is visiting, photographing, and learning about organgatuangs in Borneo."
+    },
+    {
+      "language_pair": "te-en",
+      "source_language": "te",
+      "line_index": 707,
+      "source_text": "ఆధునిక నగరం కాసాబ్లాంకా 10వ శతాబ్దంలో బెర్బెర్ జాలరులచే స్థాపించబడింది, ఫోనీషియన్లు, రోమన్లు మరియు మెరెనిడ్స్ అన్ఫా అని పిలువబడే వ్యూహాత్మక నౌకాశ్రయంగా ఉపయోగించారు.",
+      "reference_text": "The modern city of Casablanca was founded by Berber fishermen in the 10th century BCE, and was used by the Phoenicians, Romans, and the Merenids as a strategic port called Anfa."
+    },
+    {
+      "language_pair": "te-en",
+      "source_language": "te",
+      "line_index": 808,
+      "source_text": "ప్రజాదరణ పొందిన వాడుకలో సఫారీ అనే పదం, అద్భుతమైన ఆఫ్రికన్ వన్యమృగాలను చూడటానికి, ముఖ్యంగా సవన్నా లో ఓవర్ ల్యాండ్ ప్రయాణాన్ని సూచిస్తుంది.",
+      "reference_text": "The term safari in popular use refers to overland travel to view the stunning African wildlife, particularly on savanna."
+    },
+    {
+      "language_pair": "te-en",
+      "source_language": "te",
+      "line_index": 909,
+      "source_text": "మారుమూల ప్రదేశాల్లో, సెల్ ఫోన్ కవరేజీ లేకుండా,  శాటిలైట్ ఫోన్ మాత్రమే మీ ఏకైక ఎంపిక కావొచ్చు.",
+      "reference_text": "In remote locations, without cell phone coverage, a satellite phone may be your only option."
+    },
+    {
+      "language_pair": "hi-en",
+      "source_language": "hi",
+      "line_index": 0,
+      "source_text": "उन्होंने कहा “कि अब हमारे पास 4 महीने उम्र वाले चूहे हैं जिन्हें मधुमेह नहीं है जो मधुमेह के रोगी थे। ”",
+      "reference_text": "\"We now have 4-month-old mice that are non-diabetic that used to be diabetic,\" he added."
+    },
+    {
+      "language_pair": "hi-en",
+      "source_language": "hi",
+      "line_index": 101,
+      "source_text": "हालाँकि, टुबर्क्युलोसिस वाले लोगों के पूरे समूह में एक्सडीआर-टीबी का प्रतिशत अभी भी कम है; दक्षिण अफ़्रीका में किसी भी विशेष समय पर कुल 330,000 लोगों में से 6,000 संक्रमित हैं.",
+      "reference_text": "However, the percentage of XDR-TB in the entire group of people with tuberculosis still seems to be low; 6,000 of the total 330,000 people infected at any particular moment in South Africa."
+    },
+    {
+      "language_pair": "hi-en",
+      "source_language": "hi",
+      "line_index": 202,
+      "source_text": "पुरुषों के सिटिंग सुपर-जी में मैक्सिको के अर्ली वेलास्केज़ पंद्रहवें स्थान पर रहे. पुरुषों के स्टैंडिंग सुपर-जी में न्यूज़ीलैंड के एडम हॉल नौवें स्थान पर रहे.",
+      "reference_text": "Arly Velasquez of Mexico finished fifteenth in the men's sitting Super-G. New Zealand's Adam Hall finished ninth in the men's standing Super-G."
+    },
+    {
+      "language_pair": "hi-en",
+      "source_language": "hi",
+      "line_index": 303,
+      "source_text": "जापान के अर्थव्यवस्था, व्यापार और उद्योग मंत्रालय (METI) ने कहा कि उसे उपकरणों से संबंधित 27 दुर्घटनाओं की जानकारी थी.",
+      "reference_text": "Japan's Ministry of Economy, Trade and Industry (METI) said that it had been aware of 27 accidents related to the devices."
+    },
+    {
+      "language_pair": "hi-en",
+      "source_language": "hi",
+      "line_index": 404,
+      "source_text": "जबकि किसी को नहीं पता कि इसे किसने लिखा है संग्रह करने के लिए बड़े चमड़े के कागज़ के दस्तावेज़ (इसका माप 24½ इंच बटा 29¾ है) को इकठ्ठा किया था.",
+      "reference_text": "While no one knows for certain who wrote it, it is known that early in its life, the large parchment document (it measures 29¾ inches by 24½ inches) was rolled up for storage."
+    },
+    {
+      "language_pair": "hi-en",
+      "source_language": "hi",
+      "line_index": 505,
+      "source_text": "यह संभव है की बंदी बच्चों ने छोड़े जाने या  भागने से पहले गंभीर बाल दुर्व्यवहार या आघात का सामना करा हो |",
+      "reference_text": "Feral children may have experienced severe child abuse or trauma before being abandoned or running away."
+    },
+    {
+      "language_pair": "hi-en",
+      "source_language": "hi",
+      "line_index": 606,
+      "source_text": "बॉर्नियो में जाना, फोटोग्राफी करना, और औरैंगउटान के बारे में जानना एक उदाहरण है.",
+      "reference_text": "An example is visiting, photographing, and learning about organgatuangs in Borneo."
+    },
+    {
+      "language_pair": "hi-en",
+      "source_language": "hi",
+      "line_index": 707,
+      "source_text": "आधुनिक शहर कासाब्लांका की स्थापना 10 वीं शताब्दी ईसा पूर्व में बर्बर मछुआरों ने की थी, और इसे फोनेशियन, रोमनों और मेरिनेड्स द्वारा एक रणनीतिक बंदरगाह के रूप में इस्तेमाल किया गया था जिसे अनफा कहा जाता था.",
+      "reference_text": "The modern city of Casablanca was founded by Berber fishermen in the 10th century BCE, and was used by the Phoenicians, Romans, and the Merenids as a strategic port called Anfa."
+    },
+    {
+      "language_pair": "hi-en",
+      "source_language": "hi",
+      "line_index": 808,
+      "source_text": "विशेष रूप से सवाना पर बेहतरीन अफ़्रीकी वन्य जीवन को संपूर्ण रूप से देखने के लिए आमतौर पर सफ़ारी शब्द का उपयोग किया जाता है.",
+      "reference_text": "The term safari in popular use refers to overland travel to view the stunning African wildlife, particularly on savanna."
+    },
+    {
+      "language_pair": "hi-en",
+      "source_language": "hi",
+      "line_index": 909,
+      "source_text": "दूरस्थ स्थानों में, सेल फ़ोन कवरेज नहीं होने से, एक सेटेलाइट फ़ोन आपका एकमात्र विकल्प हो सकता है.",
+      "reference_text": "In remote locations, without cell phone coverage, a satellite phone may be your only option."
+    }
+  ]
+}
