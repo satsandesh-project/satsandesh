@@ -175,6 +175,17 @@ class Message(Base):
             "OR (kind = 'voice' AND original_media_ref IS NOT NULL)",
             name="ck_messages_kind_payload",
         ),
+        # Week 6: media_format mirrors media_objects.format's own allowed
+        # values (ck_media_format) -- nullable because it's only ever set
+        # alongside media_object_id, for a voice message whose media_ref
+        # resolved to a real, owned media_objects row at write time (see
+        # app/db/repository.py::resolve_owned_media_object). A row that
+        # predates this validation, or a voice message whose media_ref
+        # never resolved, leaves both NULL.
+        sa.CheckConstraint(
+            "media_format IS NULL OR media_format IN ('webm_opus', 'ogg_opus', 'wav_pcm16', 'mp3')",
+            name="ck_messages_media_format",
+        ),
         # design question #1, option (b): exactly one of the two target FKs
         # is populated, matching target_type.
         sa.CheckConstraint(
@@ -228,6 +239,30 @@ class Message(Base):
     pivot_text_en: Mapped[str | None] = mapped_column(sa.Text)
     original_media_ref: Mapped[str | None] = mapped_column(sa.Text)
     media_duration_ms: Mapped[int | None] = mapped_column(sa.Integer)
+    # Week 6: the real link original_media_ref never had -- see
+    # MediaObject's own docstring, which named this exact gap as "separate,
+    # later work" when media_objects was first added. ON DELETE SET NULL,
+    # not RESTRICT: app/retention.py's sweeper does a real DELETE on an
+    # expired media_objects row, and a message that once referenced it must
+    # not block that delete (nor should the message itself vanish -- this
+    # is the one column that goes NULL, everything else on the row is
+    # untouched). That SET NULL is also the read-side signal
+    # message_to_out uses to decide whether to return a media_ref at
+    # all: NULL here means "no live audio," whether that's because this
+    # reference never resolved to begin with or because it did and was
+    # later swept -- a client can't tell those two apart from this field
+    # alone, and per app/retention.py's own docstring, shouldn't need to:
+    # either way there's nothing to play.
+    #
+    # original_media_ref (above) is deliberately NOT replaced by this --
+    # it stays the permanent, unedited record of whatever URI the client
+    # actually sent, including for a row where this column is NULL because
+    # nothing ever resolved. Nothing here forces the two to agree after
+    # the fact.
+    media_object_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("media_objects.id", ondelete="SET NULL")
+    )
+    media_format: Mapped[str | None] = mapped_column(sa.Text)
     source_lang: Mapped[str | None] = mapped_column(sa.Text)
     status: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("'pending'")
@@ -295,11 +330,14 @@ class MediaObject(Base):
     a separate column here, so there's exactly one source of truth for
     where a given object's bytes are.
 
-    Not yet referenced by a foreign key from `messages` -- `messages.
-    original_media_ref` (this table's precursor, still just a plain text
-    URI column) is unchanged in this phase; wiring `app/messages.py`'s
-    routes to this table is separate, later work, not this phase's
-    (storage only).
+    Referenced by `messages.media_object_id` (Week 6, later phase) --
+    `messages.original_media_ref`, this table's precursor, stays a plain
+    text URI column regardless, kept as the permanent unedited record of
+    whatever a client actually sent, including for a row the FK could
+    never resolve. See that column's own comment in `Message` for the
+    ON DELETE SET NULL reasoning: a row here being deleted (by
+    app/retention.py's sweeper) must never be blocked by, or cascade
+    into deleting, a message that once referenced it.
 
     `(author_id, sha256_hex)` is the idempotency key: the SAME author
     re-uploading the SAME bytes (a retry after a dropped ack -- expected

@@ -124,6 +124,8 @@ def _create_message_impl(
     text: str | None = None,
     original_media_ref: str | None = None,
     media_duration_ms: int | None = None,
+    media_object_id: uuid.UUID | None = None,
+    media_format: str | None = None,
     source_lang: str | None = None,
     client_msg_id: uuid.UUID,
     undo_expires_at: datetime | None = None,
@@ -173,6 +175,8 @@ def _create_message_impl(
         text=text,
         original_media_ref=original_media_ref,
         media_duration_ms=media_duration_ms,
+        media_object_id=media_object_id,
+        media_format=media_format,
         source_lang=source_lang,
         client_msg_id=client_msg_id,
         # Week 4 Phase 8: set by both send paths to now + settings.
@@ -225,6 +229,8 @@ def create_message(
     text: str | None = None,
     original_media_ref: str | None = None,
     media_duration_ms: int | None = None,
+    media_object_id: uuid.UUID | None = None,
+    media_format: str | None = None,
     source_lang: str | None = None,
     client_msg_id: uuid.UUID,
     undo_expires_at: datetime | None = None,
@@ -239,6 +245,8 @@ def create_message(
         text=text,
         original_media_ref=original_media_ref,
         media_duration_ms=media_duration_ms,
+        media_object_id=media_object_id,
+        media_format=media_format,
         source_lang=source_lang,
         client_msg_id=client_msg_id,
         undo_expires_at=undo_expires_at,
@@ -257,6 +265,8 @@ def create_message_with_created_flag(
     text: str | None = None,
     original_media_ref: str | None = None,
     media_duration_ms: int | None = None,
+    media_object_id: uuid.UUID | None = None,
+    media_format: str | None = None,
     source_lang: str | None = None,
     client_msg_id: uuid.UUID,
     undo_expires_at: datetime | None = None,
@@ -277,6 +287,8 @@ def create_message_with_created_flag(
         text=text,
         original_media_ref=original_media_ref,
         media_duration_ms=media_duration_ms,
+        media_object_id=media_object_id,
+        media_format=media_format,
         source_lang=source_lang,
         client_msg_id=client_msg_id,
         undo_expires_at=undo_expires_at,
@@ -612,6 +624,35 @@ def create_media_object(
 
 def get_media_object(session: Session, media_id: uuid.UUID) -> MediaObject | None:
     return session.get(MediaObject, media_id)
+
+
+def resolve_owned_media_object(
+    session: Session, *, uri: str, author_id: uuid.UUID
+) -> MediaObject | None:
+    """Parses a MediaRef.uri (already confirmed scheme-qualified by
+    contracts/chat/common.py's validate_media_uri) and resolves it to a
+    real, existing media_objects row owned by author_id. Returns None if
+    the scheme isn't "media" (the only backend this deployment actually
+    has -- see app/media.py), the remainder doesn't parse as a UUID, no
+    such row exists, or it belongs to someone else.
+
+    Deliberately ONE return path for every failure mode, not three: an id
+    is guessable, ownership is not, and a caller that could tell "doesn't
+    exist" apart from "exists but isn't yours" would let a client
+    enumerate real media ids by watching which error comes back. This
+    function makes that distinction structurally unobservable rather than
+    relying on every caller to remember not to leak it."""
+    scheme, _, rest = uri.partition(":")
+    if scheme != "media":
+        return None
+    try:
+        media_id = uuid.UUID(rest)
+    except ValueError:
+        return None
+    media = get_media_object(session, media_id)
+    if media is None or media.author_id != author_id:
+        return None
+    return media
 
 
 def compute_backoff_seconds(attempts: int, *, base: float = 5.0, cap: float = 300.0) -> float:

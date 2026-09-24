@@ -24,7 +24,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from contracts.chat.common import MessageStatus, TargetType
+from contracts.chat.common import MediaRef, MessageStatus, TargetType
 from contracts.chat.envelope import FrameType, SyncBatch
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
@@ -43,6 +43,7 @@ from app.db.repository import (
     get_messages_since,
     is_circle_member,
     list_member_ids_for_circle,
+    resolve_owned_media_object,
     set_message_status,
 )
 from app.models import User
@@ -72,7 +73,17 @@ def message_to_out(message: Message) -> MessageOut:
     design question #1a: "the other party from one side" is not the same
     value for both directions). Shared by GET /messages below, and by
     app/ws.py's `message.new` and `sync.batch` frames — one mapping, not
-    three copies that could quietly drift apart."""
+    three copies that could quietly drift apart.
+
+    Week 6: media_ref is built from media_object_id/media_format, not
+    original_media_ref/some default format -- media_object_id is NULL
+    for a voice message with no live audio right now, whether that's
+    because its media_ref never resolved to begin with or because the
+    media_objects row it once resolved to has since been swept
+    (app/db/models.py::Message.media_object_id's own comment: ON DELETE
+    SET NULL is what keeps this column meaning "is there live audio",
+    automatically, with no separate check needed here). None either way
+    -- never a MediaRef pointing at a uri that would 404 if fetched."""
     return MessageOut(
         id=str(message.id),
         author_id=str(message.author_id),
@@ -84,6 +95,15 @@ def message_to_out(message: Message) -> MessageOut:
         ),
         kind=message.kind,
         text=message.text,
+        media_ref=(
+            MediaRef(
+                uri=message.original_media_ref,
+                format=message.media_format,
+                duration_ms=message.media_duration_ms,
+            )
+            if message.media_object_id is not None
+            else None
+        ),
         created_at=message.created_at,
         status=message.status,
     )
@@ -208,6 +228,32 @@ async def post_message(
             raise HTTPException(status_code=422, detail="cannot send a DM to yourself")
         target_user_id = target_uuid
 
+    # Week 6: a media_ref must resolve to a real media_objects row owned
+    # by the caller before this insert ever happens -- see
+    # app/db/repository.py::resolve_owned_media_object's own docstring
+    # for why "doesn't exist" and "exists but isn't yours" get the exact
+    # same 422, not a 404-vs-403 split (an id is guessable; ownership is
+    # not, and a differentiated response would leak which). Checked here,
+    # at the route boundary, rather than left to surface as a raw
+    # IntegrityError off the FK -- this route has no try/except around
+    # create_message_with_created_flag below, so an unresolved reference
+    # left to the FK would otherwise be a bare 500, not a readable error.
+    media_object_id: uuid.UUID | None = None
+    media_format: str | None = None
+    if body.media_ref is not None:
+        media = resolve_owned_media_object(db, uri=body.media_ref.uri, author_id=caller_id)
+        if media is None:
+            raise HTTPException(
+                status_code=422,
+                detail="media_ref does not refer to a media object you own",
+            )
+        media_object_id = media.id
+        # The stored object's own real format, not the client's
+        # possibly-stale re-declaration of it on this second call --
+        # MediaUploadOut already told the client the authoritative value
+        # at upload time.
+        media_format = media.format
+
     settings = get_settings()
     undo_expires_at = datetime.now(UTC) + timedelta(seconds=settings.UNDO_WINDOW_SECONDS)
 
@@ -221,6 +267,8 @@ async def post_message(
         text=body.text,
         original_media_ref=body.media_ref.uri if body.media_ref is not None else None,
         media_duration_ms=body.media_ref.duration_ms if body.media_ref is not None else None,
+        media_object_id=media_object_id,
+        media_format=media_format,
         source_lang=body.source_lang,
         client_msg_id=body.client_msg_id,
         undo_expires_at=undo_expires_at,
