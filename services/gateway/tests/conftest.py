@@ -18,6 +18,23 @@ import os
 
 import pytest
 
+# The background job worker (app/jobs.py, started from app/main.py's
+# lifespan) defaults to running in a real deployment -- fine there, but
+# the `client` fixture below uses `with TestClient(app) as test_client:`,
+# which DOES trigger that lifespan for every route test in this
+# directory. A live worker polling and claiming rows out of the same
+# db_session-backed connection mid-test would be a real, if
+# intermittent, source of test flakiness unrelated to whatever a given
+# test is actually checking. setdefault, not a plain assignment, so an
+# environment that deliberately sets this isn't silently overridden.
+# tests/test_job_queue.py exercises the queue by calling
+# app/db/repository.py's functions directly and never needs this
+# running.
+os.environ.setdefault("JOB_WORKER_ENABLED", "false")
+# Same reasoning, same fixture, same lifespan -- see app/retention.py's
+# sweep loop, wired into app/main.py's lifespan alongside the job worker.
+os.environ.setdefault("MEDIA_RETENTION_SWEEP_ENABLED", "false")
+
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
     "postgresql+psycopg2://postgres:devpass@localhost:5432/satsandesh_test",

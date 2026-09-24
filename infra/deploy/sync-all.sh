@@ -52,18 +52,45 @@ echo "==> [2/3] local storage: already current (this working copy)"
 # 3. Server. Pulls from the TEAM repo (public, read-only pull needs no
 #    credentials). The server's clone also has a stale "origin" remote
 #    pointing at the personal fork -- do not pull from it.
+#
+#    $SERVER_PATH's working tree also backs the live deployment
+#    (docker compose up builds from exactly this checkout) -- confirmed
+#    2026-09-23 while debugging a failed sync: it sits on `main`, not
+#    whatever feature branch is being synced, and that's deliberate, not
+#    an oversight. A plain `git pull team $BRANCH` while main is checked
+#    out tries to MERGE an unmerged, unreviewed feature branch straight
+#    into that main working tree -- at best it fails outright (no git
+#    identity configured on this shared account, confirmed the same day),
+#    at worst it would silently succeed, leaving $SERVER_PATH's `main`
+#    containing commits that were never actually merged on GitHub and one
+#    `docker compose up --build` away from deploying them for real.
+#
+#    So: syncing `main` itself really does pull (fast-forward only -- if
+#    that's not possible, something is wrong and this should fail loudly,
+#    not silently create a merge commit). Syncing anything else only
+#    fetches -- the branch's commits land on the server as `team/$BRANCH`,
+#    available to `git worktree add` from (the pattern every test run this
+#    week actually used), without ever touching the checked-out working
+#    tree the live deployment depends on.
 echo
 echo "==> [3/3] server ($SERVER)"
 if [ "$SKIP_SERVER" = "1" ]; then
   echo "    SKIPPED (--skip-server)"
-else
-  ssh "$SERVER" "cd $SERVER_PATH && git pull team $BRANCH && git rev-parse HEAD"
+elif [ "$BRANCH" = "main" ]; then
+  ssh "$SERVER" "cd $SERVER_PATH && git pull --ff-only team main && git rev-parse HEAD"
   echo
   echo "    Remember: a code change needs a rebuild, not just a pull --"
   echo "      docker compose build <service>"
   echo "      docker compose up -d <service>"
   echo "    and a Caddyfile change needs: docker compose restart caddy"
   echo "    (both learned the hard way -- see docs/prompt-journal.md)"
+else
+  ssh "$SERVER" "cd $SERVER_PATH && git fetch team $BRANCH && git rev-parse team/$BRANCH"
+  echo
+  echo "    Server's checked-out working tree is untouched (still whatever"
+  echo "    it was before -- normally main, which the live deployment"
+  echo "    builds from). Only the team/$BRANCH ref was updated. Use"
+  echo "    'git worktree add' there to test this branch's actual code."
 fi
 
 echo

@@ -73,6 +73,46 @@ class Settings(BaseSettings):
     # treatment.
     MEDIA_MAX_UPLOAD_BYTES: int = 2 * 1024 * 1024
 
+    # Week 6: durable job queue (app/jobs.py, app/db/models.py's Job). All
+    # have sane defaults, unlike MEDIA_STORAGE_ROOT above -- getting one of
+    # these wrong doesn't corrupt data or point at nowhere, it just makes
+    # the worker loop faster/slower or more/less patient, so there's no
+    # fail-loud-at-startup reason to require them.
+    JOB_POLL_INTERVAL_SECONDS: float = 1.0
+    JOB_LEASE_SECONDS: int = 300
+    JOB_MAX_ATTEMPTS: int = 5
+    # Test-only escape hatch: tests/conftest.py's app fixture sets this to
+    # False so the background worker loop never starts inside a FastAPI
+    # TestClient's app -- tests that exercise the queue call
+    # app/db/repository.py's functions directly instead. Real deployments
+    # always leave this at the default True.
+    JOB_WORKER_ENABLED: bool = True
+
+    # Week 6: audio retention sweep (app/retention.py). 30 days is the
+    # window mentioned informally so far (infra/backups/README.md's 30-day
+    # BACKUP retention is a separate, unrelated setting for a different
+    # thing -- this is the first place an actual audio-retention window is
+    # enforced as code, not just a sentence in a plan doc). Configurable,
+    # not hardcoded, since 30 is a starting guess, not a number anyone
+    # signed off on -- see OPEN_QUESTIONS.md.
+    MEDIA_RETENTION_DAYS: int = 30
+    MEDIA_RETENTION_SWEEP_INTERVAL_SECONDS: float = 3600.0
+    # Same test-only escape hatch as JOB_WORKER_ENABLED, same reason:
+    # tests/conftest.py sets this False too, so a live sweep loop never
+    # runs during a route test.
+    MEDIA_RETENTION_SWEEP_ENABLED: bool = True
+
+    # Week 6 Step 2: which AI service to call for anything AI-side (Week 6
+    # only ever means services/ai/mock/ -- see app/jobs.py's
+    # "transcribe_media" handler and its own module docstring for why real
+    # ASR is explicitly Week 8, not now). Defaults to the hostname
+    # docker-compose.yml's own `ai-services` service already uses, so this
+    # points at the right place automatically once that service is the
+    # real thing (or the mock) rather than today's Week-1 health-check
+    # skeleton -- see OPEN_QUESTIONS.md for the gap that leaves open right
+    # now.
+    AI_SERVICE_URL: str = "http://ai-services:8001"
+
 
 @lru_cache
 def get_settings() -> Settings:

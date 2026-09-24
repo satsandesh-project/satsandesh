@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.config import get_settings
 from app.db.base import get_db
-from app.db.repository import create_media_object, find_media_object, get_media_object
+from app.db.repository import create_media_object, enqueue_job, find_media_object, get_media_object
 from app.id import generate_uuid7
 from app.media_storage import get_media_storage
 from app.models import User
@@ -138,8 +138,18 @@ async def upload_media(
     if not created:
         # Lost a genuine concurrent race to an identical upload from the
         # same author -- our own file is redundant, the winner's is what
-        # the returned row actually points at.
+        # the returned row actually points at. The winner's own call
+        # already enqueued the transcribe job below; this call must not
+        # enqueue a second one for the same media.
         storage.delete(str(media_id))
+    else:
+        # Week 6 Step 2: only for a genuinely new row -- an idempotent
+        # retry of an already-processed upload (the find_media_object
+        # fast path above) must not re-enqueue work that already ran.
+        # Same transaction as the row itself (both flushed now, committed
+        # together below), so a media object is never left on disk
+        # without its transcription ever having been queued.
+        enqueue_job(db, job_type="transcribe_media", payload={"media_id": str(media.id)})
     db.commit()
     return _to_media_upload_out(media)
 
