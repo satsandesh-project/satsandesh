@@ -7,6 +7,8 @@ dependencies = [
     "pydantic>=2.6",
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    "faster-whisper>=1.2",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -15,6 +17,13 @@ dev = [
     "httpx>=0.27",
     "mypy>=1.9",
     "ruff>=0.4",
+]
+# Microphone recording for the Week 5 bake-off (services/ai/tools/record_sample.py).
+# Kept out of both `dependencies` and `dev`: a deployed transcribe service never
+# touches a microphone, and this isn't needed to develop/test that service either.
+tools = [
+    "sounddevice>=0.4",
+    "soundfile>=0.12",
 ]
 # Real moderation backend (services/ai/moderation/, MOD_BACKEND=llama_cpp).
 # Kept out of `dependencies`: the stub backend and the whole test suite run
