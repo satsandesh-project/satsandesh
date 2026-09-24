@@ -113,6 +113,24 @@ _HANDLERS: dict[str, JobHandler] = {
 }
 
 
+def register_handler(job_type: str, handler: JobHandler) -> None:
+    """Register a handler for a job_type without editing _HANDLERS directly.
+
+    _HANDLERS stays module-private (no __all__ export) so its internal shape
+    can change later -- e.g. per-handler config, not just a bare callable --
+    without that being a breaking change for callers. A caller outside this
+    module (e.g. a future moderate_message handler owned by someone else)
+    calls this at startup, the same place transcribe_media gets wired in
+    app/main.py's lifespan, instead of importing and mutating _HANDLERS.
+    Raises if job_type is already registered, since a silent overwrite here
+    would mean the second registration's handler quietly wins and the first
+    stops running with no error anywhere.
+    """
+    if job_type in _HANDLERS:
+        raise ValueError(f"handler already registered for job_type={job_type!r}")
+    _HANDLERS[job_type] = handler
+
+
 def worker_id() -> str:
     # Not a random uuid: a worker's own OS pid, stable for that process's
     # whole life and visible in `docker compose ps`/logs, so a stuck lease's

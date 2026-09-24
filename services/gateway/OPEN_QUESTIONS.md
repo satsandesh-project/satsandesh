@@ -133,3 +133,24 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
    `services/ai/mock/` should replace or run alongside the root
    `ai-services/` skeleton in `docker-compose.yml` is a call for whoever
    owns that integration (Week 7's orchestrator work), not decided here.
+
+9. **`find_expired_media` sweeps by age alone — no moderation-status
+   awareness — and that needs to be on record before the sweeper runs on
+   staging.** `app/db/repository.py::find_expired_media` selects every
+   `MediaObject` older than `MEDIA_RETENTION_DAYS` and `delete_media_object`
+   hard-deletes it; today that's fine, because no moderation state exists
+   to protect. But #65 (a HOLD/BLOCK appeal flow, also a ~30-day window)
+   will change that: once it lands, this sweeper as written could delete
+   the exact evidence an appeal needs, potentially while that appeal is
+   still open. Flagged by @sainathanv in review of this PR — not fixed
+   here, since the `moderation_events` table (#65) doesn't exist yet and
+   there's nothing to filter on. Three ways this could go once #65 lands,
+   in the order he ranked them: (a) exempt any media object with an
+   open/unresolved moderation status from the sweep; (b) tombstone instead
+   of hard-delete, so a swept id fails closed with a distinguishable reason
+   instead of a plain 404 indistinguishable from "never existed" (see #6
+   above); or (c) explicitly decide the window overlap is acceptable and
+   the two systems don't need to coordinate. @sainathanv said he'll own
+   resolving this when he builds the moderation console — this item exists
+   so the collision is documented before the sweeper is live on staging,
+   not to pre-empt that design.
