@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SatSandesh Pipeline Demo</title>
+<!-- No external fonts/scripts on purpose: the demo must run with zero network.
+     "Nirmala UI" ships with Windows and covers Telugu + Devanagari. -->
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1d232b; --muted: #5d6673; --line: #dfdcd3;
+    --accent: #1f6f5c; --accent-ink: #ffffff; --accent-soft: #e2f0eb;
+    --warn: #8a5a00; --warn-soft: #fff4dc; --err: #9b2c2c; --err-soft: #fdecec;
+    --ok: #1f7a4d; --rec: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15181c; --card: #1e2227; --ink: #e8eaed; --muted: #9aa3ad; --line: #30363d;
+      --accent: #4fb896; --accent-ink: #0d1f19; --accent-soft: #1b3029;
+      --warn: #f0c060; --warn-soft: #33290f; --err: #f28b82; --err-soft: #3a1d1d;
+      --ok: #6fd3a0; --rec: #f28b82;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 "Segoe UI", "Nirmala UI", system-ui, sans-serif;
+  }
+  main { max-width: 920px; margin: 0 auto; padding: 28px 16px 48px; }
+  header h1 { margin: 0; font-size: 1.6rem; letter-spacing: -0.01em; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  .deps { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0 22px; font-size: .9rem; color: var(--muted); }
+  .dep::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    margin-right: 6px; background: var(--line); vertical-align: 1px; }
+  .dep[data-state="ready"]::before { background: var(--ok); }
+  .dep[data-state="warming_up"]::before { background: var(--warn); }
+  .dep[data-state="down"]::before { background: var(--err); }
+
+  .controls { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px; display: grid; gap: 18px; }
+  .row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .label { font-weight: 600; min-width: 90px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg label { padding: 8px 18px; cursor: pointer; user-select: none; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg input:checked + span { color: var(--accent-ink); }
+  .seg label:has(input:checked) { background: var(--accent); color: var(--accent-ink); }
+  .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+  button { font: inherit; border: 0; border-radius: 12px; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .55; }
+  #record { background: var(--accent); color: var(--accent-ink); font-size: 1.25rem; font-weight: 600;
+    padding: 16px 34px; min-width: 240px; }
+  #record.recording { background: var(--rec); opacity: 1; }
+  #retry { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 10px 20px; }
+
+  .status { font-size: 1.1rem; font-weight: 600; min-height: 1.6em; }
+  .steps { display: flex; gap: 8px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+  .steps li { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--muted); font-size: .9rem; }
+  .steps li[data-state="running"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .steps li[data-state="done"] { color: var(--ok); border-color: var(--ok); }
+  .steps li[data-state="done"]::before { content: "\2713  "; }
+  .steps li[data-state="failed"] { color: var(--err); border-color: var(--err); background: var(--err-soft); }
+
+  .error { display: none; background: var(--err-soft); color: var(--ink); border: 1px solid var(--err);
+    border-radius: 12px; padding: 14px 16px; }
+  .error.show { display: block; }
+  .error h2 { margin: 0 0 4px; font-size: 1.05rem; color: var(--err); }
+  .error p { margin: 0 0 12px; overflow-wrap: anywhere; }
+
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; min-height: 130px; }
+  .panel.wide { grid-column: 1 / -1; min-height: 0; }
+  .panel h3 { margin: 0 0 8px; font-size: .85rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .panel .body { font-size: 1.35rem; line-height: 1.55; overflow-wrap: anywhere; }
+  .panel .body.empty { color: var(--muted); font-size: 1rem; }
+  .panel .meta { margin-top: 10px; font-size: .8rem; color: var(--muted); overflow-wrap: anywhere; }
+  table.lat { width: 100%; border-collapse: collapse; font-size: .92rem; font-variant-numeric: tabular-nums; }
+  table.lat td { padding: 5px 4px; border-top: 1px solid var(--line); }
+  table.lat td:last-child { text-align: right; }
+  @media (max-width: 640px) { .panels { grid-template-columns: 1fr; } #record { width: 100%; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>SatSandesh — AI pipeline demo</h1>
+    <p>Microphone → real speech recognition (ASR) → real translation to English (MT). Runs fully offline.</p>
+  </header>
+
+  <div class="deps" aria-live="polite">
+    <span class="dep" id="dep-asr" data-state="unknown">ASR: checking…</span>
+    <span class="dep" id="dep-mt" data-state="unknown">MT: checking…</span>
+  </div>
+
+  <section class="controls">
+    <div class="row">
+      <span class="label">Language</span>
+      <div class="seg" role="radiogroup" aria-label="Spoken language">
+        <label><input type="radio" name="lang" value="te" checked><span>Telugu</span></label>
+        <label><input type="radio" name="lang" value="hi"><span>Hindi</span></label>
+      </div>
+    </div>
+    <div class="row">
+      <button id="record" type="button">Record (7s)</button>
+      <div>
+        <div class="status" id="status" aria-live="polite">Ready. Press Record and speak one sentence.</div>
+        <ol class="steps" id="steps"></ol>
+      </div>
+    </div>
+    <div class="error" id="error" role="alert">
+      <h2 id="error-title"></h2>
+      <p id="error-msg"></p>
+      <button id="retry" type="button">Try again</button>
+    </div>
+  </section>
+
+  <section class="panels" id="panels">
+    <div class="panel" id="panel-transcript">
+      <h3 id="transcript-title">Transcript (Telugu)</h3>
+      <div class="body empty">Waiting for a recording…</div>
+      <div class="meta"></div>
+    </div>
+    <div class="panel" id="panel-translation">
+      <h3>English translation</h3>
+      <div class="body empty">Waiting for a transcript…</div>
+      <div class="meta"></div>
+    </div>
+    <div class="panel wide" id="panel-latency">
+      <h3>Latency per stage (measured, ms)</h3>
+      <div class="body empty">No run yet.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const LANG_NAMES = { te: "Telugu", hi: "Hindi" };
+let RECORD_SECONDS = 7;
+
+// Pipeline stages, run in order; each maps 1:1 to POST /pipeline/<id> in app.py.
+// To add a stage (e.g. Week 7 TTS playback): add a panel in the HTML above, a
+// PipelineStage in app.py, and one entry here with the same shape.
+const STAGES = [
+  {
+    id: "record", step: "Record",
+    running: () => `Recording — speak now… ${RECORD_SECONDS}s`,
+    timeoutMs: () => (RECORD_SECONDS + 20) * 1000,
+    body: () => ({}),
+    render: (r, ctx) => { ctx.latency.push(["Record (microphone, wall clock)", r.latency_ms.record_wall]); },
+  },
+  {
+    id: "transcribe", step: "Transcribe",
+    running: () => "Transcribing… (ASR, faster-whisper)",
+    timeoutMs: () => 130000,
+    body: (ctx) => ({ source_language: ctx.lang }),
+    render: (r, ctx) => {
+      ctx.transcript = r.text;
+      fillPanel("panel-transcript", r.text, `model: ${r.model_version}`);
+      const l = r.latency_ms;
+      ctx.latency.push(["ASR — decode", l.decode], ["ASR — inference", l.inference],
+        ["ASR — postprocess", l.postprocess], ["ASR — service total", l.service_total],
+        ["ASR — round trip (console → service)", l.round_trip]);
+    },
+  },
+  {
+    id: "translate", step: "Translate",
+    running: () => "Translating to English… (MT, IndicTrans2)",
+    timeoutMs: () => 100000,
+    body: (ctx) => ({ text: ctx.transcript, source_language: ctx.lang }),
+    render: (r, ctx) => {
+      fillPanel("panel-translation", r.text || "(empty translation)", `model: ${r.model_version}`);
+      ctx.latency.push(["MT — service total", r.latency_ms.service_total],
+        ["MT — round trip (console → service)", r.latency_ms.round_trip]);
+    },
+  },
+];
+
+const $ = (id) => document.getElementById(id);
+const recordBtn = $("record"), statusEl = $("status"), stepsEl = $("steps");
+let busy = false, countdownTimer = null, elapsedTimer = null;
+
+function selectedLang() { return document.querySelector('input[name="lang"]:checked').value; }
+function setLangInputsDisabled(d) { document.querySelectorAll('input[name="lang"]').forEach(i => i.disabled = d); }
+
+function fillPanel(id, text, meta) {
+  const p = $(id), b = p.querySelector(".body");
+  b.textContent = text; b.classList.toggle("empty", false);
+  const m = p.querySelector(".meta"); if (m) m.textContent = meta || "";
+}
+function resetPanel(id, placeholder) {
+  const p = $(id), b = p.querySelector(".body");
+  b.textContent = placeholder; b.classList.add("empty");
+  const m = p.querySelector(".meta"); if (m) m.textContent = "";
+}
+function renderLatency(rows) {
+  const b = $("panel-latency").querySelector(".body");
+  if (!rows.length) { b.textContent = "No run yet."; b.classList.add("empty"); return; }
+  b.classList.remove("empty"); b.textContent = "";
+  const t = document.createElement("table"); t.className = "lat";
+  for (const [name, ms] of rows) {
+    if (ms === undefined || ms === null) continue;
+    const tr = t.insertRow();
+    tr.insertCell().textContent = name;
+    tr.insertCell().textContent = Number(ms).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
+  b.appendChild(t);
+}
+function renderSteps(states) {
+  stepsEl.textContent = "";
+  STAGES.forEach((s, i) => {
+    const li = document.createElement("li");
+    li.textContent = s.step; li.dataset.state = states[i] || "pending";
+    stepsEl.appendChild(li);
+  });
+}
+function showError(title, message) {
+  $("error-title").textContent = title;
+  $("error-msg").textContent = message;
+  $("error").classList.add("show");
+  $("retry").focus();
+}
+function hideError() { $("error").classList.remove("show"); }
+
+function resetAll() {
+  hideError();
+  const lang = selectedLang();
+  $("transcript-title").textContent = `Transcript (${LANG_NAMES[lang]})`;
+  resetPanel("panel-transcript", "Waiting for a recording…");
+  resetPanel("panel-translation", "Waiting for a transcript…");
+  renderLatency([]);
+  renderSteps([]);
+  statusEl.textContent = "Ready. Press Record and speak one sentence.";
+}
+
+function startCountdown() {
+  let left = RECORD_SECONDS;
+  recordBtn.textContent = `● Recording… ${left}s`;
+  recordBtn.classList.add("recording");
+  statusEl.textContent = `Recording — speak now… ${left}s left`;
+  countdownTimer = setInterval(() => {
+    left -= 1;
+    if (left > 0) {
+      recordBtn.textContent = `● Recording… ${left}s`;
+      statusEl.textContent = `Recording — speak now… ${left}s left`;
+    } else {
+      stopCountdown();
+      recordBtn.textContent = "Working…";
+      statusEl.textContent = "Finishing the recording…";
+    }
+  }, 1000);
+}
+function stopCountdown() {
+  if (countdownTimer) clearInterval(countdownTimer);
+  countdownTimer = null;
+  recordBtn.classList.remove("recording");
+}
+
+// Live elapsed-seconds readout so a slow CPU inference never looks like a hang.
+function startElapsed(stage) {
+  const t0 = Date.now();
+  statusEl.textContent = stage.running();
+  elapsedTimer = setInterval(() => {
+    statusEl.textContent = `${stage.running()} ${Math.floor((Date.now() - t0) / 1000)}s`;
+  }, 1000);
+}
+function stopElapsed() {
+  if (elapsedTimer) clearInterval(elapsedTimer);
+  elapsedTimer = null;
+}
+
+async function callStage(stage, ctx) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), stage.timeoutMs());
+  let resp;
+  try {
+    resp = await fetch(`/pipeline/${stage.id}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(stage.body(ctx)), signal: ctrl.signal,
+    });
+  } catch (e) {
+    if (e.name === "AbortError") {
+      throw { title: `${stage.step} step timed out`,
+              message: "No response in time. Check the service terminals/logs, then press Try again." };
+    }
+    throw { title: "The demo console is not responding",
+            message: "The page could not reach its own backend. Is start_demo.py still running? " +
+                     "Restart it if needed, then press Try again." };
+  } finally { clearTimeout(timer); }
+  let data = null;
+  try { data = await resp.json(); } catch (_) { /* non-JSON body */ }
+  if (!resp.ok) {
+    const err = data && data.error;
+    throw { title: (err && err.title) || `${stage.step} step failed`,
+            message: (err && err.message) || `Unexpected HTTP ${resp.status} from the demo console.` };
+  }
+  return data;
+}
+
+async function runPipeline() {
+  if (busy) return;
+  busy = true;
+  resetAll();
+  recordBtn.disabled = true; setLangInputsDisabled(true);
+  const ctx = { lang: selectedLang(), latency: [] };
+  const states = STAGES.map(() => "pending");
+  let i = 0;
+  try {
+    for (i = 0; i < STAGES.length; i++) {
+      const stage = STAGES[i];
+      states[i] = "running"; renderSteps(states);
+      if (stage.id === "record") startCountdown(); else startElapsed(stage);
+      const result = await callStage(stage, ctx);
+      stopCountdown(); stopElapsed();
+      stage.render(result, ctx);
+      renderLatency(ctx.latency);
+      states[i] = "done"; renderSteps(states);
+    }
+    statusEl.textContent = "Done. Press Record to try another sentence.";
+  } catch (e) {
+    stopCountdown(); stopElapsed();
+    states[i] = "failed"; renderSteps(states);
+    statusEl.textContent = `Stopped at the ${STAGES[i] ? STAGES[i].step : "pipeline"} step.`;
+    const title = (e && e.title) || "Something went wrong";
+    const message = (e && e.message) || String(e);
+    showError(title, message);
+  } finally {
+    busy = false;
+    recordBtn.disabled = false; setLangInputsDisabled(false);
+    recordBtn.textContent = `Record (${RECORD_SECONDS}s)`;
+  }
+}
+
+async function refreshDeps() {
+  // Skip while a run is in progress: the ASR/MT services answer health checks
+  // slowly (or not at all) mid-inference, which would flash a false "not running".
+  if (busy) return;
+  const label = { ready: "ready", warming_up: "warming up…", down: "not running" };
+  try {
+    const r = await fetch("/health/deps", { cache: "no-store" });
+    const d = await r.json();
+    if (d.record_seconds && !busy) {
+      RECORD_SECONDS = Math.round(d.record_seconds);
+      recordBtn.textContent = `Record (${RECORD_SECONDS}s)`;
+    }
+    for (const [key, name] of [["asr", "ASR"], ["mt", "MT"]]) {
+      const el = $(`dep-${key}`);
+      el.dataset.state = d[key].state;
+      el.textContent = `${name}: ${label[d[key].state] || d[key].state}`;
+      el.title = d[key].model ? `${d[key].url} — ${d[key].model}` : d[key].url;
+    }
+  } catch (_) {
+    for (const key of ["asr", "mt"]) {
+      $(`dep-${key}`).dataset.state = "down";
+      $(`dep-${key}`).textContent = `${key.toUpperCase()}: unknown (console not responding)`;
+    }
+  }
+}
+
+recordBtn.addEventListener("click", runPipeline);
+$("retry").addEventListener("click", () => { resetAll(); recordBtn.focus(); refreshDeps(); });
+document.querySelectorAll('input[name="lang"]').forEach(i => i.addEventListener("change", () => {
+  if (!busy) $("transcript-title").textContent = `Transcript (${LANG_NAMES[selectedLang()]})`;
+}));
+resetAll();
+refreshDeps();
+setInterval(refreshDeps, 5000);
+</script>
+</body>
+</html>
