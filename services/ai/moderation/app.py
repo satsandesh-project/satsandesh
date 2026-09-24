@@ -25,15 +25,14 @@ from contracts.ai.errors import ErrorCode, PipelineError
 from contracts.ai.moderation import ModerationDecision, ModerationRequest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from services.ai.moderation.classify import classify
 from services.ai.moderation.decide import decide
 from services.ai.moderation.engine import (
     Classifier,
-    ClassifierError,
     LlamaCppClassifier,
     StubClassifier,
 )
 from services.ai.moderation.policy import Policy, load_policy
-from services.ai.moderation.prompt import build_messages, parse_model_output
 from services.ai.moderation.settings import Settings
 
 logger = logging.getLogger("services.ai.moderation.app")
@@ -127,6 +126,7 @@ def create_app(settings: Settings) -> FastAPI:
                 "notices_source": state.policy.notices_source,
                 "exemplars": state.policy.exemplar_count(),
                 "has_exemplars": state.policy.has_exemplars,
+                "two_pass": settings.two_pass,
                 "hold_threshold": settings.hold_threshold,
                 "block_threshold": settings.block_threshold,
             },
@@ -174,30 +174,36 @@ def create_app(settings: Settings) -> FastAPI:
         if not state.slots.acquire(timeout=settings.timeout_s):
             return decide(None, failure_detail="classifier busy; no slot within timeout", **common)
 
-        messages = build_messages(policy, text)
-        future: Future[str] = state.executor.submit(state.classifier.complete, messages)
+        # The whole classification -- pass 1, the gate, and the conditional
+        # rationale pass -- runs as ONE unit of work, so it holds one slot
+        # under one timeout. See classify.py for why the passes can't be
+        # accounted for separately.
+        future: Future[ModerationDecision] = state.executor.submit(
+            classify,
+            text,
+            policy=policy,
+            classifier=state.classifier,
+            hold_threshold=settings.hold_threshold,
+            block_threshold=settings.block_threshold,
+            two_pass=settings.two_pass,
+            rationale_max_tokens=settings.rationale_max_tokens,
+        )
         # The slot is released when the inference actually finishes -- not
         # when we stop waiting for it. A timed-out inference still occupies
         # the CPU; letting the next request start would only thrash.
         future.add_done_callback(lambda _f: state.slots.release())
 
         try:
-            raw = future.result(timeout=max(0.0, deadline - time.monotonic()))
+            # classify() handles backend and parse failures itself, always
+            # returning a decision; only the timeout and a genuinely
+            # unexpected error surface here.
+            return future.result(timeout=max(0.0, deadline - time.monotonic()))
         except FutureTimeout:
             logger.warning("moderation timed out after %.1fs", settings.timeout_s)
             return decide(None, failure_detail=f"timeout after {settings.timeout_s:g}s", **common)
-        except ClassifierError as exc:
-            logger.error("moderation backend error: %s", exc)
-            return decide(None, failure_detail=f"backend error: {exc}", **common)
         except Exception as exc:
             logger.exception("unexpected moderation failure")
             return decide(None, failure_detail=f"unexpected: {type(exc).__name__}", **common)
-
-        verdict = parse_model_output(raw)
-        if verdict is None:
-            logger.warning("unparseable model output (%d chars)", len(raw))
-            return decide(None, failure_detail="unparseable model output", **common)
-        return decide(verdict, **common)
 
     return app
 

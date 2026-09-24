@@ -37,8 +37,18 @@ class Classifier(Protocol):
 
     def load(self) -> None: ...
 
-    def complete(self, messages: list[dict[str, str]]) -> str:
-        """Return the model's raw reply text for these chat messages."""
+    def complete(self, messages: list[dict[str, str]], *, brief: bool = False) -> str:
+        """Return the model's raw reply text for these chat messages.
+
+        `brief` asks for a label and confidence only -- the two-pass first
+        pass (see classify.py). A backend may ignore it; the parser accepts
+        both shapes.
+        """
+        ...
+
+    def complete_text(self, messages: list[dict[str, str]], *, max_tokens: int = 80) -> str:
+        """Free-text completion for the two-pass rationale. Never parsed as
+        a verdict."""
         ...
 
 
@@ -128,7 +138,7 @@ class StubClassifier:
     def load(self) -> None:
         return None
 
-    def complete(self, messages: list[dict[str, str]]) -> str:
+    def complete(self, messages: list[dict[str, str]], *, brief: bool = False) -> str:
         text = messages[-1]["content"]
         if STUB_FAIL_TOKEN in text:
             raise ClassifierError("stub asked to fail")
@@ -142,9 +152,17 @@ class StubClassifier:
                 break
         if STUB_UNSURE_TOKEN in text:
             confidence = 0.40
+        if brief:
+            # Mirror a real brief reply: no rationale field at all.
+            return json.dumps({"label": label, "confidence": confidence})
         return json.dumps(
             {"label": label, "confidence": confidence, "rationale": f"[stub] {rationale}"}
         )
+
+    def complete_text(self, messages: list[dict[str, str]], *, max_tokens: int = 80) -> str:
+        if STUB_FAIL_TOKEN in messages[-1]["content"]:
+            raise ClassifierError("stub asked to fail")
+        return "[stub] rationale for an already-decided label."
 
 
 # --------------------------------------------------------------------------
@@ -159,6 +177,18 @@ _JSON_SCHEMA = {
         "rationale": {"type": "string"},
     },
     "required": ["label", "confidence", "rationale"],
+}
+
+# Two-pass first pass: no rationale field at all, so the model cannot spend
+# tokens on one. parse_model_output already supplies a placeholder when
+# `rationale` is absent, so the same parser handles both shapes.
+_JSON_SCHEMA_BRIEF = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string", "enum": ["A", "B", "C", "D", "E"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+    "required": ["label", "confidence"],
 }
 
 
@@ -201,16 +231,38 @@ class LlamaCppClassifier:
             "moderation model loaded: %s (%.0f ms)", self.model_version, self.load_duration_ms
         )
 
-    def complete(self, messages: list[dict[str, str]]) -> str:
+    def complete(self, messages: list[dict[str, str]], *, brief: bool = False) -> str:
         if self._llm is None:
             raise ClassifierError("complete() called before load()")
+        # 24 tokens is ample for {"label": "A", "confidence": 0.95}; capping
+        # it is most of the two-pass saving, since generation rate -- not
+        # prompt size -- is what dominates on CPU.
         try:
             result = self._llm.create_chat_completion(
                 messages=messages,
                 temperature=0.0,
-                max_tokens=160,
-                response_format={"type": "json_object", "schema": _JSON_SCHEMA},
+                max_tokens=24 if brief else 160,
+                response_format={
+                    "type": "json_object",
+                    "schema": _JSON_SCHEMA_BRIEF if brief else _JSON_SCHEMA,
+                },
             )
         except Exception as exc:  # pragma: no cover - depends on the environment
             raise ClassifierError(f"inference failed: {exc}") from exc
+        return result["choices"][0]["message"]["content"] or ""
+
+    def complete_text(self, messages: list[dict[str, str]], *, max_tokens: int = 80) -> str:
+        """Free-text completion, no JSON schema -- the two-pass rationale.
+
+        Its output is never parsed into a verdict, only shown to a
+        moderator, so it is length-capped and otherwise unconstrained.
+        """
+        if self._llm is None:
+            raise ClassifierError("complete_text() called before load()")
+        try:
+            result = self._llm.create_chat_completion(
+                messages=messages, temperature=0.0, max_tokens=max_tokens
+            )
+        except Exception as exc:  # pragma: no cover - depends on the environment
+            raise ClassifierError(f"rationale inference failed: {exc}") from exc
         return result["choices"][0]["message"]["content"] or ""

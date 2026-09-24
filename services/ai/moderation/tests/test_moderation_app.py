@@ -31,6 +31,10 @@ def _settings(policy_path: Path, **overrides) -> Settings:
         "max_text_chars": 200,
         "max_concurrent": 1,
         "timeout_s": 2.0,
+        # Default off here so the existing cases keep exercising the
+        # single-call path; two-pass has its own tests below.
+        "two_pass": False,
+        "rationale_max_tokens": 80,
         "port": 8003,
     }
     base.update(overrides)
@@ -172,9 +176,13 @@ def test_timeout_fails_closed_and_frees_the_slot_afterwards(sample_policy_path: 
         def load(self) -> None:
             pass
 
-        def complete(self, messages):
+        def complete(self, messages, *, brief: bool = False):
             time.sleep(0.5)
             return '{"label": "A", "confidence": 0.9, "rationale": "late"}'
+
+        def complete_text(self, messages, *, max_tokens: int = 80):
+            time.sleep(0.5)
+            return "late rationale"
 
     app = create_app(_settings(sample_policy_path, timeout_s=0.1))
     app.state.moderation.classifier = SlowStub()

@@ -37,10 +37,12 @@ Ports: 8001 mock, 8002 ASR, **8003 moderation**.
 
 ```
 text ──► bound (empty? too long? → 422 PipelineError)
-     ──► prompt.build_messages(policy, text)     policy from docs/policy-taxonomy.md
-     ──► backend.complete(messages)              serialised; timeout
-     ──► prompt.parse_model_output(raw)          strict JSON → RawVerdict | None
-     ──► decide.decide(verdict, policy, ...)     the gate (below)
+     ──► classify.classify(...)                  one slot, one timeout
+          ├► build_messages(policy, text)        policy from docs/policy-taxonomy.md
+          ├► backend.complete(brief=True)        pass 1: {label, confidence}
+          ├► parse_model_output(raw)             strict JSON → RawVerdict | None
+          ├► decide.decide(verdict, ...)         the gate (below)
+          └► backend.complete_text(...)          pass 2: rationale, ONLY if not ALLOW
      ──► ModerationDecision                      stamped policy_version + model_version
 ```
 
@@ -113,6 +115,8 @@ label and a confidence in `[0, 1]` is *no verdict* → `HOLD`. Red-team round
 | `MOD_MAX_TEXT_CHARS` | `4000` | |
 | `MOD_MAX_CONCURRENT` | `1` | |
 | `MOD_TIMEOUT_S` | `20` | |
+| `MOD_TWO_PASS` | `1` | verdict first, rationale only for non-ALLOW — see "Measured" |
+| `MOD_RATIONALE_MAX_TOKENS` | `80` | second-pass length cap |
 | `MOD_PORT` | `8003` | |
 
 An invalid value fails at import, with the variable named.
@@ -188,15 +192,65 @@ quality claim. The real evaluation is Week 8's harness against a held-out
 set.
 
 **What this means for Week 8.** ~10 s p50 against the proposal's 1–2 s
-budget for the policy check, on CPU. The recommended fix is a **two-pass
-output**: return `{label, confidence}` first (~12 tokens, ~2–3 s here) and
-generate the rationale only for non-ALLOW outcomes. With 85–95 % of traffic
-expected to auto-allow, most messages take the short path and moderators
-still get a rationale on every hold. Contract-compatible; not done yet.
+budget for the policy check, on CPU. The fix — **two-pass output**, return
+`{label, confidence}` first and generate the rationale only for non-ALLOW
+outcomes — is now implemented and measured; see the next section. It takes
+an auto-allowed message to ~4.5 s. Still above budget on this hardware, but
+half of what it was, and the remaining gap is the model's generation rate
+on a 2017 laptop CPU, not the prompt.
 
 **3.5 GB peak RAM** also matters for deployment: the AI services and the
 gateway share one host, and this is a 4-bit 3B model. Running it alongside
 ASR on the same box needs checking before Week 8, not on the day.
+
+### Two-pass: measured, 2026-09-24
+
+The fix proposed above, implemented (`classify.py`, `MOD_TWO_PASS`, on by
+default) and A/B'd on the same 26 messages with one loaded model.
+
+| | single pass | two-pass |
+|---|---|---|
+| **ALLOW messages** (the 85–95 % case) | 10.13 s p50 | **4.54 s p50** |
+| non-ALLOW messages | 11.23 s p50 | 10.73 s p50 |
+| Overall p50 | 10.34 s | 9.13 s |
+| Overall p90 | 12.01 s | 12.03 s |
+| First call (cold prompt) | 45.3 s | 6.1 s |
+| **Projected mean at 90 % ALLOW** | 10.24 s | **5.15 s** |
+| Projected mean at 85 % ALLOW | 10.29 s | 5.46 s |
+
+**An auto-allowed message costs less than half what it did, and a held one
+costs no more than before.** That second column is the point: pass 2 is
+nearly free because it *continues pass 1's conversation* instead of
+starting a new prompt, so llama.cpp reuses the cached prefix and evaluates
+only the ~40 appended tokens rather than re-reading ~480 tokens of policy.
+
+That was not true of the first attempt. Giving pass 2 its own system
+prompt invalidated the cache and cost roughly a whole extra
+classification: non-ALLOW p50 went to ~27 s and overall p50 to 26.8 s —
+*worse* than single-pass. The optimisation only works with the prefix
+shared, which is why `test_rationale_pass_continues_the_first_pass_conversation`
+exists: a refactor that rebuilds the prompt would undo this silently and
+every other test would still pass.
+
+**Two-pass does change some decisions, and that should not be glossed
+over.** 2 of 26 messages decided differently between the modes:
+
+| Message | Single pass | Two-pass | Expected |
+|---|---|---|---|
+| C6 (chain message, "forward this and Swami will bless you") | A / ALLOW | C / NUDGE | C |
+| D4 (favouritism, names a person) | C / NUDGE | D / HOLD | D |
+
+Both moved toward the safer and, on this set, the *correct* label — C6 was
+the single permissive miss called out in `bringup-2026-09-22.md`. But this
+is two messages on a 26-message set that is not independent of the policy,
+so it is an observation, not evidence that two-pass classifies better. The
+cause is mundane: the brief prompt asks for a different output shape, so
+the model's confidence shifts slightly and can cross the 0.70 threshold.
+
+Consequences: the unit test asserting identical decisions holds for a
+deterministic backend only, and says so. Re-run this A/B after the
+taxonomy workshop lands real exemplars, on a held-out set, before treating
+either mode as the accuracy baseline.
 
 Earlier run for comparison (2026-09-22, 26 messages, before `--n` and the
 RAM measurement existed): p50 9.5 s, p90 14.0 s, 21/26 correct actions, 0

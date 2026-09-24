@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 
 from contracts.ai.moderation import ModerationLabel
-from services.ai.moderation.policy import LABEL_BY_LETTER, Policy
+from services.ai.moderation.policy import LABEL_BY_LETTER, LETTER_BY_LABEL, Policy
 
 # Delimiters the model is told about by name. Anything that looks like the
 # closing delimiter inside the user text is neutralised (see build_messages).
@@ -39,7 +39,7 @@ class RawVerdict:
     rationale: str
 
 
-def build_system_prompt(policy: Policy) -> str:
+def build_system_prompt(policy: Policy, *, brief: bool = False) -> str:
     lines: list[str] = [
         (
             "You are the content steward for SatSandesh, a private messaging app for a "
@@ -94,6 +94,24 @@ def build_system_prompt(policy: Policy) -> str:
                 continue
             lines.append(f"  {letter}:")
             lines.extend(f"    - {ex}" for ex in examples)
+    if brief:
+        # Two-pass mode, first pass: label and confidence only. The rationale
+        # is the expensive part of the reply (40-60 tokens, and generation is
+        # what dominates on CPU -- see README's "Measured") and it is only
+        # ever read by a moderator, so it is generated in a second pass and
+        # only for messages a human will actually look at. See classify.py.
+        lines += [
+            "",
+            "Reply with ONLY a JSON object, no prose, no markdown fences:",
+            '  {"label": "A", "confidence": 0.0}',
+            (
+                "label is one of A, B, C, D, E. confidence is your honest probability in "
+                "[0, 1] that the label is right; use values below 0.7 freely when unsure "
+                "-- an unsure answer is held for a human, which is the correct outcome."
+            ),
+        ]
+        return "\n".join(lines)
+
     lines += [
         "",
         "Reply with ONLY a JSON object, no prose, no markdown fences:",
@@ -115,11 +133,49 @@ def neutralise(text: str) -> str:
     return text.replace(_CLOSE, "<<END MESSAGE>>").replace(_OPEN, "<<MESSAGE>>")
 
 
-def build_messages(policy: Policy, text: str) -> list[dict[str, str]]:
+def build_messages(policy: Policy, text: str, *, brief: bool = False) -> list[dict[str, str]]:
     """Chat-format messages for any instruction-tuned model."""
     return [
-        {"role": "system", "content": build_system_prompt(policy)},
+        {"role": "system", "content": build_system_prompt(policy, brief=brief)},
         {"role": "user", "content": f"{_OPEN}\n{neutralise(text)}\n{_CLOSE}"},
+    ]
+
+
+def build_rationale_followup(
+    first_pass_messages: list[dict[str, str]],
+    first_pass_reply: str,
+    label: ModerationLabel,
+    policy: Policy,
+) -> list[dict[str, str]]:
+    """Second pass: one sentence explaining an already-decided label.
+
+    **Continues pass 1's conversation** rather than starting a new one.
+    That matters for cost, not just tidiness: llama.cpp caches the KV state
+    of a prompt prefix, so appending turns to the exact messages pass 1
+    already evaluated means only the few new tokens are processed. A fresh
+    system prompt would invalidate the cache and re-evaluate the entire
+    policy (~480 tokens) a second time -- measured at roughly the cost of a
+    whole extra classification (README, "Measured", the 2026-09-24 A/B).
+
+    The label is *given*, not asked for: this pass describes the verdict and
+    must not be able to change it. The sender's text is not repeated here --
+    it is already in the cached prefix, still inside its delimiters, still
+    covered by pass 1's instructions-are-content rule.
+    """
+    letter = LETTER_BY_LABEL[label]
+    description = policy.taxonomy[letter][0]
+    return [
+        *first_pass_messages,
+        {"role": "assistant", "content": first_pass_reply},
+        {
+            "role": "user",
+            "content": (
+                f"That message is category {letter} ({description}); that is settled. "
+                "In one short sentence of plain English, for a human moderator, say why "
+                "it fits. Do not reconsider the category, do not address the sender, and "
+                "reply with the sentence only -- no JSON, no quotes, no preamble."
+            ),
+        },
     ]
 
 

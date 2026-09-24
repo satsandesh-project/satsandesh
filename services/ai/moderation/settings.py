@@ -54,6 +54,8 @@ class Settings:
     max_text_chars: int
     max_concurrent: int
     timeout_s: float
+    two_pass: bool
+    rationale_max_tokens: int
     port: int
 
     @classmethod
@@ -108,6 +110,20 @@ class Settings:
         # dropped and never allowed by default.
         timeout_s = _env_float("MOD_TIMEOUT_S", "20", 0.1, 600)
 
+        # Two-pass output (services/ai/moderation/classify.py): ask for
+        # {label, confidence} first, and generate the moderator-facing
+        # rationale only when the gated action is not ALLOW. On by default
+        # -- it is the difference between ~10s and ~2-3s per message for
+        # the 85-95% of traffic that auto-allows (README, "Measured").
+        # Set MOD_TWO_PASS=0 to go back to one call per message.
+        two_pass = os.environ.get("MOD_TWO_PASS", "1").strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+        rationale_max_tokens = _env_int("MOD_RATIONALE_MAX_TOKENS", "80", 8, 512)
+
         # 8003: 8001 is the mock server, 8002 the real ASR service.
         port = _env_int("MOD_PORT", "8003", 1, 65535)
 
@@ -120,5 +136,7 @@ class Settings:
             max_text_chars=max_text_chars,
             max_concurrent=max_concurrent,
             timeout_s=timeout_s,
+            two_pass=two_pass,
+            rationale_max_tokens=rationale_max_tokens,
             port=port,
         )
