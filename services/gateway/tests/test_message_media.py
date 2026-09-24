@@ -275,6 +275,13 @@ def test_a_message_whose_media_was_since_swept_reads_back_with_null_media_ref(
     alice = _make_db_user(db_session, "Alice")
     bob = _make_db_user(db_session, "Bob")
     media = _upload_real_media(db_session, author_id=alice.id)
+    # Captured as plain values before the delete below -- db_session
+    # expires ORM instances on commit by default, and media's own row
+    # genuinely won't exist anymore after that delete; reading media.id
+    # afterward would trigger a lazy reload against a row that's really
+    # gone (ObjectDeletedError), not the comparison this test wants.
+    media_id = media.id
+    media_format = media.format
 
     message = create_message(
         db_session,
@@ -282,23 +289,24 @@ def test_a_message_whose_media_was_since_swept_reads_back_with_null_media_ref(
         target_type="user",
         target_user_id=bob.id,
         kind="voice",
-        original_media_ref=f"media:{media.id}",
+        original_media_ref=f"media:{media_id}",
         media_duration_ms=3000,
-        media_object_id=media.id,
-        media_format=media.format,
+        media_object_id=media_id,
+        media_format=media_format,
         client_msg_id=uuid.uuid4(),
     )
+    message_id = message.id
     db_session.commit()
-    assert message.media_object_id == media.id
+    assert message.media_object_id == media_id
 
-    db_session.execute(MediaObject.__table__.delete().where(MediaObject.id == media.id))
+    db_session.execute(MediaObject.__table__.delete().where(MediaObject.id == media_id))
     db_session.commit()
     db_session.expire_all()
 
-    refreshed = db_session.get(type(message), message.id)
+    refreshed = db_session.get(Message, message_id)
     assert refreshed.media_object_id is None, (
         "ON DELETE SET NULL should have cleared this automatically"
     )
-    assert refreshed.original_media_ref == f"media:{media.id}", (
+    assert refreshed.original_media_ref == f"media:{media_id}", (
         "the historical text reference must survive even though the row it pointed at is gone"
     )
