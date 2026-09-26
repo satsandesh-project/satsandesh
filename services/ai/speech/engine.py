@@ -87,7 +87,7 @@ def decode_via_ffmpeg(path: Path, timeout_s: float = FFMPEG_TIMEOUT_S) -> np.nda
     ]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, timeout=timeout_s)
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=False)
     except FileNotFoundError as exc:
         raise FfmpegNotFoundError(
             f"ffmpeg executable {ffmpeg_bin!r} was not found (checked FFMPEG_PATH, "
