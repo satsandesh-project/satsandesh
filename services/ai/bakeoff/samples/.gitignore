@@ -1,0 +1,5 @@
+# Real recorded voice samples live here. This is personal data (a real
+# person's voice) — never tracked, never staged, never committed, regardless
+# of extension or filename. See services/ai/bakeoff/README.md.
+*
+!.gitignore
