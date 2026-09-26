@@ -94,15 +94,11 @@ def decode_via_ffmpeg(path: Path, timeout_s: float = FFMPEG_TIMEOUT_S) -> np.nda
             "then PATH) — install ffmpeg or set FFMPEG_PATH to its binary location"
         ) from exc
     except subprocess.TimeoutExpired as exc:
-        raise FfmpegDecodeError(
-            f"ffmpeg timed out after {timeout_s}s decoding {path}"
-        ) from exc
+        raise FfmpegDecodeError(f"ffmpeg timed out after {timeout_s}s decoding {path}") from exc
 
     if result.returncode != 0:
         stderr_tail = result.stderr.decode("utf-8", errors="replace").strip()[-500:]
-        raise FfmpegDecodeError(
-            f"ffmpeg exited {result.returncode} decoding {path}: {stderr_tail}"
-        )
+        raise FfmpegDecodeError(f"ffmpeg exited {result.returncode} decoding {path}: {stderr_tail}")
 
     if not result.stdout:
         raise FfmpegDecodeError(f"ffmpeg produced no audio output decoding {path}")

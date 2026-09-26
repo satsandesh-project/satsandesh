@@ -128,9 +128,7 @@ def test_transcribe_mp3_returns_well_formed_response(client: TestClient) -> None
 
 
 def test_transcribe_corrupt_file_returns_pipeline_error(client: TestClient) -> None:
-    payload = _transcribe_payload(
-        audio_format="mp3", uri=_fixture_uri("tone_2s_corrupt.mp3")
-    )
+    payload = _transcribe_payload(audio_format="mp3", uri=_fixture_uri("tone_2s_corrupt.mp3"))
     resp = client.post("/v1/transcribe", json=payload)
     assert resp.status_code == 422
 
