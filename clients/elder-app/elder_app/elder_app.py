@@ -134,7 +134,13 @@ TINTS = ["#F2E3C9", "#E7EFE6", "#F7E2D6", "#EFE7D2", "#E9E6DE"]
 
 STYLESHEETS = [
     "https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;700;800"
-    "&family=Noto+Sans+Telugu:wght@400;600;700&family=Lora:wght@600&display=swap"
+    "&family=Noto+Sans+Telugu:wght@400;600;700&family=Lora:wght@600&display=swap",
+    # Responsive root font-size (assets/global.css) -- see that file's own
+    # comment for why this is needed: every rem-based size below is
+    # relative to the root, which stays browser-default 16px on every
+    # device without this, making the app read smaller on a phone's
+    # much smaller physical screen than on the laptop it was built on.
+    "/global.css",
 ]
 
 # ---------------------------------------------------------------------------
