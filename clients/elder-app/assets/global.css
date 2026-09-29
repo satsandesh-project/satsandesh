@@ -1,0 +1,24 @@
+/* Responsive base font size -- every rem-based size in elder_app.py
+   (font sizes, most spacing) is relative to this root value. Without
+   this, the root stays browser-default 16px on every device, so a
+   phone with a much smaller physical screen than the laptop this app
+   was built on renders the exact same CSS-pixel text -- proportionally
+   much smaller and harder to read for an elder, even though nothing
+   in the component code changed. Bumping the root on small/medium
+   screens scales every rem value at once; desktop is left at 16px, so
+   the laptop experience (already confirmed fine) is unchanged. */
+html {
+  font-size: 16px;
+}
+
+@media (max-width: 600px) {
+  html {
+    font-size: 19px;
+  }
+}
+
+@media (min-width: 601px) and (max-width: 1024px) {
+  html {
+    font-size: 17px;
+  }
+}
