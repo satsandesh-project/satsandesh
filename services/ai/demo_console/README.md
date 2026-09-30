@@ -70,7 +70,9 @@ specific message and a **Try again** button. No page reload or restart is needed
   - On startup, the console polls ASR/MT readiness and logs the result to its
     terminal/log without blocking startup.
 - `static/index.html` is plain HTML and vanilla JS with no build step and no
-  external fonts or scripts.
+  external fonts or scripts. Besides the mic flow, it has a "type text directly"
+  box that sends typed/pasted text straight to `/pipeline/translate` (no
+  recording or ASR), as a fallback when the mic or ASR is unavailable.
 - `start_demo.py` is the launcher described above.
 
 Tests (no models or microphone needed):

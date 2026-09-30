@@ -69,6 +69,15 @@
   .error h2 { margin: 0 0 4px; font-size: 1.05rem; color: var(--err); }
   .error p { margin: 0 0 12px; overflow-wrap: anywhere; }
 
+  .divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .85rem; margin: 2px 0; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .text-flow { display: flex; flex-direction: column; gap: 10px; }
+  #text-input { width: 100%; min-height: 90px; resize: vertical; font: inherit; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); }
+  #text-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #text-translate { background: var(--accent); color: var(--accent-ink); font-size: 1rem; font-weight: 600;
+    padding: 10px 26px; align-self: flex-start; }
+
   .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
   .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; min-height: 130px; }
   .panel.wide { grid-column: 1 / -1; min-height: 0; }
@@ -109,6 +118,13 @@
         <ol class="steps" id="steps"></ol>
       </div>
     </div>
+    <div class="divider">— or type text directly —</div>
+    <div class="text-flow">
+      <textarea id="text-input" placeholder="Type or paste a Telugu or Hindi sentence…"
+        aria-label="Text to translate"></textarea>
+      <button id="text-translate" type="button" disabled>Translate</button>
+    </div>
+
     <div class="error" id="error" role="alert">
       <h2 id="error-title"></h2>
       <p id="error-msg"></p>
@@ -179,6 +195,7 @@ const STAGES = [
 
 const $ = (id) => document.getElementById(id);
 const recordBtn = $("record"), statusEl = $("status"), stepsEl = $("steps");
+const textInput = $("text-input"), textTranslateBtn = $("text-translate");
 let busy = false, countdownTimer = null, elapsedTimer = null;
 
 function selectedLang() { return document.querySelector('input[name="lang"]:checked').value; }
@@ -303,6 +320,7 @@ async function runPipeline() {
   busy = true;
   resetAll();
   recordBtn.disabled = true; setLangInputsDisabled(true);
+  textInput.disabled = true; textTranslateBtn.disabled = true;
   const ctx = { lang: selectedLang(), latency: [] };
   const states = STAGES.map(() => "pending");
   let i = 0;
@@ -329,6 +347,49 @@ async function runPipeline() {
     busy = false;
     recordBtn.disabled = false; setLangInputsDisabled(false);
     recordBtn.textContent = `Record (${RECORD_SECONDS}s)`;
+    textInput.disabled = false; updateTextTranslateDisabled();
+  }
+}
+
+// Standalone fallback path: typed/pasted text straight to MT, skipping record+transcribe
+// entirely. Reuses the existing "translate" stage definition (same request shape, same
+// render-into-panel-translation logic, same latency-row labels) — the only difference is
+// ctx.transcript comes from the textarea instead of a prior ASR call.
+const translateStageDef = STAGES.find((s) => s.id === "translate");
+
+function updateTextTranslateDisabled() {
+  textTranslateBtn.disabled = busy || !textInput.value.trim();
+}
+
+async function runTextTranslate() {
+  if (busy) return;
+  busy = true;
+  hideError();
+  recordBtn.disabled = true; setLangInputsDisabled(true);
+  textInput.disabled = true; textTranslateBtn.disabled = true;
+  resetPanel("panel-translation", "Translating…");
+  renderLatency([]);
+  renderSteps([]);
+  const ctx = { transcript: textInput.value.trim(), lang: selectedLang(), latency: [] };
+  $("transcript-title").textContent = `Input text (${LANG_NAMES[ctx.lang]})`;
+  fillPanel("panel-transcript", ctx.transcript, "typed text — ASR skipped");
+  try {
+    startElapsed(translateStageDef);
+    const result = await callStage(translateStageDef, ctx);
+    stopElapsed();
+    translateStageDef.render(result, ctx);
+    renderLatency(ctx.latency);
+    statusEl.textContent = "Done. Type another sentence, or press Record to use the microphone.";
+  } catch (e) {
+    stopElapsed();
+    statusEl.textContent = "Stopped at the Translate step.";
+    const title = (e && e.title) || "Something went wrong";
+    const message = (e && e.message) || String(e);
+    showError(title, message);
+  } finally {
+    busy = false;
+    recordBtn.disabled = false; setLangInputsDisabled(false);
+    textInput.disabled = false; updateTextTranslateDisabled();
   }
 }
 
@@ -359,11 +420,14 @@ async function refreshDeps() {
 }
 
 recordBtn.addEventListener("click", runPipeline);
+textTranslateBtn.addEventListener("click", runTextTranslate);
+textInput.addEventListener("input", updateTextTranslateDisabled);
 $("retry").addEventListener("click", () => { resetAll(); recordBtn.focus(); refreshDeps(); });
 document.querySelectorAll('input[name="lang"]').forEach(i => i.addEventListener("change", () => {
   if (!busy) $("transcript-title").textContent = `Transcript (${LANG_NAMES[selectedLang()]})`;
 }));
 resetAll();
+updateTextTranslateDisabled();
 refreshDeps();
 setInterval(refreshDeps, 5000);
 </script>
