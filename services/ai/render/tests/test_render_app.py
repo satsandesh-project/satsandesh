@@ -23,13 +23,13 @@ import pytest
 
 os.environ.setdefault("HF_TOKEN", "test-token-unused-by-stub-tests")
 
-import services.ai.render.app as render_app  # noqa: E402
-from contracts.ai.common import DegradedReason  # noqa: E402
-from contracts.ai.language import LanguageCode  # noqa: E402
-from contracts.ai.render import RenderResponse  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-from services.ai.render.engine import MtEngine, TranslationResult, flores_code_for  # noqa: E402
-from services.ai.render.settings import Settings, SettingsError  # noqa: E402
+import services.ai.render.app as render_app
+from contracts.ai.common import DegradedReason
+from contracts.ai.language import LanguageCode
+from contracts.ai.render import RenderResponse
+from fastapi.testclient import TestClient
+from services.ai.render.engine import MtEngine, TranslationResult, flores_code_for
+from services.ai.render.settings import Settings, SettingsError
 
 _STUB_TRANSLATIONS = {
     LanguageCode.HINDI: "सुप्रभात, आपका दिन शांतिपूर्ण हो।",
@@ -142,9 +142,12 @@ def test_health(stub_mt_client: TestClient) -> None:
     render_app._ready = False
     try:
         assert stub_mt_client.get("/health/ready").status_code == 503
-        assert stub_mt_client.post(
-            "/v1/render", json={"pivot_text": "hi", "target_languages": ["hi"]}
-        ).status_code == 503
+        assert (
+            stub_mt_client.post(
+                "/v1/render", json={"pivot_text": "hi", "target_languages": ["hi"]}
+            ).status_code
+            == 503
+        )
     finally:
         render_app._ready = True
 
@@ -152,7 +155,10 @@ def test_health(stub_mt_client: TestClient) -> None:
 def test_render_hi_and_te_returns_two_real_results(stub_mt_client: TestClient) -> None:
     resp = stub_mt_client.post(
         "/v1/render",
-        json={"pivot_text": "Good morning, may your day be peaceful.", "target_languages": ["hi", "te"]},
+        json={
+            "pivot_text": "Good morning, may your day be peaceful.",
+            "target_languages": ["hi", "te"],
+        },
     )
     assert resp.status_code == 200
     parsed = RenderResponse.model_validate(resp.json())
@@ -179,7 +185,9 @@ def test_render_dedupes_languages(stub_mt_client: TestClient) -> None:
 
 
 def test_render_empty_target_languages_is_rejected_by_contract(stub_mt_client: TestClient) -> None:
-    resp = stub_mt_client.post("/v1/render", json={"pivot_text": "Good morning", "target_languages": []})
+    resp = stub_mt_client.post(
+        "/v1/render", json={"pivot_text": "Good morning", "target_languages": []}
+    )
     assert resp.status_code == 422
 
 
@@ -237,7 +245,9 @@ def test_tts_failure_degrades_only_that_language(stub_mt_client: TestClient, mon
 
 def test_real_mt_end_to_end_hi_and_te(real_mt_client: TestClient) -> None:
     pivot = "Good morning, may your day be peaceful."
-    resp = real_mt_client.post("/v1/render", json={"pivot_text": pivot, "target_languages": ["hi", "te"]})
+    resp = real_mt_client.post(
+        "/v1/render", json={"pivot_text": pivot, "target_languages": ["hi", "te"]}
+    )
     assert resp.status_code == 200
     parsed = RenderResponse.model_validate(resp.json())
     hi, te = parsed.results

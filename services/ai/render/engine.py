@@ -201,7 +201,9 @@ class TtsEngine:
             path = self._fetch(voice_id)
             self._voices[language] = PiperVoice.load(str(path))
             self.load_durations_ms[voice_id] = (time.perf_counter() - start) * 1000
-            logger.info("TTS voice loaded: %s (%.1f ms)", voice_id, self.load_durations_ms[voice_id])
+            logger.info(
+                "TTS voice loaded: %s (%.1f ms)", voice_id, self.load_durations_ms[voice_id]
+            )
 
     def warm_up(self, texts: dict[LanguageCode, str], out_dir: Path) -> None:
         # First Piper synthesis is far slower than later ones (spike: 5.5 s vs 0.65 s),

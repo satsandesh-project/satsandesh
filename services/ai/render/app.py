@@ -107,9 +107,8 @@ async def health_ready() -> JSONResponse:
             "mt_load_duration_ms": mt_engine.load_duration_ms,
             "mt_warmup_duration_ms": mt_engine.warmup_duration_ms,
             "tts_voices": {
-                lang.value: tts_engine.model_version(lang) for lang in sorted(
-                    tts_engine.languages, key=lambda c: c.value
-                )
+                lang.value: tts_engine.model_version(lang)
+                for lang in sorted(tts_engine.languages, key=lambda c: c.value)
             },
             "tts_load_duration_ms": tts_engine.load_durations_ms,
             "tts_warmup_duration_ms": tts_engine.warmup_durations_ms,
@@ -157,7 +156,7 @@ def _render_one(pivot_text: str, language: LanguageCode) -> RenderResult:
         synth = tts_engine.synthesize(translation.text, language, out_path)
     except UnsupportedTargetLanguageError:
         raise
-    except Exception as exc:  # noqa: BLE001 - a TTS failure degrades this language only
+    except Exception as exc:
         logger.exception("TTS failed for %s", language.value)
         return RenderResult(
             language=language,
