@@ -59,6 +59,14 @@ indicconformer = [
     "onnxruntime==1.20.1",
     "onnx==1.20.1",
 ]
+# Render service's own en->indic MT step (IndicTrans2 stack) plus TTS (piper-tts); transformers is pinned to 4.44.2 as in the mt group on feat/ai-mt-pivot-w6, because 5.x breaks IndicTransToolkit's collator import (`ImportError: cannot import name 'PreTrainedTokenizerBase'`).
+render = [
+    "indictranstoolkit",
+    "transformers==4.44.2",
+    "torch",
+    "sentencepiece",
+    "piper-tts",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "moderation/tests", "mt/tests", "speech_indicconformer/tests"]
