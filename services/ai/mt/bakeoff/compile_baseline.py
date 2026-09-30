@@ -16,7 +16,7 @@ Usage:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean
 
@@ -73,19 +73,23 @@ def main() -> None:
     lines.append("# MT pivot adequacy baseline")
     lines.append("")
     lines.append(
-        f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} by "
+        f"Generated {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')} by "
         "`services/ai/mt/bakeoff/compile_baseline.py` from real human ratings in "
         "`ratings.json` (gitignored, never committed) against `results.json` "
         "(gitignored, never committed) -- both local-only. This document is the "
         "only artifact from that data meant to be shared."
     )
     lines.append("")
-    lines.append(f"**{len(rated)} rated entries.** Adequacy target (proposal): >= {ADEQUACY_TARGET}/5.")
+    lines.append(
+        f"**{len(rated)} rated entries.** Adequacy target (proposal): >= {ADEQUACY_TARGET}/5."
+    )
     lines.append("")
     lines.append("## Summary")
     lines.append("")
-    lines.append(f"- **Overall mean adequacy: {overall_mean:.2f}/5** "
-                  f"({'MEETS' if overall_mean >= ADEQUACY_TARGET else 'BELOW'} the {ADEQUACY_TARGET} target)")
+    lines.append(
+        f"- **Overall mean adequacy: {overall_mean:.2f}/5** "
+        f"({'MEETS' if overall_mean >= ADEQUACY_TARGET else 'BELOW'} the {ADEQUACY_TARGET} target)"
+    )
     lines.append("")
     lines.append("| Language pair | n | Mean adequacy |")
     lines.append("|---|---|---|")
@@ -105,7 +109,9 @@ def main() -> None:
     lines.append("|---|---|---|---|---|")
     for r in rated:
         note = (r["note"] or "").replace("|", "\\|")
-        lines.append(f"| {r['id']} | {r['source_type']} | {r['language_pair']} | {r['rating']} | {note} |")
+        lines.append(
+            f"| {r['id']} | {r['source_type']} | {r['language_pair']} | {r['rating']} | {note} |"
+        )
     lines.append("")
     lines.append(
         "Source text and translations themselves are not reproduced in this table "

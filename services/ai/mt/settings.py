@@ -28,7 +28,9 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        model_name = os.environ.get("MT_MODEL_NAME", "ai4bharat/indictrans2-indic-en-dist-200M").strip()
+        model_name = os.environ.get(
+            "MT_MODEL_NAME", "ai4bharat/indictrans2-indic-en-dist-200M"
+        ).strip()
         if not model_name:
             raise SettingsError("MT_MODEL_NAME must not be empty")
 

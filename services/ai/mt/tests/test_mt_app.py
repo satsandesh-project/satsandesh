@@ -65,7 +65,9 @@ def test_pivot_telugu_returns_genuinely_translated_text(client: TestClient) -> N
     assert parsed.degraded.active is False
     assert parsed.pivot_text.strip() != ""
     assert parsed.pivot_text != telugu_text  # genuinely translated, not an echo
-    assert parsed.pivot_text.encode("ascii", errors="ignore").decode() == parsed.pivot_text  # looks like English
+    assert (
+        parsed.pivot_text.encode("ascii", errors="ignore").decode() == parsed.pivot_text
+    )  # looks like English
 
 
 def test_pivot_hindi_returns_genuinely_translated_text(client: TestClient) -> None:

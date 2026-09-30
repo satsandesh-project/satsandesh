@@ -26,7 +26,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from services.ai.mt.settings import Settings  # noqa: E402
+from services.ai.mt.settings import Settings
 
 _BAKEOFF_DIR = Path(__file__).resolve().parent
 _FLORES_PATH = _BAKEOFF_DIR / "flores_samples.json"
@@ -62,8 +62,10 @@ def load_community_entries() -> list[dict]:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        if not (line.startswith("[te]") or line.startswith("[hi]")):
-            print(f"WARNING: community_samples.txt line {i + 1} has no [te]/[hi] tag, skipping: {line!r}")
+        if not line.startswith(("[te]", "[hi]")):
+            print(
+                f"WARNING: community_samples.txt line {i + 1} has no [te]/[hi] tag, skipping: {line!r}"
+            )
             continue
         lang = line[1:3]
         text = line[4:].strip()

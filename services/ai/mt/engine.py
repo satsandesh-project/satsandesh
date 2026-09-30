@@ -61,7 +61,9 @@ class TranslationResult:
 
     @property
     def total_duration_ms(self) -> float:
-        return self.preprocess_duration_ms + self.inference_duration_ms + self.postprocess_duration_ms
+        return (
+            self.preprocess_duration_ms + self.inference_duration_ms + self.postprocess_duration_ms
+        )
 
 
 class MtEngine:
@@ -129,7 +131,11 @@ class MtEngine:
             [text], src_lang=src_flores, tgt_lang=ENGLISH_FLORES, visualize=False
         )
         tokenized = self._tokenizer(
-            batch, padding="longest", truncation=True, max_length=self._max_length, return_tensors="pt"
+            batch,
+            padding="longest",
+            truncation=True,
+            max_length=self._max_length,
+            return_tensors="pt",
         ).to(self._device)
         preprocess_duration_ms = (time.perf_counter() - pre_start) * 1000
 
