@@ -46,6 +46,19 @@ mt = [
     "torch",
     "sentencepiece",
 ]
+# IndicConformer ASR alternative (services/ai/speech_indicconformer/). Versions are the
+# exact set verified working in docs/ASR_INDICCONFORMER_SPIKE.md, so they are pinned.
+# The torch 2.14.0 / torchaudio 2.11.0 skew is intentional: it is what the spike ran
+# with, and both import and run cleanly. torchcodec / torchaudio.load() is NOT used
+# (it fails against this machine's FFmpeg build); audio is decoded via stdlib `wave`
+# (or the ffmpeg binary) instead, same as the spike.
+indicconformer = [
+    "transformers==5.17.0",
+    "torchaudio==2.11.0",
+    "torch==2.14.0",
+    "onnxruntime==1.20.1",
+    "onnx==1.20.1",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "moderation/tests", "mt/tests"]
