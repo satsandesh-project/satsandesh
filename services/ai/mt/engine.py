@@ -21,10 +21,7 @@ import time
 from dataclasses import dataclass
 from importlib.metadata import version as _pkg_version
 
-import torch
 from contracts.ai.language import LanguageCode
-from IndicTransToolkit.processor import IndicProcessor
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 logger = logging.getLogger("services.ai.mt.engine")
 
@@ -76,7 +73,7 @@ class MtEngine:
         self._num_beams = num_beams
         self._max_length = max_length
         self._device: str | None = None
-        self._processor: IndicProcessor | None = None
+        self._processor = None
         self._tokenizer = None
         self._model = None
         self.load_duration_ms: float | None = None
@@ -91,6 +88,10 @@ class MtEngine:
         return f"{self._model_name}@indictranstoolkit-{_pkg_version('indictranstoolkit')}"
 
     def load(self) -> None:
+        import torch
+        from IndicTransToolkit.processor import IndicProcessor
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
         self._device = (
             ("cuda" if torch.cuda.is_available() else "cpu")
             if self._requested_device == "auto"
@@ -123,6 +124,7 @@ class MtEngine:
     def translate(self, text: str, source_language: LanguageCode) -> TranslationResult:
         if self._model is None or self._processor is None or self._tokenizer is None:
             raise RuntimeError("translate() called before load()")
+        import torch
 
         src_flores = flores_code_for(source_language)
 

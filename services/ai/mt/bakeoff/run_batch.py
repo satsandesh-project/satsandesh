@@ -26,7 +26,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from services.ai.mt.settings import Settings
+from services.ai.mt.settings import Settings  # noqa: E402 -- after sys.path setup above, by design
 
 _BAKEOFF_DIR = Path(__file__).resolve().parent
 _FLORES_PATH = _BAKEOFF_DIR / "flores_samples.json"
