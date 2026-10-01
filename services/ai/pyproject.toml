@@ -67,9 +67,19 @@ render = [
     "sentencepiece",
     "piper-tts",
 ]
+# Just the TTS half of `render`, above. render/tests/test_render_app.py always uses
+# the real Piper voices even in its "stub" tests (only the MT step is stubbed there) --
+# so this lean group (piper-tts only: onnxruntime + pathvalidate, no torch) is what
+# CI's ai-tests job installs to run that suite for real, without pulling in the
+# much heavier en-indic MT stack the `render` group above also carries. Only the one
+# `integration`-marked test in that file (the real en-indic model path) needs `render`
+# itself, and stays skipped by default.
+render-tts = [
+    "piper-tts",
+]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "moderation/tests", "mt/tests", "speech_indicconformer/tests"]
+testpaths = ["tests", "moderation/tests", "mt/tests", "speech_indicconformer/tests", "render/tests"]
 markers = [
     "integration: requires real model weights and a CUDA GPU; skipped by default",
 ]

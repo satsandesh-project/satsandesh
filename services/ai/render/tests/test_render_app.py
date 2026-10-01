@@ -240,9 +240,10 @@ def test_tts_failure_degrades_only_that_language(stub_mt_client: TestClient, mon
     _assert_playable_wav(te.audio.uri, te.audio.duration_ms)
 
 
-# ---- real MT model (skipped if the en-indic gate isn't accepted) ------------------
+# ---- real MT model (requires torch/transformers/IndicTransToolkit; `-m integration`) ---
 
 
+@pytest.mark.integration
 def test_real_mt_end_to_end_hi_and_te(real_mt_client: TestClient) -> None:
     pivot = "Good morning, may your day be peaceful."
     resp = real_mt_client.post(
