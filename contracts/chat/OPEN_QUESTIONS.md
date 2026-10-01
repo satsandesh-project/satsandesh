@@ -96,3 +96,32 @@ shape once settled. Mirrors `services/ai/OPEN_QUESTIONS.md`.
    `services/ai/`'s owner's file, not this package's, and this question
    needs that person's (or the team's) agreement, not a unilateral pick
    from the chat-contract side.
+
+## Moderation contract (proposed, issue #65) — open points for M2
+
+`contracts/chat/moderation.py` is M4's proposal for the moderator console's
+wire shape, ahead of Week 7. The gateway side (an append-only
+`moderation_events` table, its migration, and the routes) is M2's. Four
+things need a decision from whoever builds that side:
+
+1. **Where does the mapping from `ModerationAction` to `MessageStatus`
+   live?** This package deliberately keeps the two enums apart
+   (DECISIONS.md #6), so something has to own `HOLD -> held`,
+   `BLOCK -> blocked`, `ALLOW -> sent`. Proposed: the gateway, not either
+   contract.
+
+2. **Is `expected_event_id` enforced?** `ModerationReviewIn` carries it so
+   a second moderator cannot silently overwrite a decision they never saw.
+   That only works if the gateway rejects a stale one with a conflict.
+
+3. **Retention vs. an unresolved moderation state.** `find_expired_media`
+   (PR #71) sweeps every media row past `MEDIA_RETENTION_DAYS` with no
+   filter on moderation status, so a held or appealed message loses its
+   audio at 30 days — the same number as the proposed appeal window. Raised
+   on #71; recorded here because this contract is where a status filter
+   would get its vocabulary.
+
+4. **Appeals are not in this file.** They are Week 9. The shape above does
+   not foreclose them: an appeal is more events on the same message, plus a
+   thread the sender can read. Worth confirming that reading is the
+   intent before the table is created.
