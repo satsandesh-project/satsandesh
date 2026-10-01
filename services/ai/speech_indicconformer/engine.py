@@ -22,7 +22,6 @@ import time
 from dataclasses import dataclass
 
 import numpy as np
-
 from services.ai.speech.engine import (  # noqa: F401  (re-exported for app.py)
     FfmpegDecodeError,
     FfmpegNotFoundError,

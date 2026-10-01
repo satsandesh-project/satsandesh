@@ -61,7 +61,7 @@ indicconformer = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "moderation/tests", "mt/tests"]
+testpaths = ["tests", "moderation/tests", "mt/tests", "speech_indicconformer/tests"]
 markers = [
     "integration: requires real model weights and a CUDA GPU; skipped by default",
 ]

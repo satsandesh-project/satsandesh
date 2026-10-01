@@ -129,9 +129,7 @@ def test_transcribe_wav_response_matches_contract(client: TestClient) -> None:
     assert parsed.degraded.active is False
 
 
-@pytest.mark.parametrize(
-    ("fmt", "fixture"), [("ogg_opus", "tone_2s.opus"), ("mp3", "tone_2s.mp3")]
-)
+@pytest.mark.parametrize(("fmt", "fixture"), [("ogg_opus", "tone_2s.opus"), ("mp3", "tone_2s.mp3")])
 def test_transcribe_ffmpeg_formats(client: TestClient, fmt: str, fixture: str) -> None:
     resp = client.post("/v1/transcribe", json=_payload(fmt=fmt, uri=_uri(fixture)))
     assert resp.status_code == 200

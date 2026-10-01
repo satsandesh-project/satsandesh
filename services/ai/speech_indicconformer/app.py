@@ -26,7 +26,6 @@ from contracts.ai.language import LanguageCode
 from contracts.ai.transcribe import TranscribeRequest, TranscribeResponse
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-
 from services.ai.speech_indicconformer.engine import (
     FfmpegDecodeError,
     FfmpegNotFoundError,

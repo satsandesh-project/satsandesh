@@ -115,6 +115,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install ffmpeg
+        # speech_indicconformer/tests (and services/ai/speech/'s own ffmpeg
+        # decode path, same shared decode_via_ffmpeg()) needs the real `ffmpeg`
+        # binary on PATH for its ogg_opus/mp3 format tests -- confirmed via a
+        # CI-only diagnostic run that the ubuntu-latest image does NOT include
+        # it (`which ffmpeg` -> command not found), unlike most local dev
+        # machines, which is why this was never caught before now: this is the
+        # first suite in ai-tests to actually exercise that code path.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Install AI service dependencies
         # The same command services/ai/README.md gives developers, so CI and
         # a laptop resolve identical versions from one pyproject.toml.
