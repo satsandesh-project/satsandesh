@@ -70,10 +70,11 @@ class Settings:
             )
 
         # Voice ids are the two confirmed in docs/RENDER_ENVIRONMENT_SPIKE.md.
-        # NOTE: hi_IN-pratham-medium's training data is CC BY-NC-SA 4.0 (non-commercial);
-        # unresolved licensing question, see README.md. Not swapped silently.
+        # hi_IN-rohan-medium: IIT Madras IndicTTS data, commercially-permissive EULA.
+        # Swapped from hi_IN-pratham-medium (CC BY-NC-SA 4.0, non-commercial) per
+        # review — see services/ai/DECISIONS.md #12 and NOTICE.
         voice_te = os.environ.get("RENDER_VOICE_TE", "te_IN-maya-medium").strip()
-        voice_hi = os.environ.get("RENDER_VOICE_HI", "hi_IN-pratham-medium").strip()
+        voice_hi = os.environ.get("RENDER_VOICE_HI", "hi_IN-rohan-medium").strip()
         if not voice_te or not voice_hi:
             raise SettingsError("RENDER_VOICE_TE / RENDER_VOICE_HI must not be empty")
 

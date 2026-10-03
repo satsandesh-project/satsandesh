@@ -119,7 +119,7 @@ def test_settings_defaults_and_validation(monkeypatch) -> None:
     monkeypatch.setenv("HF_TOKEN", "x")
     s = Settings.from_env()
     assert s.mt_model_name == "ai4bharat/indictrans2-en-indic-dist-200M"
-    assert (s.voice_te, s.voice_hi) == ("te_IN-maya-medium", "hi_IN-pratham-medium")
+    assert (s.voice_te, s.voice_hi) == ("te_IN-maya-medium", "hi_IN-rohan-medium")
     assert s.port == 8005
     monkeypatch.setenv("RENDER_PORT", "abc")
     with pytest.raises(SettingsError):
@@ -172,7 +172,7 @@ def test_render_hi_and_te_returns_two_real_results(stub_mt_client: TestClient) -
         assert r.model_version_tts.startswith("piper:")
         assert r.duration_ms > 0
         _assert_playable_wav(r.audio.uri, r.audio.duration_ms)
-    assert parsed.results[0].model_version_tts.startswith("piper:hi_IN-pratham-medium")
+    assert parsed.results[0].model_version_tts.startswith("piper:hi_IN-rohan-medium")
     assert parsed.results[1].model_version_tts.startswith("piper:te_IN-maya-medium")
     assert _audio_path(parsed.results[0].audio.uri) != _audio_path(parsed.results[1].audio.uri)
 

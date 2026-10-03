@@ -10,7 +10,7 @@ language, does two internal steps and merges them into one `RenderResult`:
 1. **Translate** English → target with `ai4bharat/indictrans2-en-indic-dist-200M`
    (via IndicTransToolkit; `eng_Latn` → `hin_Deva` / `tel_Telu`).
 2. **Synthesize** that text with a Piper voice: `te_IN-maya-medium` (Telugu) or
-   `hi_IN-pratham-medium` (Hindi). Choice of voices comes from
+   `hi_IN-rohan-medium` (Hindi). Choice of voices comes from
    `docs/RENDER_ENVIRONMENT_SPIKE.md`.
 
 Endpoints: `GET /health/live`, `GET /health/ready` (503 until the MT model is loaded
@@ -44,19 +44,13 @@ The Piper voices come from `rhasspy/piper-voices`, which is **public and ungated
 are downloaded on first start into `render/voices/` and the HF token is deliberately not
 sent there.
 
-## Piper voice licence: UNRESOLVED
+## Piper voice licence
 
-`hi_IN-pratham-medium`'s model card says its training data is licensed
-**CC BY-NC-SA 4.0 (non-commercial, share-alike)**. This service currently uses it as the
-Hindi voice because it is the one confirmed working in the spike. **That is an open
-licensing question for the team, not a cleared choice.** If SatSandesh is or becomes
-commercial, this voice may not be usable.
-
-The alternatives `hi_IN-priyamvada-medium` and `hi_IN-rohan-medium` exist in the Piper
-catalogue, but their model cards were **not read** in the spike, so their licences are
-unknown. Nothing has been swapped. To try one, set `RENDER_VOICE_HI` (and read its card
-first). The Telugu voice's card (`maya`) points to the IIT Madras "indictts" licence,
-which was also not read.
+The Hindi voice, `hi_IN-rohan-medium`, is trained on IIT Madras's IndicTTS "Hindi Mono
+Male" data under IIT Madras's EULA: commercially permissive, but redistributors must
+retain IIT Madras's copyright notice (carried in the root `NOTICE`, which also covers the
+Telugu voice `te_IN-maya-medium`, same IndicTTS source). The default was swapped from a
+CC BY-NC-SA 4.0 (non-commercial) voice; see `services/ai/DECISIONS.md` #12.
 
 ## Configuration
 
@@ -66,7 +60,7 @@ which was also not read.
 | `RENDER_MT_MODEL_NAME` | `ai4bharat/indictrans2-en-indic-dist-200M` |
 | `RENDER_MT_DEVICE` | `auto` (cuda if available, else cpu; this dev machine has no CUDA) |
 | `RENDER_NUM_BEAMS` / `RENDER_MAX_LENGTH` | `5` / `256` |
-| `RENDER_VOICE_TE` / `RENDER_VOICE_HI` | `te_IN-maya-medium` / `hi_IN-pratham-medium` |
+| `RENDER_VOICE_TE` / `RENDER_VOICE_HI` | `te_IN-maya-medium` / `hi_IN-rohan-medium` |
 | `RENDER_VOICE_DIR` | `render/voices/` (gitignored) |
 | `RENDER_OUTPUT_DIR` | `render/output/` (gitignored) |
 | `RENDER_PORT` | `8005` |
@@ -104,7 +98,7 @@ Measured with a stubbed MT engine and real Piper:
 | Step | Time |
 |---|---|
 | Load Telugu voice (`te_IN-maya-medium`, includes download check) | 3.5 s |
-| Load Hindi voice (`hi_IN-pratham-medium`) | 7.2 s |
+| Load Hindi voice (measured on the previous default voice; not re-measured) | 7.2 s |
 | Warm-up synthesis, Telugu / Hindi | 0.35 s / 0.48 s |
 | Live render, hi (2.7 s of audio), stub MT + Piper | ~0.99 s |
 | Live render, te (3.9 s of audio), stub MT + Piper | ~1.37 s |

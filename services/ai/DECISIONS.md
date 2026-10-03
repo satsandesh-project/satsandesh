@@ -122,26 +122,24 @@ from `Documents/SatSandesh` to `Projects/SatSandesh` before any other member's
 directories existed — flagged here for visibility, not something to defend in
 review of the contracts themselves.
 
-## 12. Hindi Piper voice (`hi_IN-pratham-medium`) — CC BY-NC-SA licensing resolved as non-commercial scope
+## 12. Hindi Piper voice swapped from `pratham` to `rohan` — avoids the CC BY-NC-SA restriction entirely
 
-Flagged as an open item in `docs/RENDER_ENVIRONMENT_SPIKE.md` and in PR #78:
-the Hindi voice's training data (AI4Bharat's `indicnlp_corpus`, via trainer
-PravalX) is licensed CC BY-NC-SA 4.0 — non-commercial, share-alike. I checked
-the other two Hindi Piper voices as a possible swap: `priyamvada` draws from
-the same `indicnlp_corpus` under the same CC BY-NC-SA terms, so it does not
-avoid the issue. `rohan` is trained on IIT Madras's IndicTTS "Hindi Mono Male"
-data instead, under IIT Madras's own EULA, which reads as commercially
-permissive — a real alternative if this ever needs to stop being
-non-commercial, but it has not been through the human intelligibility check
-`pratham` has, so it is not swapped in here.
+Originally flagged in `docs/RENDER_ENVIRONMENT_SPIKE.md` and PR #78: the
+default Hindi voice, `hi_IN-pratham-medium`, is trained on AI4Bharat's
+`indicnlp_corpus` under CC BY-NC-SA 4.0 (non-commercial, share-alike).
+`hi_IN-priyamvada-medium` uses the same corpus under the same license, so it
+wasn't a fix. `hi_IN-rohan-medium` is trained on IIT Madras's IndicTTS
+"Hindi Mono Male" data instead, under IIT Madras's own EULA, which is
+commercially permissive (requires retaining IIT Madras's copyright notice on
+redistribution, no NC restriction).
 
-**Decision:** SatSandesh is a student capstone project, not a commercial
-product, so CC BY-NC-SA's non-commercial term is satisfied as-is. Attribution
-and share-alike terms are satisfied via the root `NOTICE` file. No voice swap
-needed for this PR.
+**Decision:** switched `RENDER_VOICE_HI`'s default to `hi_IN-rohan-medium`.
+Passed the same human intelligibility check `pratham` went through (two
+Hindi test phrases, confirmed acceptable by the project owner). This removes
+the non-commercial restriction entirely rather than scoping around it — it
+stays correct even if the project moves beyond the capstone or gets a public
+Apache-2.0 release (the Month-3 exit gate). `NOTICE` carries the required
+IIT Madras attribution for both `rohan` (Hindi) and `maya` (Telugu, same
+IndicTTS source, which was missing the same notice until this change).
 
-**Not closed forever:** if this project is ever deployed somewhere
-monetized (even indirectly — ads, a paid tier, institutional licensing), this
-license no longer permits the Hindi voice's current training data, and
-`hi_IN-rohan-medium` (or another commercially-licensed voice) would need to
-be evaluated and substituted at that point, not assumed to still be fine.
+`hi_IN-pratham-medium` is no longer used anywhere in this service.

@@ -6,23 +6,21 @@ It also uses the following third-party models/data, included here as
 attribution notices, not as a modification of this project's own license.
 
 ================================================================================
-Piper TTS voice: hi_IN-pratham-medium (Hindi)
+Piper TTS voice: hi_IN-rohan-medium (Hindi)
 ================================================================================
 Used by: services/ai/render/ (English-pivot -> Hindi speech)
 
-- Voice model trained by PravalX (https://github.com/PravalX), distributed via
-  the rhasspy/piper-voices Hugging Face repository.
-- Training data: AI4Bharat's indicnlp_corpus
-  (https://github.com/AI4Bharat/indicnlp_corpus).
-- License: Creative Commons Attribution-NonCommercial-ShareAlike 4.0
-  International (CC BY-NC-SA 4.0) — https://creativecommons.org/licenses/by-nc-sa/4.0/
+- Voice model fine-tuned from the US English "lessac" voice, using IIT
+  Madras's IndicTTS "Hindi Mono Male" data
+  (https://www.iitm.ac.in/donlab/indictts), distributed via the
+  rhasspy/piper-voices Hugging Face repository.
+- License: per IIT Madras's IndicTTS EULA
+  (https://www.iitm.ac.in/donlab/indictts/downloads/license.pdf) — commercially
+  permissive, but redistributors must retain this verbatim notice:
 
-SatSandesh is a non-commercial student capstone project. Any redistribution of
-this voice model, or of audio generated with it, outside that non-commercial
-scope must satisfy CC BY-NC-SA 4.0's attribution and share-alike terms, or use
-a different, commercially-licensed voice instead (see
-services/ai/DECISIONS.md #12 for the alternative evaluated: hi_IN-rohan-medium,
-IIT Madras IndicTTS data).
+  "COPYRIGHT 2016 TTS Consortium, TDIL, Meity represented by Hema A Murthy &
+  S Umesh, DEPARTMENT OF Computer Science and Engineering and Electrical
+  Engineering, IIT Madras. ALL RIGHTS RESERVED"
 
 ================================================================================
 Piper TTS voice: te_IN-maya-medium (Telugu)
@@ -34,6 +32,11 @@ Used by: services/ai/render/ (English-pivot -> Telugu speech)
   distributed via the rhasspy/piper-voices Hugging Face repository.
 - License: per IIT Madras's IndicTTS license terms
   (https://www.iitm.ac.in/donlab/indictts/downloads/license.pdf).
+- Redistributors must retain this verbatim IIT Madras notice:
+
+  "COPYRIGHT 2016 TTS Consortium, TDIL, Meity represented by Hema A Murthy &
+  S Umesh, DEPARTMENT OF Computer Science and Engineering and Electrical
+  Engineering, IIT Madras. ALL RIGHTS RESERVED"
 
 ================================================================================
 AI4Bharat IndicTrans2 (MT models)
