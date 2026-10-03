@@ -11,6 +11,7 @@ import io
 import itertools
 import math
 import os
+import re
 import struct
 import uuid
 import wave
@@ -32,7 +33,7 @@ from contracts.chat.envelope import FrameType, RawFrame, SyncBatch, SyncRequest
 from contracts.chat.errors import ErrorCode, ErrorPayload
 from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
-from contracts.chat.renderings import Rendering, RenderingDegradedReason
+from contracts.chat.renderings import LANGUAGE_PATTERN, Rendering, RenderingDegradedReason
 
 app = FastAPI(title="SatSandesh Chat — Mock Gateway", version="0.1.0")
 
@@ -104,6 +105,19 @@ def _tone_wav(duration_ms: int = _RENDERING_AUDIO_MS) -> bytes:
     return buf.getvalue()
 
 
+def _make_transcript(msg: MessageIn, status: MessageStatus) -> dict[str, str]:
+    """A delivered voice note's transcript, in its own language (`source_lang`
+    when that is a valid bare subtag; a free-string like "te-IN" degrades to
+    "en" rather than breaking the mock). Nothing for text, or before delivery."""
+    if msg.kind.value != "voice" or status is not MessageStatus.DELIVERED:
+        return {}
+    language = msg.source_lang if re.match(LANGUAGE_PATTERN, msg.source_lang or "") else "en"
+    return {
+        "transcript": f"[{language}] (transcript of the voice note)",
+        "transcript_language": language,
+    }
+
+
 def _make_renderings(msg: MessageIn, status: MessageStatus) -> list[Rendering]:
     """One rendering per supported language other than the message's own
     (`source_lang`; every supported language when it's unknown). Only for a
@@ -171,6 +185,7 @@ def _store_message(msg: MessageIn, author_id: str, deliver_voice: bool = False) 
         # through unchanged; this mock never transcodes.
         media_ref=msg.media_ref,
         renderings=_make_renderings(msg, status),
+        **_make_transcript(msg, status),
         created_at=datetime.now(timezone.utc),
         status=status,
     )

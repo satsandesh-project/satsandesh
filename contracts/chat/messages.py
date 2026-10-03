@@ -10,7 +10,7 @@ from contracts.chat.common import (
     TargetType,
     VersionedModel,
 )
-from contracts.chat.renderings import MAX_RENDERINGS_PER_MESSAGE, Rendering
+from contracts.chat.renderings import LANGUAGE_PATTERN, MAX_RENDERINGS_PER_MESSAGE, Rendering
 
 
 class MessageIn(VersionedModel):
@@ -56,7 +56,17 @@ class MessageOut(VersionedModel):
     message to a receiver who shares its language, a message still moving
     through the pipeline, one held or blocked) and for any producer that
     predates the field, so an older payload without it still parses.
-    At most one rendering per language."""
+    At most one rendering per language.
+
+    `transcript` / `transcript_language` (Week 7): a voice message's
+    original-language text, as the pipeline's ASR heard it. `text` stays
+    `None` for a voice message (it is the sender's typed text), so without
+    this a receiver in the sender's own language got audio and nothing to
+    read -- an accessibility gap for elders who find audio hard to follow.
+    A separate field, not a source-language entry in `renderings`, so "a
+    rendering is derived from the pivot" stays true (M1's answer on #83; see
+    DECISIONS.md #17). Both or neither; voice messages only; set once the
+    pipeline has transcribed it (a pending voice message has none yet)."""
 
     id: str
     author_id: str
@@ -66,6 +76,8 @@ class MessageOut(VersionedModel):
     text: str | None = None
     media_ref: MediaRef | None = None
     renderings: list[Rendering] = Field(default_factory=list, max_length=MAX_RENDERINGS_PER_MESSAGE)
+    transcript: str | None = Field(default=None, min_length=1)
+    transcript_language: str | None = Field(default=None, pattern=LANGUAGE_PATTERN)
     created_at: datetime
     status: MessageStatus
 
@@ -75,6 +87,10 @@ class MessageOut(VersionedModel):
         duplicates = sorted({lang for lang in languages if languages.count(lang) > 1})
         if duplicates:
             raise ValueError(f"duplicate rendering language(s): {duplicates}")
+        if (self.transcript is None) != (self.transcript_language is None):
+            raise ValueError("transcript and transcript_language must be set together")
+        if self.transcript is not None and self.kind is not MessageKind.VOICE:
+            raise ValueError("only a voice message has a transcript")
         return self
 
 

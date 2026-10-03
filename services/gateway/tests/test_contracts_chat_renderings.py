@@ -161,6 +161,6 @@ def test_sync_batch_carries_renderings_through() -> None:
 
 
 def test_the_contract_version_was_bumped_for_the_new_field() -> None:
-    # Adding a field to MessageOut is a shape change (common.py's rule).
-    assert CONTRACTS_VERSION == "0.3.0"
-    assert _message().contract_version == "0.3.0"
+    # Adding a field to MessageOut is a shape change (common.py's rule). The
+    # literal is pinned in test_chat_transcript.py, which is the latest bump.
+    assert _message().contract_version == CONTRACTS_VERSION

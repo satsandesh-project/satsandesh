@@ -133,7 +133,10 @@ things need a decision from whoever builds that side:
 ahead of M1's receiver screen. Three things need a decision from M1 (what the
 screen needs) and M3/M4 (what the pipeline can produce):
 
-1. **A voice note's original-language transcript has no read-side home.**
+1. ~~**A voice note's original-language transcript has no read-side home.**~~
+   **Closed:** M1 asked for a separate field, now `MessageOut.transcript` /
+   `transcript_language` (`DECISIONS.md` #17, `CONTRACTS_VERSION` `0.4.0`).
+   The original discussion follows for the record.
    `MessageOut.text` is `null` for a voice message, and so is
    `ModerationQueueItem.original_text`. So a Telugu receiver of a Telugu voice
    note gets the audio and nothing to read — and the ASR transcript, which the
@@ -145,7 +148,11 @@ screen needs) and M3/M4 (what the pipeline can produce):
    here — it changes M1's accessibility story and M4's console, not just
    storage.
 
-2. **Which languages get rendered, and what does the language picker offer?**
+2. ~~**Which languages get rendered, and what does the language picker offer?**~~
+   **Decided for v1 (M1, on #83): render only the recipients' preferred
+   languages**; the receiver screen offers only languages present in
+   `renderings`, and the original is always one tap away. Revisit if the
+   picker proves to need more. The original discussion follows.
    The render service takes a list of target languages, so the orchestrator
    chooses. Rendering only the languages the recipients prefer is cheapest, but
    then a receiver who picks another language in the UI finds no rendering and
@@ -156,7 +163,10 @@ screen needs) and M3/M4 (what the pipeline can produce):
    with any of them — a client only offers languages present in `renderings` —
    but the screen's behaviour differs.
 
-3. **What if renderings are produced or replaced after delivery?** The
+3. ~~**What if renderings are produced or replaced after delivery?**~~
+   **Decided for v1 (M1, on #83): fixed at delivery is fine**; re-rendering
+   after a model upgrade can be its own change. The original discussion
+   follows. The
    contract assumes they exist by the time a message is delivered (the
    pipeline gates delivery). A later re-render (a better model, a language
    added) or a late-arriving rendering has no way to reach a client that

@@ -8,7 +8,7 @@ mirrors their conventions (golden fixtures, mock latency headers,
 `CONTRACTS_VERSION`, `DECISIONS.md`/`OPEN_QUESTIONS.md`) so the two contract
 folders read as siblings, not as two different projects.
 
-Contract shape version: `CONTRACTS_VERSION = "0.3.0"`
+Contract shape version: `CONTRACTS_VERSION = "0.4.0"`
 (`contracts/chat/common.py`). Every request/response/frame-data payload
 carries `contract_version` so you can tell which shape you're looking at as
 this evolves week to week. Independent of `contracts/ai/`'s version counter
@@ -158,7 +158,7 @@ merge logic doesn't need two code paths for the two transports.
 Request (`MessageIn`):
 ```json
 {
-  "contract_version": "0.3.0",
+  "contract_version": "0.4.0",
   "client_msg_id": "8f14e45f-ceea-467e-adde-3fb5d3a5fa1c",
   "target_type": "circle",
   "target_id": "circle-satsang-evening",
@@ -177,7 +177,7 @@ package doesn't import `contracts/ai/`.
 Response (`AckOut`):
 ```json
 {
-  "contract_version": "0.3.0",
+  "contract_version": "0.4.0",
   "client_msg_id": "8f14e45f-ceea-467e-adde-3fb5d3a5fa1c",
   "id": "msg-01H8X5Q7Z1",
   "status": "pending"
@@ -192,12 +192,12 @@ full history. `limit` defaults to 50, capped at 200.
 Response (`SyncBatch`):
 ```json
 {
-  "contract_version": "0.3.0",
+  "contract_version": "0.4.0",
   "target_type": "circle",
   "target_id": "circle-satsang-evening",
   "messages": [
     {
-      "contract_version": "0.3.0",
+      "contract_version": "0.4.0",
       "id": "msg-01H8X5Q7Z1",
       "author_id": "user-elder-42",
       "target_type": "circle",
@@ -210,6 +210,8 @@ Response (`SyncBatch`):
         "duration_ms": 4200
       },
       "renderings": [],
+      "transcript": null,
+      "transcript_language": null,
       "created_at": "2026-08-17T09:00:00Z",
       "status": "pending"
     }
@@ -226,12 +228,12 @@ rendered the message — see "Renderings" below.
 
 `POST /circles` request (`CircleCreate`):
 ```json
-{ "contract_version": "0.3.0", "name": "Evening Satsang" }
+{ "contract_version": "0.4.0", "name": "Evening Satsang" }
 ```
 Response (`Circle`):
 ```json
 {
-  "contract_version": "0.3.0",
+  "contract_version": "0.4.0",
   "id": "circle-satsang-evening",
   "name": "Evening Satsang",
   "created_by": "user-moderator-1",
@@ -245,7 +247,7 @@ it can't be spoofed by a client.
 
 Request (`MembershipCreate`):
 ```json
-{ "contract_version": "0.3.0", "user_id": "user-elder-42", "role": "member" }
+{ "contract_version": "0.4.0", "user_id": "user-elder-42", "role": "member" }
 ```
 `role` defaults to `member` if omitted. `circle_id` on the response comes
 from the URL path, not the body.
@@ -253,7 +255,7 @@ from the URL path, not the body.
 Response (`Membership`):
 ```json
 {
-  "contract_version": "0.3.0",
+  "contract_version": "0.4.0",
   "circle_id": "circle-satsang-evening",
   "user_id": "user-elder-42",
   "role": "member",
@@ -281,7 +283,7 @@ client's own recorder already knows.
 Response (`MediaUploadOut`):
 ```json
 {
-  "contract_version": "0.3.0",
+  "contract_version": "0.4.0",
   "uri": "media:7c1e6e2a-9b0e-4c4a-8f2e-4a2e6b1c9d3a",
   "format": "webm_opus",
   "duration_ms": 4200
@@ -356,6 +358,15 @@ unknown), with a short audible tone as the audio so playback can be checked
 end to end. Put `tts-skip` or `text-only` in a text message to get that
 degraded state; `hold`/`block` still produce a held/blocked message with no
 renderings.
+
+### The transcript of a voice note
+
+A voice message's `text` is `null`, so its original-language text lives in a
+separate pair, `transcript` and `transcript_language` (both set or both
+`null`; voice messages only; `null` while the message is still `pending`).
+Show it to a reader who wants to read rather than listen, in the sender's
+own language — it is *not* one of the `renderings`, and a reader in another
+language reads the matching rendering instead (`DECISIONS.md` #17).
 
 The real gateway does not emit renderings yet — that is the Week 7
 orchestrator's job; this contract is what it will fill in.
