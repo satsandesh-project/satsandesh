@@ -546,3 +546,30 @@ the server for its DB-backed tests (the local Python lacks
 - The migration was also checked both ways on a throwaway database: single
   head before and after, `downgrade -1` removes the table and the trigger
   function, `upgrade head` brings them back.
+
+## Week 7 Phase 4 -- storing and serving the pipeline's output (`feat/m2-week7-renderings-store`)
+
+- "Fixed at delivery" (M1's answer on #83) is enforced inside each write's SQL
+  (`INSERT ... SELECT ... WHERE EXISTS (pending message)`, conditional
+  `UPDATE`), not a check followed by a write: `fan_out_message` flips
+  `pending` -> `sent` concurrently, and a check-then-write could slip a
+  rendering in after delivery. Two Postgres traps on the way: an
+  `INSERT ... SELECT` of a bare NULL is typed `text` and refused by a uuid
+  column (every value is cast), and `SET LOCAL`-style purge from Phase 3 is
+  untouched.
+- Found while reading `fan_out_message` (for the wire mapping): it flips
+  `pending` -> `sent` after the undo window and does not look at the
+  pipeline at all. If the pipeline takes longer than the window (CPU ASR/MT/TTS
+  on a shared server very plausibly does), the message is delivered with no
+  renderings, and -- because writes now stop at delivery -- they can never
+  arrive. The orchestrator (Phase 5) must gate delivery on the pipeline, not
+  just add a stage; that is its design note's first question.
+- A page of messages costs one renderings query (plus one for any audio), not
+  one per message -- tested by counting statements.
+- Sabotage check, done the way Phase 3's should have been (rebuild from a known
+  migration between mutations, hard "unmutated is green" precondition): 25
+  mutations. **One survived**: removing the visibility filter inside
+  `renderings_for_wire`, because `message_to_out` filters the same thing again,
+  so nothing leaked either way. That is a real gap (the helper's own promise and
+  its query cost were untested), so I added a direct test and re-ran: caught.
+  A surviving mutant that is "equivalent at the output" is still a finding.
