@@ -174,3 +174,26 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     they are reviewing -- a role-based allowance to add when that lands,
     not before: until then a held message's audio is unreachable by
     anyone but its author.
+
+13. **`moderation_events` is append-only by trigger, not by privilege.**
+    `docs/security-checklist.md` B5 asks for the application's DB role to hold
+    INSERT/SELECT on this table and nothing else. Today the app connects as
+    the database owner (`POSTGRES_USER`), so a GRANT/REVOKE would not bind it,
+    and the owner can drop the trigger. The trigger (`c696e9f74472`) stops
+    application bugs and accidental statements and is tested; it is not a
+    defence against someone with the owner's credentials. The real fix is a
+    separate low-privilege app role -- an infra change (`db/init/`, compose
+    env), not done here. Also: the one purge path
+    (`SET LOCAL app.allow_audit_purge = 'on'`) is for erasure on request;
+    nothing calls it yet outside test cleanup, and who may invoke it is
+    undecided.
+
+14. **Who may open a held message's audio is a global-role rule only.**
+    `user_can_fetch_media` lets `users.role` in (`moderator`, `admin`) fetch
+    the audio of a `held` or `blocked` message. A circle-level moderator
+    (`memberships.role`) is not covered, and neither is a moderator
+    re-reviewing a message that was already `sent`. Matches the console as
+    M4's contract describes it (one global queue); say so if circle
+    moderators are meant to review their own circle. #9 (retention sweeps a
+    held message's audio at 30 days) is still open and is now the more
+    pressing of the two: a held message can outlive its audio.

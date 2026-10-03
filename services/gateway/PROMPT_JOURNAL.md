@@ -492,3 +492,25 @@ upload, and every real browser note (`webm_opus`) has no AI-contract format.
 `app/undo.py` was deliberately not rewritten: restart recovery is additive;
 moving the undo window onto the jobs table is the proper fix and would
 rewrite another member's module.
+
+## Week 7 Phase 3 -- the moderation trail (`feat/m2-week7-moderation-store`)
+
+- Append-only is enforced by a trigger, so the shared test teardown (which
+  `DELETE`s every table) would have broken the first time an event existed;
+  that forced the explicit, transaction-local purge opt-in and a one-line
+  change to `tests/conftest.py`. The opt-in is itself tested, including that
+  it never allows an `UPDATE`.
+- **My first mutation run for this phase was invalid and I threw it out.**
+  The DB-level sabotages (drop a trigger / a CHECK) were "restored" with
+  `alembic downgrade -1 && upgrade head`. After the first one, the downgrade
+  failed on the already-dropped trigger, rolled back, and left the database
+  mutated -- so every later "CAUGHT" included earlier sabotage (failure counts
+  grew 6, 7, 9, 11, ...; the final "unmutated" run had 17 failures). The signal
+  was the final unmutated run not being green; I only trusted it because I
+  printed it. Redone with a restore that drops everything the migration made,
+  re-stamps and re-applies it, and a hard precondition that the unmutated
+  suite is green before each mutation: 15 mutations, each now fails only the
+  tests that guard it (1-3 tests each), final run green.
+- The migration was also checked both ways on a throwaway database: single
+  head before and after, `downgrade -1` removes the table and the trigger
+  function, `upgrade head` brings them back.
