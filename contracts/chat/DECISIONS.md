@@ -289,3 +289,200 @@ already owned the only `pyproject.toml` this task's scope allowed touching.
 the mock ever needs to be pip-installable standalone, is additive — it
 doesn't require undoing anything, since tests and tooling already work
 from `services/gateway/` today.
+
+## 13. `MediaRef.uri` is constrained to a scheme-qualified shape, not one specific scheme
+
+`uri` was a bare, unconstrained string because nobody owned storage yet
+(the field's own history — see `contracts/ai/common.AudioRef`'s identical
+starting point and `services/ai/OPEN_QUESTIONS.md` #2, which asked for
+exactly this). Now that this package owns the media surface, `uri` must
+match `<scheme>:<something>` (validated via `common.validate_media_uri`,
+shared with `MediaUploadOut` in `media.py`) — a bare filename or path is
+rejected.
+
+**Why not pick one scheme (e.g. always `s3://` or always a local path)?**
+Dev and staging would disagree about it, and pinning the contract to one
+storage backend's URI shape would make swapping backends a contract
+change instead of a server-side implementation detail — exactly the
+trap `services/ai/OPEN_QUESTIONS.md` #2 was trying to avoid by asking for
+"a validated URI scheme" rather than a hostname/bucket/path shape.
+
+**What this package's own mock actually hands out:** `media:<opaque-id>`
+— a scheme this package defines and owns, not a storage backend's. This
+mirrors `MessageOut.id`'s own precedent (decision #3): kept opaque so the
+service layer can change how it's generated, or what it points at,
+without a contract change. `GET /media/{id}` resolves it; the id is
+never assumed to be a filename, a database key, or anything else a real
+backend happens to use internally. A real (non-mock) implementation is
+free to keep using `media:` (and resolve it itself) or switch `uri` to a
+different scheme entirely (`s3://...`, a signed URL, whatever) — the
+validator only requires the shape, not this specific choice.
+
+**Reversal cost:** Low to loosen further (removing the constraint is
+backward compatible — any valid scheme-qualified uri today stays valid).
+Medium to tighten to one specific scheme later, if the team ever wants
+to standardize the whole fleet on one backend — every uri stored under a
+looser scheme would need auditing or migrating.
+
+## 14. `MediaRef.format` / `MediaUploadOut.format`: a separate `AudioFormat` enum, not an import of `contracts.ai.common.AudioFormat`
+
+Same blanket rule as decision #5 (this package doesn't import
+`contracts/ai/`) plus the same reasoning as decision #6 (`MessageStatus`
+kept separate from `ModerationAction`): the two contract packages are
+independently versioned, and coupling them would force one package's
+churn onto the other. `contracts.chat.common.AudioFormat` matches
+`contracts.ai.common.AudioFormat`'s three values one-for-one
+(`WAV_PCM16`, `OGG_OPUS`, `MP3`) and adds a fourth, `WEBM_OPUS` — the
+container a browser's `MediaRecorder` actually produces in Chrome/Edge,
+which `contracts/ai/`'s enum does not have.
+
+**Declared, not sniffed:** `format` is a required field, not inferred
+from the uploaded bytes — same philosophy as `contracts.ai.common.AudioRef.format`
+and `MessageIn.kind`: a caller states what something is, and the contract
+boundary can validate against a closed set, rather than every consumer
+re-implementing content-sniffing to find out.
+
+**The cross-lane question this leaves open, deliberately unresolved
+here:** whether `contracts/ai/`'s ASR service (`services/ai/`, PR #52)
+ever gains its own `WEBM_OPUS` value, or whether a transcode step
+normalizes chat-side `webm_opus` into an AI-pipeline-recognized format
+before it's ever sent there. That's `services/ai/`'s call, or a Week 7
+orchestrator decision — see `OPEN_QUESTIONS.md` #9. Adding `WEBM_OPUS`
+here doesn't require or assume either answer; it just names what a
+client actually uploads honestly, which is this package's job regardless
+of how the AI pipeline eventually consumes it.
+
+**Reversal cost:** Low to add more values later (additive, no consumer
+breaks). Medium to remove `WEBM_OPUS` if the team decides against ever
+storing raw WebM (every existing reference to it would need auditing).
+
+## 15. `MessageOut` gains `media_ref`; `CONTRACTS_VERSION` bumped to `0.2.0`
+
+Closes `OPEN_QUESTIONS.md` #1: a `kind: "voice"` message previously had
+no read-side way to say where its audio is — `MediaRef` only ever
+appeared on `MessageIn`. `MessageOut.media_ref` is `None` for a text
+message; for a voice message, it's whatever `MediaRef` the storage layer
+resolved at write time — not guaranteed to be byte-identical to what the
+client uploaded, since a backend may transcode before persisting (see
+decision #14's cross-lane note). `MessageStatusOut` deliberately does
+NOT gain this field — it's a status-only push frame, not the whole
+message, and adding it there would be scope creep beyond what
+`OPEN_QUESTIONS.md` #1 actually asked for.
+
+This, together with decisions #13 and #14 (a required `format` field and
+a constrained `uri` on `MediaRef`), is a real shape change, so
+`CONTRACTS_VERSION` moves `0.1.0` -> `0.2.0`. `OPEN_QUESTIONS.md` #6 (bump
+policy) is still genuinely unresolved — this bump doesn't claim to be
+"minor" in a semver sense the team hasn't agreed to yet, it's just a
+visibly different version string for a payload shape that changed.
+
+**Reversal cost:** Low to drop `media_ref` from `MessageOut` again
+(no consumer that doesn't already handle "field absent" breaks, since
+`None`/absent both parse the same way on an optional field). The
+`CONTRACTS_VERSION` bump itself isn't reversible in the sense that
+matters — once published, going back to `0.1.0` would just be confusing,
+not unsafe.
+
+## 16. Renderings are embedded in `MessageOut`; `CONTRACTS_VERSION` bumped to `0.3.0`
+
+Week 7. The orchestrator turns one message into one version per receiver
+language (transcribe -> pivot -> moderate -> render); a receiver screen
+needs those versions. `MessageOut.renderings` carries them
+(`contracts/chat/renderings.py`): a list of `Rendering` — `language`, `text`,
+optional `audio` (a `MediaRef`), optional `degraded_reason`.
+
+**Why embedded, not a second endpoint or a separate WS frame.** The pipeline
+runs *before* delivery — a message that moderation holds or blocks is never
+sent — so when a receiver can first see a message its renderings already
+exist. Embedding means a `message.new` frame or one sync page carries
+everything the receiver screen needs: no per-message follow-up request on the
+flaky networks the pilot targets, and the offline-sync path gets renderings
+without a second code path. A separate endpoint would add N requests to a
+sync of N messages; a separate frame type would add a state ("message arrived,
+renderings not yet") that the delivery gate makes unnecessary. The cost is
+bytes on every sync page — bounded by decision below.
+
+**Rendering rules, and why each is in the model rather than left to callers:**
+
+- `language` is a validated bare primary subtag (`^[a-z]{2,3}$`), not
+  `contracts.ai.language.LanguageCode` (decision #5) and not a free string. A
+  client matches it against `preferred_language`; `hi-IN` vs `hi` would
+  silently never match and show the original with no error anywhere.
+- `text` is never empty. The render service reports `""` for a silent note;
+  the orchestrator omits that rendering instead of giving a client a blank
+  bubble to special-case.
+- One field, `degraded_reason`, not a `degraded: bool` plus a reason: two
+  fields can disagree, one cannot. `None` means complete. (The moderation
+  contract's `degraded` is a bool because a moderator only needs "fail-closed
+  or not"; a receiver needs to know *what is missing*.) Values mirror
+  `contracts.ai.common.DegradedReason` minus `none`, duplicated rather than
+  imported, with a drift-guard test — same pattern as the moderation enums.
+- `text_only` / `tts_skipped` cannot carry `audio`. A rendering claiming "no
+  audio" while carrying some leaves a client guessing which half to believe.
+- At most `MAX_RENDERINGS_PER_MESSAGE` (8), one per language.
+  `docs/security-checklist.md` Part A requires an upper bound on anything
+  that fans out; v1 has three languages, eight leaves room for the stretch
+  ones without letting a bug put an unbounded list on every sync page.
+
+**Deliberately absent:** the English pivot (a moderation input, not
+receiver-facing — moderators get it via `ModerationQueueItem.pivot_text_en`),
+and model versions (audit/eval data the gateway stores; a receiver has no use
+for it, and putting it on every sync page costs bytes for nothing). A
+rendering for the message's own language is not produced — by convention, not
+enforced, since a `Rendering` cannot see its message: a receiver in the
+sender's language uses the original, which is already on the message.
+
+`MessageStatusOut` does not gain renderings — it is a status-only push frame
+(same call as decision #15).
+
+`CONTRACTS_VERSION` moves `0.2.0` -> `0.3.0`: additive and defaulted to
+empty, so an older payload without the field still parses and an older
+client ignores the new key (checked against the elder-app, which reads
+message fields as plain keys) — but it is still a shape change and still
+gets a visible bump (`OPEN_QUESTIONS.md` #6 remains open).
+
+**Consequence for the gateway (not this package):** a rendering's `audio` is
+fetched through `GET /media/{id}`, and the real gateway's download rule
+(`user_can_fetch_media`) only knows a media object via
+`messages.media_object_id`. Rendering audio belongs to no message that way, so
+that rule needs extending when renderings are stored — otherwise the
+receiver is refused the audio the contract just promised.
+
+**Reversal cost:** Low to remove (`renderings` defaults to empty; a consumer
+that never read it is unaffected). Moderate to change `degraded_reason`'s
+vocabulary once M1 branches on its values.
+
+## 17. `MessageOut.transcript` / `transcript_language`; `CONTRACTS_VERSION` bumped to `0.4.0`
+
+Closes the first of the renderings open questions (raised on #83, answered
+there by M1). A voice message's `text` is `null` by design (it is what the
+sender *typed*), so a receiver in the sender's own language was handed audio
+and nothing to read -- an accessibility gap for elders who find audio hard to
+follow, while the pipeline's ASR transcript was computed anyway and then lost
+on the read side.
+
+**Decision: a separate field pair, not a source-language rendering.** The
+alternative (let `renderings` include an entry for the source language whose
+`text` is the transcript and `audio` is `null`) reuses what exists but breaks
+the rule that a rendering is derived from the English pivot. The transcript is
+a different thing -- what ASR heard, before any translation -- so it gets its
+own name.
+
+Rules in the model: `transcript` and `transcript_language` are set together or
+not at all (text with no language can't be matched against a reader's
+preference; a language with no text is a claim about nothing); voice messages
+only; non-empty; `transcript_language` is the same bare primary subtag as
+`Rendering.language` (the shared `LANGUAGE_PATTERN`). A pending voice message
+has none yet. Additive, default null -- an older payload still parses.
+
+Also recorded from the same review: v1 renders only the languages the
+recipients prefer (avoids tripling speech synthesis on the shared server; the
+receiver screen only offers languages present in `renderings`), and
+renderings fixed at delivery is acceptable for v1.
+
+**Not decided here:** `ModerationQueueItem.original_text` (M4's) is still
+`null` for a voice note. A moderator would plausibly want the transcript too;
+that is M4's shape to change.
+
+**Reversal cost:** Low (default null; a consumer that never read it is
+unaffected).

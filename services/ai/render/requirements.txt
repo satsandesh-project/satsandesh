@@ -1,0 +1,5 @@
+# Extra dependencies for services/ai/render/, on top of services/ai/pyproject.toml's
+# "mt" extra (indictranstoolkit, transformers==4.44.2, torch, sentencepiece) and the
+# base dependencies (fastapi, uvicorn, pydantic, numpy).
+piper-tts>=1.8
+huggingface_hub

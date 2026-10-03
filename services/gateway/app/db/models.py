@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, time
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -174,6 +175,17 @@ class Message(Base):
             "OR (kind = 'voice' AND original_media_ref IS NOT NULL)",
             name="ck_messages_kind_payload",
         ),
+        # Week 6: media_format mirrors media_objects.format's own allowed
+        # values (ck_media_format) -- nullable because it's only ever set
+        # alongside media_object_id, for a voice message whose media_ref
+        # resolved to a real, owned media_objects row at write time (see
+        # app/db/repository.py::resolve_owned_media_object). A row that
+        # predates this validation, or a voice message whose media_ref
+        # never resolved, leaves both NULL.
+        sa.CheckConstraint(
+            "media_format IS NULL OR media_format IN ('webm_opus', 'ogg_opus', 'wav_pcm16', 'mp3')",
+            name="ck_messages_media_format",
+        ),
         # design question #1, option (b): exactly one of the two target FKs
         # is populated, matching target_type.
         sa.CheckConstraint(
@@ -227,6 +239,30 @@ class Message(Base):
     pivot_text_en: Mapped[str | None] = mapped_column(sa.Text)
     original_media_ref: Mapped[str | None] = mapped_column(sa.Text)
     media_duration_ms: Mapped[int | None] = mapped_column(sa.Integer)
+    # Week 6: the real link original_media_ref never had -- see
+    # MediaObject's own docstring, which named this exact gap as "separate,
+    # later work" when media_objects was first added. ON DELETE SET NULL,
+    # not RESTRICT: app/retention.py's sweeper does a real DELETE on an
+    # expired media_objects row, and a message that once referenced it must
+    # not block that delete (nor should the message itself vanish -- this
+    # is the one column that goes NULL, everything else on the row is
+    # untouched). That SET NULL is also the read-side signal
+    # message_to_out uses to decide whether to return a media_ref at
+    # all: NULL here means "no live audio," whether that's because this
+    # reference never resolved to begin with or because it did and was
+    # later swept -- a client can't tell those two apart from this field
+    # alone, and per app/retention.py's own docstring, shouldn't need to:
+    # either way there's nothing to play.
+    #
+    # original_media_ref (above) is deliberately NOT replaced by this --
+    # it stays the permanent, unedited record of whatever URI the client
+    # actually sent, including for a row where this column is NULL because
+    # nothing ever resolved. Nothing here forces the two to agree after
+    # the fact.
+    media_object_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("media_objects.id", ondelete="SET NULL")
+    )
+    media_format: Mapped[str | None] = mapped_column(sa.Text)
     source_lang: Mapped[str | None] = mapped_column(sa.Text)
     status: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("'pending'")
@@ -279,6 +315,67 @@ class MessageDelivery(Base):
         primary_key=True,
     )
     delivered_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+
+class MediaObject(Base):
+    """Week 6: a stored voice-note upload -- backs `contracts/chat/media.py`'s
+    `MediaUploadOut` and `contracts/chat/common.py`'s `MediaRef.format`
+    (see that file for the four allowed values, mirrored here in
+    `ck_media_format`). One row per distinct uploaded file; the actual
+    bytes live in whatever `app/media_storage.py`'s `MediaStorage`
+    interface backs (local disk for now -- see app/media_storage.py's own
+    module docstring) at a path derived purely from `id`, never stored as
+    a separate column here, so there's exactly one source of truth for
+    where a given object's bytes are.
+
+    Referenced by `messages.media_object_id` (Week 6, later phase) --
+    `messages.original_media_ref`, this table's precursor, stays a plain
+    text URI column regardless, kept as the permanent unedited record of
+    whatever a client actually sent, including for a row the FK could
+    never resolve. See that column's own comment in `Message` for the
+    ON DELETE SET NULL reasoning: a row here being deleted (by
+    app/retention.py's sweeper) must never be blocked by, or cascade
+    into deleting, a message that once referenced it.
+
+    `(author_id, sha256_hex)` is the idempotency key: the SAME author
+    re-uploading the SAME bytes (a retry after a dropped ack -- expected
+    to happen constantly on the elder pilot's target networks, same
+    reasoning as `messages`'s own `(author_id, client_msg_id)`
+    uniqueness) must get back the SAME row, not a second copy. Content-
+    hash-based, not a client-supplied key, because `POST /media`
+    (contracts/chat/README.md) has no id-like parameter for a client to
+    make one up with -- the bytes themselves are the only thing that's
+    the same across a retry."""
+
+    __tablename__ = "media_objects"
+    __table_args__ = (
+        sa.UniqueConstraint("author_id", "sha256_hex", name="uq_media_author_sha256"),
+        sa.CheckConstraint(
+            "format IN ('webm_opus', 'ogg_opus', 'wav_pcm16', 'mp3')",
+            name="ck_media_format",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=generate_uuid7
+    )
+    author_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        # RESTRICT, not CASCADE -- same reasoning as messages.author_id
+        # (module docstring): a stored voice note is part of message
+        # history, an audit trail that should survive the uploader's own
+        # user row being removed, not owned-and-meaningless-without-them
+        # the way PushSubscription/Invite are.
+        sa.ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    format: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    sha256_hex: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(sa.Integer)
+    created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
 
@@ -352,3 +449,185 @@ class Invite(Base):
         nullable=False,
     )
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+
+class Job(Base):
+    """Week 6: a durable, polled job queue -- a table, not
+    app/undo.py's `dict[str, asyncio.Task]` (see that file's own
+    docstring: in-memory, single-process only, everything pending lost on
+    restart or invisible to a second gateway process). A row here
+    survives both.
+
+    `status` lifecycle: queued -> running -> done, or queued -> running ->
+    queued (retry, under max_attempts) -> ... -> dead (exhausted).
+    `claimed_by`/`lease_expires_at` are how a worker takes ownership --
+    app/db/repository.py's claim_next_job atomically moves a row from
+    queued to running with a single conditional UPDATE ... WHERE ...
+    RETURNING (same idiom as set_message_status below), never a
+    SELECT ... FOR UPDATE (not used anywhere in this codebase) and
+    never a bare `UPDATE ... WHERE id = (SELECT id FROM jobs WHERE
+    <condition> LIMIT 1)` -- that subquery form is not safe under
+    concurrent claims: Postgres's EvalPlanQual re-check on a lock
+    conflict only re-validates the outer `WHERE id = X`, not the
+    condition baked into the subquery, so two workers can both match the
+    same subquery result before either commits. Keeping the full
+    condition (status='queued' OR lease expired) directly in the
+    UPDATE's own WHERE clause is what makes the second worker's UPDATE
+    affect zero rows once the first one commits.
+
+    `attempts` is incremented by claim_next_job itself, in the same
+    committed UPDATE that claims the row -- not by the job handler, and
+    not in whatever transaction the handler's own work uses. That's the
+    fix for the recurring bug class services/auth/DECISIONS.md D11
+    records (services/auth/ doesn't exist in this repo, checked -- the
+    bug class is real regardless): a counter incremented inside a
+    transaction that then fails is rolled back with it, so a poisoned job
+    would retry forever without ever being counted toward
+    max_attempts. See tests/test_job_queue.py's
+    test_rollback_test_attempts_survives_a_failed_jobs_transaction for the
+    regression test proving this.
+
+    `payload` is JSONB, not a second table per job_type -- this queue is
+    deliberately generic (any job_type, any JSON-serializable payload),
+    matching the wire contract of nothing here being client-facing (no
+    contracts/ file defines this shape; it's purely an internal
+    implementation detail of app/jobs.py's worker loop)."""
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "status IN ('queued', 'running', 'done', 'dead')", name="ck_jobs_status"
+        ),
+        # claim_next_job's candidate SELECT filters on status plus
+        # next_attempt_at (the common 'queued' branch) and orders by
+        # next_attempt_at -- this index is what keeps that from becoming a
+        # full table scan as the queue grows.
+        sa.Index("ix_jobs_status_next_attempt_at", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=generate_uuid7
+    )
+    job_type: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(sa.Text, nullable=False, server_default=sa.text("'queued'"))
+    attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
+    max_attempts: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("5")
+    )
+    last_error: Mapped[str | None] = mapped_column(sa.Text)
+    claimed_by: Mapped[str | None] = mapped_column(sa.Text)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # When this job becomes eligible to be claimed again -- set to now() on
+    # enqueue, pushed forward by claim_next_job's backoff calculation each
+    # time fail_job records a retryable failure. A queued job whose
+    # next_attempt_at is still in the future is deliberately NOT claimed,
+    # even though its status is 'queued' -- this is the backoff delay, not
+    # a second status value, because "queued but not yet due" and "queued
+    # and due" both still mean queued from every other angle (counting,
+    # listing, dead-lettering).
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+
+class ModerationEvent(Base):
+    """Week 7: one row of the append-only moderation trail --
+    `contracts/chat/moderation.py::ModerationEvent`'s storage (M4's contract,
+    issue #65; the table was left to the gateway).
+
+    Append-only for real, not by convention: a trigger (see the migration)
+    refuses UPDATE, DELETE and TRUNCATE. A release, a block and a later
+    reversal are each a NEW row; `messages.status` is the current state and
+    this is the history that explains it. The single deliberate purge path is
+    a transaction-local `SET LOCAL app.allow_audit_purge = 'on'` (erasing a
+    person's data on request -- the contract's SYSTEM actor kind names that
+    case). UPDATE is refused even then.
+
+    The CHECK constraints are the contract's own rules, which it says "the
+    gateway enforces, not this model": `actor_id` is set exactly for a
+    moderator; a human or system event has no `confidence` or `model_version`
+    (reusing 0.0/1.0 for a person would make "the human was certain"
+    indistinguishable from "the model said so"); `degraded` is only for a
+    classifier that failed closed.
+
+    `degraded_reason` has no counterpart on the wire (the chat contract's
+    `degraded` is a bool) -- it keeps WHY the classifier fell back (timeout vs
+    unparseable reply) for whoever reads the audit trail, from the AI
+    contract's `DegradedMode.reason`.
+
+    `message_id` is RESTRICT, not CASCADE: an audit trail must outlive the
+    thing it audits, same reasoning as messages.author_id."""
+
+    __tablename__ = "moderation_events"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "actor_kind IN ('classifier', 'moderator', 'system')",
+            name="ck_moderation_events_actor_kind",
+        ),
+        sa.CheckConstraint(
+            "label IN ('A_DEVOTIONAL', 'B_ORGANIZATIONAL', 'C_PERSONAL', "
+            "'D_DISPUTATIONAL', 'E_HARMFUL')",
+            name="ck_moderation_events_label",
+        ),
+        sa.CheckConstraint(
+            "action IN ('ALLOW', 'NUDGE', 'HOLD', 'BLOCK')",
+            name="ck_moderation_events_action",
+        ),
+        sa.CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="ck_moderation_events_confidence_range",
+        ),
+        sa.CheckConstraint(
+            "(actor_kind = 'moderator') = (actor_id IS NOT NULL)",
+            name="ck_moderation_events_actor_id_iff_moderator",
+        ),
+        sa.CheckConstraint(
+            "actor_kind = 'classifier' OR (confidence IS NULL AND model_version IS NULL)",
+            name="ck_moderation_events_only_classifier_has_model_opinion",
+        ),
+        sa.CheckConstraint(
+            "NOT degraded OR actor_kind = 'classifier'",
+            name="ck_moderation_events_degraded_only_classifier",
+        ),
+        sa.CheckConstraint(
+            "degraded_reason IS NULL OR (degraded AND degraded_reason IN "
+            "('text_only', 'tts_skipped', 'model_fallback', 'rate_limited'))",
+            name="ck_moderation_events_degraded_reason",
+        ),
+        sa.CheckConstraint(
+            "note IS NULL OR length(note) <= 2000", name="ck_moderation_events_note_length"
+        ),
+        # The trail for one message, oldest first -- the console's audit view
+        # and the "latest event" lookup both read it in this order.
+        sa.Index("ix_moderation_events_message_id_created_at_id", "message_id", "created_at", "id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=generate_uuid7
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("messages.id", ondelete="RESTRICT"), nullable=False
+    )
+    actor_kind: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    label: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    action: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(sa.Float)
+    rationale: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(sa.Text)
+    notice_text: Mapped[str | None] = mapped_column(sa.Text)
+    policy_version: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    model_version: Mapped[str | None] = mapped_column(sa.Text)
+    degraded: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    degraded_reason: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )

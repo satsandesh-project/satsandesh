@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from contracts.chat.common import (
     MediaRef,
@@ -10,6 +10,7 @@ from contracts.chat.common import (
     TargetType,
     VersionedModel,
 )
+from contracts.chat.renderings import LANGUAGE_PATTERN, MAX_RENDERINGS_PER_MESSAGE, Rendering
 
 
 class MessageIn(VersionedModel):
@@ -39,7 +40,33 @@ class MessageOut(VersionedModel):
     frame. `id` is the server-authoritative identifier; it is kept as an
     opaque string rather than constrained to UUID so the service layer can
     later pick a sortable id scheme (e.g. UUIDv7/ULID) without a contract
-    change — see DECISIONS.md #3."""
+    change — see DECISIONS.md #3.
+
+    `media_ref` (Week 6): a `kind: "voice"` message previously had no
+    read-side representation of where its audio actually is — `MediaRef`
+    only ever appeared on `MessageIn`. Closes OPEN_QUESTIONS.md #1. `None`
+    for a text message; for a voice message, whatever `MediaRef` the storage
+    layer resolved at write time (see DECISIONS.md #15) — not necessarily
+    byte-identical to what the client uploaded, since a backend is free to
+    transcode before storing.
+
+    `renderings` (Week 7): what the pipeline made of this message for each
+    language it was rendered into -- see contracts/chat/renderings.py and
+    DECISIONS.md #16. Empty for a message nothing was rendered for (a text
+    message to a receiver who shares its language, a message still moving
+    through the pipeline, one held or blocked) and for any producer that
+    predates the field, so an older payload without it still parses.
+    At most one rendering per language.
+
+    `transcript` / `transcript_language` (Week 7): a voice message's
+    original-language text, as the pipeline's ASR heard it. `text` stays
+    `None` for a voice message (it is the sender's typed text), so without
+    this a receiver in the sender's own language got audio and nothing to
+    read -- an accessibility gap for elders who find audio hard to follow.
+    A separate field, not a source-language entry in `renderings`, so "a
+    rendering is derived from the pivot" stays true (M1's answer on #83; see
+    DECISIONS.md #17). Both or neither; voice messages only; set once the
+    pipeline has transcribed it (a pending voice message has none yet)."""
 
     id: str
     author_id: str
@@ -47,8 +74,24 @@ class MessageOut(VersionedModel):
     target_id: str
     kind: MessageKind
     text: str | None = None
+    media_ref: MediaRef | None = None
+    renderings: list[Rendering] = Field(default_factory=list, max_length=MAX_RENDERINGS_PER_MESSAGE)
+    transcript: str | None = Field(default=None, min_length=1)
+    transcript_language: str | None = Field(default=None, pattern=LANGUAGE_PATTERN)
     created_at: datetime
     status: MessageStatus
+
+    @model_validator(mode="after")
+    def _one_rendering_per_language(self) -> "MessageOut":
+        languages = [r.language for r in self.renderings]
+        duplicates = sorted({lang for lang in languages if languages.count(lang) > 1})
+        if duplicates:
+            raise ValueError(f"duplicate rendering language(s): {duplicates}")
+        if (self.transcript is None) != (self.transcript_language is None):
+            raise ValueError("transcript and transcript_language must be set together")
+        if self.transcript is not None and self.kind is not MessageKind.VOICE:
+            raise ValueError("only a voice message has a transcript")
+        return self
 
 
 class AckOut(VersionedModel):

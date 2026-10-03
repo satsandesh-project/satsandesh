@@ -7,6 +7,8 @@ dependencies = [
     "pydantic>=2.6",
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    "faster-whisper>=1.2",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -16,15 +18,68 @@ dev = [
     "mypy>=1.9",
     "ruff>=0.4",
 ]
+# Microphone recording for the Week 5 bake-off (services/ai/tools/record_sample.py).
+# Kept out of both `dependencies` and `dev`: a deployed transcribe service never
+# touches a microphone, and this isn't needed to develop/test that service either.
+tools = [
+    "sounddevice>=0.4",
+    "soundfile>=0.12",
+]
 # Real moderation backend (services/ai/moderation/, MOD_BACKEND=llama_cpp).
 # Kept out of `dependencies`: the stub backend and the whole test suite run
 # without it, and llama-cpp-python compiles native code on install.
 moderation = [
     "llama-cpp-python==0.3.35",
 ]
+# MT bring-up (Week 6 Phase 1, services/ai/mt/). transformers is pinned, not
+# left open: indictranstoolkit's own dependency declaration doesn't bound it,
+# and the newest transformers (5.x) restructured transformers.tokenization_utils
+# in a way that breaks IndicTransToolkit's collator import (`ImportError:
+# cannot import name 'PreTrainedTokenizerBase'`). 4.44.2 is the version
+# verified working in the Week 5 environment spike (see
+# docs/MT_ENVIRONMENT_DECISION.md on docs/mt-environment-and-ci-findings,
+# not yet merged to main as of this branch) — do not bump without
+# re-running that smoke test.
+mt = [
+    "indictranstoolkit",
+    "transformers==4.44.2",
+    "torch",
+    "sentencepiece",
+]
+# IndicConformer ASR alternative (services/ai/speech_indicconformer/). Versions are the
+# exact set verified working in docs/ASR_INDICCONFORMER_SPIKE.md, so they are pinned.
+# The torch 2.14.0 / torchaudio 2.11.0 skew is intentional: it is what the spike ran
+# with, and both import and run cleanly. torchcodec / torchaudio.load() is NOT used
+# (it fails against this machine's FFmpeg build); audio is decoded via stdlib `wave`
+# (or the ffmpeg binary) instead, same as the spike.
+indicconformer = [
+    "transformers==5.17.0",
+    "torchaudio==2.11.0",
+    "torch==2.14.0",
+    "onnxruntime==1.20.1",
+    "onnx==1.20.1",
+]
+# Render service's own en->indic MT step (IndicTrans2 stack) plus TTS (piper-tts); transformers is pinned to 4.44.2 as in the mt group on feat/ai-mt-pivot-w6, because 5.x breaks IndicTransToolkit's collator import (`ImportError: cannot import name 'PreTrainedTokenizerBase'`).
+render = [
+    "indictranstoolkit",
+    "transformers==4.44.2",
+    "torch",
+    "sentencepiece",
+    "piper-tts",
+]
+# Just the TTS half of `render`, above. render/tests/test_render_app.py always uses
+# the real Piper voices even in its "stub" tests (only the MT step is stubbed there) --
+# so this lean group (piper-tts only: onnxruntime + pathvalidate, no torch) is what
+# CI's ai-tests job installs to run that suite for real, without pulling in the
+# much heavier en-indic MT stack the `render` group above also carries. Only the one
+# `integration`-marked test in that file (the real en-indic model path) needs `render`
+# itself, and stays skipped by default.
+render-tts = [
+    "piper-tts",
+]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "moderation/tests"]
+testpaths = ["tests", "moderation/tests", "mt/tests", "speech_indicconformer/tests", "render/tests"]
 markers = [
     "integration: requires real model weights and a CUDA GPU; skipped by default",
 ]

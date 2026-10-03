@@ -13,6 +13,7 @@ import pytest
 from contracts.chat.circles import Circle, CircleCreate, Membership, MembershipCreate
 from contracts.chat.envelope import SyncBatch, SyncRequest
 from contracts.chat.errors import ErrorPayload
+from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
 from pydantic import BaseModel
 
@@ -29,6 +30,7 @@ MODELS_BY_FIXTURE: dict[str, type[BaseModel]] = {
     "sync_request.json": SyncRequest,
     "sync_batch.json": SyncBatch,
     "error_payload.json": ErrorPayload,
+    "media_upload_out.json": MediaUploadOut,
 }
 
 

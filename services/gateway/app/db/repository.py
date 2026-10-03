@@ -6,15 +6,17 @@ owns the transaction boundary and this module stays testable without HTTP.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import (
     Circle,
     Conversation,
+    Job,
+    MediaObject,
     Membership,
     Message,
     MessageDelivery,
@@ -39,6 +41,11 @@ _PK_MESSAGE_DELIVERIES = "message_deliveries_pkey"
 # concurrent-provisioning race live (two requests racing to provision the
 # same fresh token's users row).
 _PK_USERS = "users_pkey"
+# Week 6: verified against
+# alembic/versions/59e01551d1f1_add_media_objects_table_for_voice_note_.py's
+# UniqueConstraint(name=...) arg, same as every other _UQ_*/_PK_* constant
+# above.
+_UQ_MEDIA_AUTHOR_SHA256 = "uq_media_author_sha256"
 
 
 def _violated_constraint_name(exc: IntegrityError) -> str | None:
@@ -117,6 +124,8 @@ def _create_message_impl(
     text: str | None = None,
     original_media_ref: str | None = None,
     media_duration_ms: int | None = None,
+    media_object_id: uuid.UUID | None = None,
+    media_format: str | None = None,
     source_lang: str | None = None,
     client_msg_id: uuid.UUID,
     undo_expires_at: datetime | None = None,
@@ -166,6 +175,8 @@ def _create_message_impl(
         text=text,
         original_media_ref=original_media_ref,
         media_duration_ms=media_duration_ms,
+        media_object_id=media_object_id,
+        media_format=media_format,
         source_lang=source_lang,
         client_msg_id=client_msg_id,
         # Week 4 Phase 8: set by both send paths to now + settings.
@@ -218,6 +229,8 @@ def create_message(
     text: str | None = None,
     original_media_ref: str | None = None,
     media_duration_ms: int | None = None,
+    media_object_id: uuid.UUID | None = None,
+    media_format: str | None = None,
     source_lang: str | None = None,
     client_msg_id: uuid.UUID,
     undo_expires_at: datetime | None = None,
@@ -232,6 +245,8 @@ def create_message(
         text=text,
         original_media_ref=original_media_ref,
         media_duration_ms=media_duration_ms,
+        media_object_id=media_object_id,
+        media_format=media_format,
         source_lang=source_lang,
         client_msg_id=client_msg_id,
         undo_expires_at=undo_expires_at,
@@ -250,6 +265,8 @@ def create_message_with_created_flag(
     text: str | None = None,
     original_media_ref: str | None = None,
     media_duration_ms: int | None = None,
+    media_object_id: uuid.UUID | None = None,
+    media_format: str | None = None,
     source_lang: str | None = None,
     client_msg_id: uuid.UUID,
     undo_expires_at: datetime | None = None,
@@ -270,6 +287,8 @@ def create_message_with_created_flag(
         text=text,
         original_media_ref=original_media_ref,
         media_duration_ms=media_duration_ms,
+        media_object_id=media_object_id,
+        media_format=media_format,
         source_lang=source_lang,
         client_msg_id=client_msg_id,
         undo_expires_at=undo_expires_at,
@@ -534,3 +553,354 @@ def list_push_subscriptions_for_user(
         .scalars()
         .all()
     )
+
+
+def find_media_object(
+    session: Session, *, author_id: uuid.UUID, sha256_hex: str
+) -> MediaObject | None:
+    """Idempotency lookup for a media upload -- same author, same content
+    hash. Read-only counterpart used both to let app/media.py short-circuit
+    a retry BEFORE writing anything to storage (the overwhelmingly common
+    case -- a client on a flaky network retries sequentially, not truly
+    concurrently with itself, so this fast path avoids a redundant file
+    write on nearly every retry) and, on the rare genuine race, to recover
+    the winner's row after create_media_object's own insert below lost to
+    the UNIQUE (author_id, sha256_hex) constraint."""
+    return session.execute(
+        select(MediaObject).where(
+            MediaObject.author_id == author_id, MediaObject.sha256_hex == sha256_hex
+        )
+    ).scalar_one_or_none()
+
+
+def create_media_object(
+    session: Session,
+    *,
+    media_id: uuid.UUID,
+    author_id: uuid.UUID,
+    format: str,
+    sha256_hex: str,
+    size_bytes: int,
+    duration_ms: int | None = None,
+) -> tuple[MediaObject, bool]:
+    """Insert a media row for bytes app/media.py has ALREADY written to
+    storage at media_id -- this function only ever touches the database,
+    same "no FastAPI, no I/O beyond the session" rule as every other
+    function in this module (the actual filesystem write happens in
+    app/media.py, not here, deliberately -- see its own module docstring
+    for why the orchestration lives at the route layer rather than mixed
+    into this DB-only one, the same split app/onboarding.py's invite/QR
+    flow already uses for its own DB-plus-non-DB concern).
+
+    Returns (row, True) if this call performed the insert, (row, False) if
+    a concurrent identical upload from the same author won the race --
+    app/media.py uses the flag to know whether it must delete the file it
+    just wrote (it lost) or keep it (it won). Same SAVEPOINT-recovery
+    pattern as create_message's own idempotency (_create_message_impl):
+    try the insert, catch the UNIQUE (author_id, sha256_hex) conflict
+    specifically, re-select the winner; any other IntegrityError is a real
+    failure, not a race to recover from, and is re-raised so app/media.py's
+    caller can clean up the file it wrote before propagating it."""
+    media = MediaObject(
+        id=media_id,
+        author_id=author_id,
+        format=format,
+        sha256_hex=sha256_hex,
+        size_bytes=size_bytes,
+        duration_ms=duration_ms,
+    )
+    try:
+        with session.begin_nested():
+            session.add(media)
+            session.flush()
+    except IntegrityError as exc:
+        if _violated_constraint_name(exc) != _UQ_MEDIA_AUTHOR_SHA256:
+            raise
+        media = find_media_object(session, author_id=author_id, sha256_hex=sha256_hex)
+        assert media is not None  # the constraint that just fired guarantees a row exists
+        return media, False
+    return media, True
+
+
+def get_media_object(session: Session, media_id: uuid.UUID) -> MediaObject | None:
+    return session.get(MediaObject, media_id)
+
+
+def resolve_owned_media_object(
+    session: Session, *, uri: str, author_id: uuid.UUID
+) -> MediaObject | None:
+    """Parses a MediaRef.uri (already confirmed scheme-qualified by
+    contracts/chat/common.py's validate_media_uri) and resolves it to a
+    real, existing media_objects row owned by author_id. Returns None if
+    the scheme isn't "media" (the only backend this deployment actually
+    has -- see app/media.py), the remainder doesn't parse as a UUID, no
+    such row exists, or it belongs to someone else.
+
+    Deliberately ONE return path for every failure mode, not three: an id
+    is guessable, ownership is not, and a caller that could tell "doesn't
+    exist" apart from "exists but isn't yours" would let a client
+    enumerate real media ids by watching which error comes back. This
+    function makes that distinction structurally unobservable rather than
+    relying on every caller to remember not to leak it."""
+    scheme, _, rest = uri.partition(":")
+    if scheme != "media":
+        return None
+    try:
+        media_id = uuid.UUID(rest)
+    except ValueError:
+        return None
+    media = get_media_object(session, media_id)
+    if media is None or media.author_id != author_id:
+        return None
+    return media
+
+
+def user_can_fetch_media(session: Session, media: MediaObject, user_id: uuid.UUID) -> bool:
+    """Who may download a stored voice note: its author always; otherwise
+    only a recipient of a message that carries it and has actually been
+    delivered (`sent`/`delivered`, not deleted). A DM's recipient is the
+    message's target user; a circle message's recipients are the circle's
+    members. A message still inside its undo window (`pending`), undone
+    (`cancelled`), held or blocked grants no RECIPIENT anything -- those
+    recipients were never meant to hear it yet (or at all).
+
+    Week 7: a moderator or admin (global `users.role`) may also fetch the
+    audio of a `held` or `blocked`, non-deleted message -- the console shows
+    "the voice note itself, so a moderator can listen"
+    (contracts/chat/moderation.py), and without this its play button 404s.
+    Nothing else: not a `pending` message (still inside the sender's undo
+    window), not a delivered one they are not a recipient of."""
+    if media.author_id == user_id:
+        return True
+    role = session.scalar(select(User.role).where(User.id == user_id))
+    if role in ("moderator", "admin"):
+        under_review = (
+            select(Message.id)
+            .where(
+                Message.media_object_id == media.id,
+                Message.deleted_at.is_(None),
+                Message.status.in_(("held", "blocked")),
+            )
+            .limit(1)
+        )
+        if session.execute(under_review).first() is not None:
+            return True
+    member_circles = select(Membership.circle_id).where(Membership.user_id == user_id)
+    granting_message = (
+        select(Message.id)
+        .where(
+            Message.media_object_id == media.id,
+            Message.deleted_at.is_(None),
+            Message.status.in_(("sent", "delivered")),
+            or_(
+                and_(Message.target_type == "user", Message.target_user_id == user_id),
+                and_(Message.target_type == "circle", Message.target_circle_id.in_(member_circles)),
+            ),
+        )
+        .limit(1)
+    )
+    return session.execute(granting_message).first() is not None
+
+
+def list_pending_messages(session: Session) -> list[tuple[uuid.UUID, datetime | None]]:
+    """(id, undo_expires_at) of every message still `pending` -- the ones
+    whose scheduled delivery (app/undo.py, in-memory) may have been lost to
+    a restart. app/recovery.py re-schedules them at startup."""
+    rows = session.execute(
+        select(Message.id, Message.undo_expires_at).where(
+            Message.status == "pending", Message.deleted_at.is_(None)
+        )
+    ).all()
+    return [(row[0], row[1]) for row in rows]
+
+
+def compute_backoff_seconds(attempts: int, *, base: float = 5.0, cap: float = 300.0) -> float:
+    """Exponential backoff, capped. `attempts` is the job's attempts count
+    AFTER the failure being backed off from, so attempts=1 (first failure)
+    backs off `base` seconds, attempts=2 backs off 2*base, etc., up to
+    `cap`."""
+    return min(base * (2 ** (attempts - 1)), cap)
+
+
+def enqueue_job(session: Session, *, job_type: str, payload: dict, max_attempts: int = 5) -> Job:
+    job = Job(job_type=job_type, payload=payload, max_attempts=max_attempts)
+    session.add(job)
+    session.flush()
+    return job
+
+
+def claim_next_job(
+    session: Session,
+    *,
+    worker_id: str,
+    lease_seconds: int = 300,
+    ignore_backoff: bool = False,
+) -> Job | None:
+    """Atomically claim the oldest eligible job: queued with its backoff
+    elapsed, or running with an expired lease (its previous worker died
+    without ever calling complete_job/fail_job). Increments `attempts` as
+    part of this same claiming UPDATE -- not left for the caller to do
+    once the job handler starts -- specifically so the count is committed
+    before any handler work runs; see app/db/models.py's Job docstring
+    and tests/test_job_queue.py's rollback test for why that ordering is
+    the point.
+
+    Two statements, not one: a SELECT to pick a candidate id, then a
+    conditional UPDATE that repeats the full eligibility condition in its
+    own WHERE clause (never `WHERE id = <candidate>` alone). That repeat
+    is what makes a second, concurrently-racing call's UPDATE affect zero
+    rows once the first one commits -- seeing app/db/models.py's Job
+    docstring again: a single `UPDATE ... WHERE id = (SELECT ... LIMIT
+    1)` doesn't give that guarantee, because Postgres only re-checks the
+    outer WHERE on a lock conflict, not the condition baked into the
+    subquery.
+
+    `ignore_backoff` skips the next_attempt_at check -- for tests, so
+    they don't have to sleep out a real backoff window. Production
+    callers should leave it False.
+
+    Returns the claimed row, or None if nothing was eligible or this call
+    lost a race for the one candidate it found."""
+    now = datetime.now(UTC)
+    due = true() if ignore_backoff else (Job.next_attempt_at <= now)
+    eligible = or_(
+        and_(Job.status == "queued", due),
+        and_(Job.status == "running", Job.lease_expires_at <= now),
+    )
+
+    candidate_id = session.execute(
+        select(Job.id).where(eligible).order_by(Job.next_attempt_at, Job.created_at).limit(1)
+    ).scalar_one_or_none()
+    if candidate_id is None:
+        return None
+
+    result = session.execute(
+        update(Job)
+        .where(Job.id == candidate_id, eligible)
+        .values(
+            status="running",
+            claimed_by=worker_id,
+            attempts=Job.attempts + 1,
+            lease_expires_at=now + timedelta(seconds=lease_seconds),
+        )
+    )
+    session.flush()
+    if result.rowcount == 0:
+        return None
+
+    # The UPDATE above went through Core, not the ORM unit of work, so a
+    # copy of this row already in the session's identity map (e.g. the one
+    # enqueue_job just returned) would otherwise still show its
+    # pre-claim attempts/status -- refresh forces a real read of what was
+    # just written.
+    job = session.get(Job, candidate_id)
+    session.refresh(job)
+    return job
+
+
+def complete_job(session: Session, job_id: uuid.UUID, *, worker_id: str | None = None) -> bool:
+    """Mark a job done. With `worker_id`, only if that worker still holds
+    the job (status running, claimed_by that worker): a worker whose lease
+    expired and whose job another worker has since reclaimed must not
+    overwrite the new owner's claim. Returns whether this call applied.
+    Without `worker_id` it is unconditional (the original behavior)."""
+    stmt = update(Job).where(Job.id == job_id)
+    if worker_id is not None:
+        stmt = stmt.where(Job.claimed_by == worker_id, Job.status == "running")
+    result = session.execute(stmt.values(status="done"))
+    session.flush()
+    return result.rowcount > 0
+
+
+def extend_job_lease(
+    session: Session, job_id: uuid.UUID, *, worker_id: str, lease_seconds: int
+) -> bool:
+    """Push a running job's lease out by `lease_seconds` from now -- the
+    heartbeat app/jobs.py runs while a handler works, so a job that takes
+    longer than JOB_LEASE_SECONDS is not handed to a second worker while
+    the first is still honestly working on it. Only the current owner can
+    extend (claimed_by == worker_id AND status running); returns False if
+    the job is no longer this worker's, which tells the heartbeat to stop."""
+    result = session.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.claimed_by == worker_id, Job.status == "running")
+        .values(lease_expires_at=datetime.now(UTC) + timedelta(seconds=lease_seconds))
+    )
+    session.flush()
+    return result.rowcount > 0
+
+
+def fail_job(
+    session: Session,
+    job_id: uuid.UUID,
+    *,
+    error: str,
+    worker_id: str | None = None,
+    permanent: bool = False,
+) -> str:
+    """Record a failed attempt, called by the worker that currently holds
+    this job's lease -- never a second claim, and never sharing a
+    transaction with whatever DB work the failing handler itself did (see
+    claim_next_job's docstring on why the attempts increment already
+    happened separately, before this call). Moves the job to 'dead' if
+    attempts has reached max_attempts, otherwise back to 'queued' with
+    next_attempt_at pushed out by compute_backoff_seconds. Returns the
+    resulting status ('queued' or 'dead').
+
+    `permanent=True` goes straight to 'dead' regardless of attempts: for a
+    failure no retry can fix (a format with no AI-contract equivalent, a
+    4xx from the AI service), where backing off and retrying max_attempts
+    times only delays the same answer.
+
+    `worker_id`: only apply if that worker still holds the job, exactly as
+    complete_job's -- returns 'lost' (and changes nothing) if another worker
+    has reclaimed it, so a slow worker's late failure can't clobber the
+    current owner's claim."""
+    job = session.get(Job, job_id)
+    assert job is not None
+    session.refresh(job)
+    if worker_id is not None and (job.status != "running" or job.claimed_by != worker_id):
+        return "lost"
+
+    new_status = "dead" if permanent or job.attempts >= job.max_attempts else "queued"
+    values: dict = {
+        "status": new_status,
+        "last_error": error,
+        "claimed_by": None,
+        "lease_expires_at": None,
+    }
+    if new_status == "queued":
+        backoff = compute_backoff_seconds(job.attempts)
+        values["next_attempt_at"] = datetime.now(UTC) + timedelta(seconds=backoff)
+
+    stmt = update(Job).where(Job.id == job_id)
+    if worker_id is not None:
+        stmt = stmt.where(Job.claimed_by == worker_id, Job.status == "running")
+    result = session.execute(stmt.values(**values))
+    session.flush()
+    if worker_id is not None and result.rowcount == 0:
+        return "lost"
+    session.refresh(job)
+    return new_status
+
+
+def find_expired_media(session: Session, *, older_than: datetime) -> list[MediaObject]:
+    """Every media_objects row whose created_at is strictly before
+    `older_than` -- the retention sweeper's candidate list (app/retention.py).
+    Read-only: doesn't touch storage or delete anything itself, same split
+    as create_media_object/app/media.py (DB-only here, the actual file I/O
+    stays with the caller)."""
+    return list(
+        session.execute(select(MediaObject).where(MediaObject.created_at < older_than)).scalars()
+    )
+
+
+def delete_media_object(session: Session, media_id: uuid.UUID) -> None:
+    """Deletes the media_objects row itself -- the retention sweeper
+    (app/retention.py) calls this only AFTER it has already deleted the
+    underlying bytes via MediaStorage.delete, same file-then-row ordering
+    app/media.py's own cleanup-on-lost-race path uses, just inverted (there
+    the DB row already exists and a losing file gets removed; here the row
+    is what's being removed once the file is already gone)."""
+    session.execute(delete(MediaObject).where(MediaObject.id == media_id))
+    session.flush()

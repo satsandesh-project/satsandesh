@@ -1,11 +1,32 @@
 {
   "author_id": "user-elder-42",
-  "contract_version": "0.1.0",
+  "contract_version": "0.4.0",
   "created_at": "2026-08-17T09:00:00Z",
   "id": "msg-01H8X5Q7Z1",
   "kind": "text",
+  "media_ref": null,
+  "renderings": [
+    {
+      "audio": {
+        "duration_ms": 3100,
+        "format": "wav_pcm16",
+        "uri": "media:0f6a1d52-3c8e-4b7a-9d21-5e4c8a7b1f90"
+      },
+      "degraded_reason": null,
+      "language": "hi",
+      "text": "आज सत्संग कब होगा?"
+    },
+    {
+      "audio": null,
+      "degraded_reason": "text_only",
+      "language": "en",
+      "text": "When is satsang today?"
+    }
+  ],
   "status": "delivered",
   "target_id": "circle-satsang-evening",
   "target_type": "circle",
-  "text": "ఈ రోజు సత్సంగం ఎప్పుడు జరుగుతుంది?"
+  "text": "ఈ రోజు సత్సంగం ఎప్పుడు జరుగుతుంది?",
+  "transcript": null,
+  "transcript_language": null
 }

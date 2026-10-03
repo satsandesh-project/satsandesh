@@ -66,6 +66,13 @@ jobs:
       VAPID_PRIVATE_KEY: ci-placeholder-vapid-private
       VAPID_PUBLIC_KEY: ci-placeholder-vapid-public
       VAPID_SUBJECT: mailto:ci@example.com
+      # Week 6 media storage (#63/#69): app/config.py requires this with no
+      # default too, same reasoning as DATABASE_URL/JWT_SECRET above. Landed
+      # on main via #69 without this job's env block being updated for it,
+      # so alembic upgrade head (below) failed Settings() validation before
+      # any test ran. A plain writable path is all this job needs -- no
+      # volume, no persistence, this container is thrown away after the run.
+      MEDIA_STORAGE_ROOT: /tmp/satsandesh-media-ci
       # Deliberately NOT set: CORS_ORIGINS. tests/test_config.py::test_settings_load_from_env
       # asserts it defaults to [] when absent -- setting it here would make
       # that specific test fail for a CI-environment reason unrelated to
@@ -108,15 +115,32 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install ffmpeg
+        # speech_indicconformer/tests (and services/ai/speech/'s own ffmpeg
+        # decode path, same shared decode_via_ffmpeg()) needs the real `ffmpeg`
+        # binary on PATH for its ogg_opus/mp3 format tests -- confirmed via a
+        # CI-only diagnostic run that the ubuntu-latest image does NOT include
+        # it (`which ffmpeg` -> command not found), unlike most local dev
+        # machines, which is why this was never caught before now: this is the
+        # first suite in ai-tests to actually exercise that code path.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Install AI service dependencies
-        # The same command services/ai/README.md gives developers, so CI and
-        # a laptop resolve identical versions from one pyproject.toml.
+        # dev + render-tts: render-tts is the lean Piper-only slice of the
+        # `render` extras group (onnxruntime + pathvalidate, no torch) --
+        # render/tests/test_render_app.py always exercises real Piper voices,
+        # even in its "stub" tests (only the MT step is stubbed there), so
+        # this is installed unconditionally to run that suite for real. The
+        # full `render` group (torch/transformers/indictranstoolkit) stays
+        # out, same reasoning as the `mt` group on feat/ai-mt-pivot-w6 -- it's
+        # only needed by the one `integration`-marked real-MT test, skipped
+        # by default.
         working-directory: services/ai
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,render-tts]"
 
       - name: Run AI service tests
         # Bare pytest: services/ai/pyproject.toml's testpaths decides what
-        # runs (tests/ today; moderation/tests too once #60 lands), and its
+        # runs (tests/, moderation/tests, render/tests), and its
         # conftest puts the repo root on sys.path for `contracts.*` and
         # `services.ai.*`. New suites under services/ai/<service>/tests
         # are picked up by adding them to that testpaths list, not here.

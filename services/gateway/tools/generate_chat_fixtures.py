@@ -18,10 +18,12 @@ from contracts.chat.circles import (
     MembershipCreate,
     MembershipRole,
 )
-from contracts.chat.common import MessageKind, MessageStatus, TargetType
+from contracts.chat.common import AudioFormat, MediaRef, MessageKind, MessageStatus, TargetType
 from contracts.chat.envelope import SyncBatch, SyncRequest
 from contracts.chat.errors import ErrorCode, ErrorPayload
+from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
+from contracts.chat.renderings import Rendering, RenderingDegradedReason
 from pydantic import BaseModel
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "chat"
@@ -63,6 +65,24 @@ def main() -> None:
             target_id="circle-satsang-evening",
             kind=MessageKind.TEXT,
             text="ఈ రోజు సత్సంగం ఎప్పుడు జరుగుతుంది?",
+            # Week 7: one complete rendering (text + audio) and one text-only,
+            # the two shapes a receiver screen has to handle.
+            renderings=[
+                Rendering(
+                    language="hi",
+                    text="आज सत्संग कब होगा?",
+                    audio=MediaRef(
+                        uri="media:0f6a1d52-3c8e-4b7a-9d21-5e4c8a7b1f90",
+                        format=AudioFormat.WAV_PCM16,
+                        duration_ms=3100,
+                    ),
+                ),
+                Rendering(
+                    language="en",
+                    text="When is satsang today?",
+                    degraded_reason=RenderingDegradedReason.TEXT_ONLY,
+                ),
+            ],
             created_at="2026-08-17T09:00:00Z",
             status=MessageStatus.DELIVERED,
         ),
@@ -120,8 +140,20 @@ def main() -> None:
                     target_id="circle-satsang-evening",
                     kind=MessageKind.VOICE,
                     text=None,
+                    # Week 6: a real media_ref, demonstrating the
+                    # OPEN_QUESTIONS.md #1 fix -- this fixture previously had
+                    # no way to say where a voice message's audio is.
+                    media_ref=MediaRef(
+                        uri="media:7c1e6e2a-9b0e-4c4a-8f2e-4a2e6b1c9d3a",
+                        format=AudioFormat.WEBM_OPUS,
+                        duration_ms=4200,
+                    ),
+                    # Week 7: a delivered voice note carries its transcript, in
+                    # its own language (DECISIONS.md #17).
+                    transcript="ఈ రోజు సత్సంగం ఎప్పుడు జరుగుతుంది?",
+                    transcript_language="te",
                     created_at="2026-08-17T09:00:00Z",
-                    status=MessageStatus.PENDING,
+                    status=MessageStatus.DELIVERED,
                 ),
             ],
             has_more=False,
@@ -134,6 +166,15 @@ def main() -> None:
             code=ErrorCode.NOT_FOUND,
             message="circle 'circle-does-not-exist' does not exist",
             detail={"circle_id": "circle-does-not-exist"},
+        ),
+    )
+
+    _write(
+        "media_upload_out.json",
+        MediaUploadOut(
+            uri="media:7c1e6e2a-9b0e-4c4a-8f2e-4a2e6b1c9d3a",
+            format=AudioFormat.WEBM_OPUS,
+            duration_ms=4200,
         ),
     )
 

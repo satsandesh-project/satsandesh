@@ -349,3 +349,200 @@ every router (including the ones that import `contracts/` at module level:
 on that same confirmed PID; a follow-up `Get-NetTCPConnection -LocalPort
 8000` came back empty, confirming port 8000 was actually released rather
 than trusting the stop command's own exit code.
+
+## Phase: job queue, retention sweeper, end-to-end proof (Week 6, continued)
+
+**Asked for:** a durable job queue (tests first, prove a queued job
+survives a killed-and-restarted process — "notes survive a saturated
+CPU"), then, in a later prompt: an audio retention sweeper enforcing a
+real 30-day window (row and bytes both actually deleted, tested with an
+artificially aged artifact), a real end-to-end proof of a media upload
+flowing through the queue to `services/ai/mock/` (never real ASR), the
+Month-1 exit-gate smoke path (1:1 message, circle post, announcement)
+re-run against this week's schema changes, and honest documentation of
+what was guessed.
+
+**Produced:** `app/db/models.py::Job`, `app/db/repository.py`'s
+`enqueue_job`/`claim_next_job`/`complete_job`/`fail_job`/
+`compute_backoff_seconds`, `app/jobs.py`'s worker loop, wired into a new
+`app/main.py` lifespan (this app had none before). Then
+`app/retention.py`'s sweep, on its own timer in the same lifespan. Then
+`app/jobs.py::_handle_transcribe_media`, enqueued from
+`app/media.py::upload_media` for every genuinely new upload. Tests first
+throughout — confirmed failing for the right reason (`ImportError`, not
+some unrelated error) before any implementation existed, at the specific
+commit before implementation landed.
+
+**What was wrong:**
+
+- **SSH access broke mid-task, and the fix surfaced two independent
+  wrong assumptions, not one.** Access to the shared server
+  (10.110.11.31) stopped working outright (`Permission denied
+  (publickey,password)`) partway through Step 2 of the job-queue work.
+  The user provided the real login (username `satsandesh`, not
+  `veerendra` — a wrong assumption carried from earlier in this
+  engagement without ever being checked against the one place it was
+  actually written down, `infra/deploy/sync-all.sh`, which had the
+  correct username the whole time). Fixing the username alone wasn't
+  enough: the first real test run then failed with `role "postgres"
+  does not exist` — the actual Postgres superuser is `satsandesh`
+  (`.env`'s `POSTGRES_USER`), not the placeholder `postgres` used in
+  every earlier session's throwaway-DB script. Both were caught by
+  reading the actual `.env`/script content directly rather than
+  continuing to assume, per HONESTY — not by guessing again.
+- **Direct uvicorn boot hit the exact `contracts/` import gap this
+  journal already documented once, for the CI-job phase and pytest.**
+  Standing up a real containerized gateway (not through pytest, for the
+  Step 3 kill-and-restart proof and the Step 2 live proof) crashed with
+  `ModuleNotFoundError: No module named 'contracts'` — the same root
+  cause as the "Known issue, flagged Week 3 Phase 7" entry above
+  (`services/gateway/conftest.py`'s `sys.path` trick is pytest-only, and
+  does nothing for a real `uvicorn` process), just rediscovered the hard
+  way instead of remembered. Fixed the same way that entry already
+  settled on: `PYTHONPATH` set to the repo root on the container
+  invocation, not a code change.
+- **A retention test failed on `ObjectDeletedError`, and the bug was in
+  the test, not `app/retention.py`.** `tests/conftest.py`'s `db_session`
+  fixture expires ORM objects on commit by default. Three of six new
+  retention tests accessed `.id` on an already-swept `MediaObject`
+  instance *after* the sweep (which runs in, and commits via, an
+  entirely separate `Session`) had already deleted that row for real —
+  triggering a lazy reload against a row that no longer existed, instead
+  of the assertion actually running. Confirmed on the server (all three
+  failed with the same traceback), fixed by capturing each id into a
+  plain variable immediately after creation, before any commit — not by
+  changing `app/retention.py`, which was correct throughout.
+- **`ruff check`/`ruff format` were not installed locally** for most of
+  this session, so every formatting nit round-tripped through a full
+  server test run to discover. Installed `ruff` locally
+  (`pip install ruff`, invoked as `python -m ruff` since the console
+  script wasn't on `PATH`) partway through, which cut the
+  fix-commit-rerun cycle from several minutes to a few seconds per
+  issue — should have been done at the very start of the job-queue work,
+  not partway through the retention work.
+- **`test_config.py::test_settings_load_from_env` fails on every server
+  run, unrelated to any of this week's code.** `docker compose run`
+  inherits `docker-compose.yml`'s own `environment:` block for the
+  `gateway` service, which sets `CORS_ORIGINS` from the server's real
+  `ALLOWED_ORIGINS` (`.env`) — so the test's expectation of an empty
+  default never holds under this specific test-invocation method, even
+  though it holds fine under the real CI (`.github/workflows/ci.yml`,
+  which runs bare `pytest` with no `docker-compose.yml` involved at
+  all). Confirmed by running the identical test against `team/main`
+  through the identical harness before concluding this wasn't a
+  regression — it fails there too, for the same reason.
+
+**Decided differently:** the job-queue and retention work continued on
+the same branch (`feat/m2-week6-job-queue`) rather than starting a new
+`feat/m2-week6-<thing>` branch per DISCIPLINE's usual one-branch-per-
+phase rule. Reason: the retention sweeper's `transcribe_media` handler
+needs `app/jobs.py`, which only exists on this branch — team/main won't
+have it until the job-queue PR (#71) merges. Stacking a second branch on
+an unmerged one is exactly the setup that caused this week's earlier,
+separate incident (PR #63's code silently stranding on an orphaned
+branch when its base PR merged and GitHub didn't retarget it) — avoiding
+a second stacked branch and continuing linearly on the one already-open
+PR was judged the safer of two imperfect options, not a default the
+DISCIPLINE instruction actually anticipated. Flagged here rather than
+silently deviating from the stated rule.
+
+## Phase: Week 6 hardening -- "notes survive", checked against the deliverable
+
+**Asked for:** complete Week 6 fully, without flaws. Re-read the merged
+work against its own deliverable ("notes survive a saturated CPU") rather
+than against the PRs that built it.
+
+**Produced:** failing tests first (confirmed red on the server for the
+right reasons), then fixes: WebSocket `message.send` validates `media_ref`
+(PR #73 only closed the HTTP path); the job queue gained lease ownership
+checks, a lease heartbeat, per-process unique worker ids, permanent-failure
+handling and a `JOB_MAX_ATTEMPTS` that is actually read; `GET /media/{id}`
+is now authorized; messages left `pending` by a restart are re-scheduled at
+startup; the proof-only transcription job is opt-in.
+
+**What was wrong -- including in my own earlier work:**
+
+- Real flaws found only by re-reading, not by any failing test: any
+  logged-in user could download any voice note; `JOB_MAX_ATTEMPTS` was
+  documented and ignored; a worker whose lease expired could overwrite the
+  job's new owner; a restart left `pending` messages undelivered forever.
+- **My first "saturated CPU" proofs were not saturated.** I ran the gateway
+  with `docker run --cpus=1` plus four busy loops and reported it as pinned
+  to one CPU. A check I added only because upload latency (31 ms) looked too
+  healthy showed `cfs_quota_us = -1` -- the limit was never enforced on that
+  host -- and `--cpuset-cpus` was ignored the same way (`Cpus_allowed_list`
+  stayed `0-15`). Four loops on 16 cores saturate nothing. Two earlier runs
+  and their "passes" proved the kill/restart path but not CPU saturation.
+  The final runs pin the gateway, the load driver and the busy loops to one
+  core with `sched_setaffinity`, verified from `/proc`; only there did
+  latency move (p50 27 -> 107 ms, worst 80 -> 576 ms, same core, same notes).
+- Two mutation checks were first reported "passing" when the mutation had
+  silently failed to apply (a quoting error in my own helper). Caught
+  because the result matched the unmutated run; redone, and both tests then
+  failed as they should.
+- Two of my own scripts used `ps` (absent in the image) and a `GROUP BY`
+  over an aggregate, printing empty evidence rather than failing. Treated
+  empty evidence as no evidence.
+
+**Decided differently:** `TRANSCRIBE_ON_UPLOAD_ENABLED` defaults off. The
+earlier Step 2 proof asked for the flow end to end against the mock; that
+still works when switched on, but on by default it creates a job that
+cannot succeed on staging (ai-services is a health-check stub) for every
+upload, and every real browser note (`webm_opus`) has no AI-contract format.
+`app/undo.py` was deliberately not rewritten: restart recovery is additive;
+moving the undo window onto the jobs table is the proper fix and would
+rewrite another member's module.
+
+## Week 7 Phase 2 -- the AI-service client (`feat/m2-week7-ai-client`)
+
+Built from reading `services/ai/*/app.py`, not from the contracts alone.
+What reading them changed:
+
+- **The Week 6 transcribe handler could never have worked against the real
+  ASR.** It sent `media:<uuid>`; the real services open `uri` as a local path
+  and would answer 422 for every note (which my own 4xx-is-permanent rule
+  would then have dead-lettered on the first try). The mock never opens the
+  file, so nothing I ran in Week 6 could have shown it. `app/ai_audio.py` +
+  `AI_AUDIO_MOUNT_ROOT`; the choice of shared volume vs. a contract change is
+  left to M3 (OPEN_QUESTIONS #11).
+- The services fail in five different shapes (503 PipelineError, 422
+  PipelineError, FastAPI's default 422, bare 500, `degraded` on a 200) and
+  the mock fails in a sixth (every code as 422). `app/ai_client.py` collapses
+  them into "retry or give up", deliberately returning (not raising) a
+  degraded 200 -- moderation's fail-closed HOLD is a decision, not an outage.
+- The demo console, which the brief called the reference, never reads
+  `degraded` and does its chaining in the browser; it was only a reference for
+  timeouts.
+
+Checking: the first sabotage of "a degraded 200 must not raise" was reported
+CAUGHT -- by the wrong test (my mutation made `.json()` blow up on an
+unrelated case first, and `-x` stopped there). Redone with a mutation that
+cannot reach other paths and without `-x`: the two intended tests fail. A
+sabotage that "passes" is only evidence if the right test is the one that
+failed.
+
+Process: I committed the implementation as a "wip" checkpoint to push it to
+the server for its DB-backed tests (the local Python lacks
+`pydantic_settings`). The message is poor; history is not rewritten.
+
+## Week 7 Phase 3 -- the moderation trail (`feat/m2-week7-moderation-store`)
+
+- Append-only is enforced by a trigger, so the shared test teardown (which
+  `DELETE`s every table) would have broken the first time an event existed;
+  that forced the explicit, transaction-local purge opt-in and a one-line
+  change to `tests/conftest.py`. The opt-in is itself tested, including that
+  it never allows an `UPDATE`.
+- **My first mutation run for this phase was invalid and I threw it out.**
+  The DB-level sabotages (drop a trigger / a CHECK) were "restored" with
+  `alembic downgrade -1 && upgrade head`. After the first one, the downgrade
+  failed on the already-dropped trigger, rolled back, and left the database
+  mutated -- so every later "CAUGHT" included earlier sabotage (failure counts
+  grew 6, 7, 9, 11, ...; the final "unmutated" run had 17 failures). The signal
+  was the final unmutated run not being green; I only trusted it because I
+  printed it. Redone with a restore that drops everything the migration made,
+  re-stamps and re-applies it, and a hard precondition that the unmutated
+  suite is green before each mutation: 15 mutations, each now fails only the
+  tests that guard it (1-3 tests each), final run green.
+- The migration was also checked both ways on a throwaway database: single
+  head before and after, `downgrade -1` removes the table and the trigger
+  function, `upgrade head` brings them back.

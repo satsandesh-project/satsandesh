@@ -68,6 +68,17 @@ services:
       VAPID_SUBJECT: ${GATEWAY_VAPID_SUBJECT:-mailto:dev@example.com}
       CORS_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
       LOG_LEVEL: INFO
+      # Week 6: media storage (voice-note uploads). Container-internal
+      # path only -- app/config.py itself never hardcodes this (see its
+      # own comment); this is the one place a real path is chosen, same
+      # as DATABASE_URL's real value being assembled here even though
+      # app/config.py requires it with no default too. Backed by the
+      # media_data volume below, not the container's own writable layer,
+      # so uploads survive a `docker compose build`/recreate the same way
+      # pgdata already does.
+      MEDIA_STORAGE_ROOT: /data/media
+    volumes:
+      - media_data:/data/media
     depends_on:
       postgres:
         condition: service_healthy
@@ -186,3 +197,11 @@ services:
 
 volumes:
   pgdata:
+  # Week 6: voice-note bytes (app/media_storage.py's LocalDiskMediaStorage).
+  # Separate from pgdata deliberately -- `docker compose down -v` or a
+  # backup/restore drill can treat "relational data" and "uploaded media"
+  # as two clearly separate things, not one directory that happens to
+  # hold both. See docker-compose.yml's own gateway comment and
+  # app/media_storage.py's module docstring for why this is a mounted
+  # volume, not an S3-compatible service (MinIO), for this pilot's scale.
+  media_data:
