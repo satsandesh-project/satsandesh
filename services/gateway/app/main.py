@@ -14,6 +14,7 @@ from app.jobs import run_worker_loop, worker_id
 from app.media import router as media_router
 from app.messages import router as messages_router
 from app.models import User
+from app.moderation import router as moderation_router
 from app.onboarding import router as onboarding_router
 from app.push import router as push_router
 from app.recovery import recover_pending_fan_outs
@@ -92,6 +93,7 @@ app.include_router(onboarding_router)
 app.include_router(push_router)
 app.include_router(audio_labels_router)
 app.include_router(media_router)
+app.include_router(moderation_router)
 
 
 @app.get("/health")

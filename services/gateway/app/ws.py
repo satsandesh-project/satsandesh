@@ -16,6 +16,7 @@ from app.auth import user_from_token
 from app.config import get_settings
 from app.db.base import SessionLocal, get_db
 from app.db.models import Message
+from app.db.renderings import renderings_for_wire
 from app.db.repository import (
     can_post_to_circle,
     count_circle_deliveries,
@@ -31,6 +32,7 @@ from app.db.repository import (
 )
 from app.messages import fan_out_message, message_to_out
 from app.models import User
+from app.pipeline import start_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +248,10 @@ async def _handle_message_send(
         # create_message's own SAVEPOINT-scoped recovery).
         await _send_error(websocket, ErrorCode.INTERNAL_ERROR, "message could not be created")
         return
+
+    if created and settings.PIPELINE_ENABLED:
+        # Same transaction as the message: it never exists without its job.
+        start_pipeline(db, message)
 
     # Persist before push: commit only after a successful create_message,
     # before the ack and before any fan-out, so a failed persist can never
@@ -489,10 +495,11 @@ async def _handle_sync_request(
     has_more = len(rows) > req.limit
     page = rows[: req.limit]
 
+    by_message = renderings_for_wire(db, page)
     batch = SyncBatch(
         target_type=req.target_type,
         target_id=req.target_id,
-        messages=[message_to_out(row) for row in page],
+        messages=[message_to_out(row, by_message.get(str(row.id))) for row in page],
         has_more=has_more,
     )
     await websocket.send_json(

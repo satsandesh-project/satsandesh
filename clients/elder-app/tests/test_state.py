@@ -35,10 +35,13 @@ round 1 did.
 from elder_app.elder_app import (
     RECEIVER_TEXT_KEYS,
     TEXTS,
+    TOUCH_HOLD_SHIM_JS,
+    UPLOAD_AND_SEND_VOICE_JS_TEMPLATE,
     State,
     add_person_button,
     bottom_tabs,
     chat_screen,
+    mic_button,
     settings_card,
 )
 
@@ -311,3 +314,44 @@ def test_chat_js_draws_translated_and_original_views():
     assert "Authorization" in CHAT_CONNECT_JS_TEMPLATE.split("function loadAudioUrl")[1][:400]
     assert "renderings: data.renderings" in CHAT_CONNECT_JS_TEMPLATE
     assert "renderings: m.renderings" in CHAT_CONNECT_JS_TEMPLATE
+
+
+def _hold_marker(component) -> str | None:
+    return dict(component.custom_attrs or {}).get("data-sat-hold")
+
+
+def _components_with_hold_marker(component) -> list:
+    found = [component] if _hold_marker(component) else []
+    for child in getattr(component, "children", []):
+        found.extend(_components_with_hold_marker(child))
+    return found
+
+
+def test_touch_hold_markers_cover_every_hold_button_and_the_mic():
+    # Reflex has no touch triggers, so TOUCH_HOLD_SHIM_JS finds its targets by the
+    # data-sat-hold attribute. A hold button without it silently stays mouse-only
+    # (it works on a laptop, so nobody notices) -- the exact gap this guards.
+    marked = (
+        _components_with_hold_marker(add_person_button())
+        + _components_with_hold_marker(settings_card())
+        + _components_with_hold_marker(bottom_tabs())
+        + _components_with_hold_marker(chat_screen())
+    )
+    assert [_hold_marker(c) for c in marked].count("label") == 5
+    assert _hold_marker(mic_button().children[0]) == "press"
+
+
+def test_touch_shim_is_installed_on_bootstrap_and_covers_both_modes():
+    assert "touchstart" in TOUCH_HOLD_SHIM_JS and "touchend" in TOUCH_HOLD_SHIM_JS
+    assert "touchcancel" in TOUCH_HOLD_SHIM_JS
+    assert 'satHold === "press"' in TOUCH_HOLD_SHIM_JS
+    events = State().bootstrap()
+    assert len(events) == 2
+
+
+def test_upload_js_reports_progress_and_retries_three_times():
+    # The template goes through Python %-formatting, so a stray literal % in the JS
+    # would raise here (and in the browser it would never load).
+    js = UPLOAD_AND_SEND_VOICE_JS_TEMPLATE % {"gateway_url": '"http://example.test"'}
+    assert "XMLHttpRequest" in js and "xhr.upload.onprogress" in js
+    assert "sat-upload-fill" in js and "attempt < 3" in js

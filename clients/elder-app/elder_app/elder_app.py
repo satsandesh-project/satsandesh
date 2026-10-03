@@ -1228,32 +1228,65 @@ UPLOAD_AND_SEND_VOICE_JS_TEMPLATE = """
     if (!targetId || !window.__satSendMessage) return "error:no_target";
     const durationMs = window.__satLastRecordingDurationMs || 0;
 
-    async function attemptUpload() {
-        const resp = await fetch(
-            %(gateway_url)s + "/media?format=webm_opus&duration_ms=" + durationMs,
-            {
-                method: "POST",
-                headers: { Authorization: "Bearer " + window.__satToken },
-                body: blob,
-            }
-        );
-        if (!resp.ok) throw new Error("upload failed: " + resp.status);
-        return await resp.json();
+    // The progress bar (voice_upload_progress() below) is plain DOM, driven
+    // from here rather than from Reflex state: XMLHttpRequest's upload
+    // progress fires many times a second and a Python round-trip per event
+    // would be slower than the upload itself. It may not be mounted yet on
+    // the first event, hence the null checks.
+    function showProgress(pct) {
+        const fill = document.getElementById("sat-upload-fill");
+        const bar = document.getElementById("sat-upload-bar");
+        const label = document.getElementById("sat-upload-pct");
+        if (fill) fill.style.width = pct + "%%";
+        if (bar) bar.setAttribute("aria-valuenow", String(pct));
+        if (label) label.textContent = pct + "%%";
+    }
+
+    // XMLHttpRequest, not fetch: fetch cannot report upload progress.
+    function attemptUpload() {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open(
+                "POST",
+                %(gateway_url)s + "/media?format=webm_opus&duration_ms=" + durationMs
+            );
+            xhr.setRequestHeader("Authorization", "Bearer " + window.__satToken);
+            xhr.timeout = 60000;
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) showProgress(Math.round((e.loaded / e.total) * 100));
+            };
+            xhr.onload = () => {
+                if (xhr.status < 200 || xhr.status >= 300) {
+                    reject(new Error("upload failed: " + xhr.status));
+                    return;
+                }
+                try {
+                    resolve(JSON.parse(xhr.responseText));
+                } catch (err) {
+                    reject(new Error("upload failed: bad response"));
+                }
+            };
+            xhr.onerror = () => reject(new Error("upload failed: network"));
+            xhr.ontimeout = () => reject(new Error("upload failed: timeout"));
+            xhr.send(blob);
+        });
     }
 
     let uploaded = null;
     let lastErr = null;
-    // One silent retry for a transient blip -- the "weak network" case
-    // this feature exists for -- before surfacing a real failure the
-    // elder has to explicitly retry. Same two-tier shape as
-    // app/auth.py's own retry-once-then-surface pattern server-side.
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // Up to three attempts with a growing pause (1s, then 2s) -- the "weak
+    // network" case this feature exists for -- before surfacing a real
+    // failure the elder has to explicitly retry. The upload is idempotent
+    // server-side (the same bytes recover the same media row), so a retry
+    // after a response that was lost on the way back cannot store it twice.
+    for (let attempt = 0; attempt < 3; attempt++) {
         try {
+            showProgress(0);
             uploaded = await attemptUpload();
             break;
         } catch (err) {
             lastErr = err;
-            if (attempt === 0) await new Promise((r) => setTimeout(r, 1000));
+            if (attempt < 2) await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         }
     }
     if (!uploaded) {
@@ -1477,6 +1510,47 @@ AUDIO_LABEL_HOLD_CANCEL_JS = """
 })()
 """
 
+# Reflex 0.9 has no touch or pointer event triggers, and a phone or tablet
+# fires `mousedown` only AFTER a tap is released -- so on a touch screen the
+# mic button (hold-to-record) recorded for zero seconds and the audio-label
+# buttons (tap-and-hold) never saw a hold. This translates touch into the mouse
+# events those buttons already handle. `data-sat-hold="press"` (the mic) takes
+# over the gesture completely (no scroll, no emulated mouse events, no
+# long-press menu); `"label"` leaves the browser's own tap/click alone and
+# only adds the press-and-release the hold timer needs.
+TOUCH_HOLD_SHIM_JS = """
+(() => {
+    if (window.__satTouchHoldInstalled) return;
+    window.__satTouchHoldInstalled = true;
+    const holdTarget = (node) =>
+        node && node.closest ? node.closest("[data-sat-hold]") : null;
+    const fire = (el, type) =>
+        el.dispatchEvent(
+            new MouseEvent(type, { bubbles: true, cancelable: true, view: window })
+        );
+    let active = null;
+    document.addEventListener("touchstart", (e) => {
+        const el = holdTarget(e.target);
+        if (!el || e.touches.length !== 1) return;
+        active = el;
+        if (el.dataset.satHold === "press") e.preventDefault();
+        fire(el, "mousedown");
+    }, { passive: false });
+    const release = (e) => {
+        if (!active) return;
+        const el = active;
+        active = null;
+        if (el.dataset.satHold === "press") e.preventDefault();
+        fire(el, "mouseup");
+    };
+    document.addEventListener("touchend", release, { passive: false });
+    document.addEventListener("touchcancel", release, { passive: false });
+    document.addEventListener("contextmenu", (e) => {
+        if (holdTarget(e.target)) e.preventDefault();
+    });
+})()
+"""
+
 
 class State(rx.State):
     language: str = "en"
@@ -1632,7 +1706,10 @@ class State(rx.State):
     # on_mount, once per load, not per screen. --------------------------
 
     def bootstrap(self):
-        return rx.call_script(ENSURE_IDENTITY_JS, callback=State.on_identity_ready)
+        return [
+            rx.call_script(TOUCH_HOLD_SHIM_JS),
+            rx.call_script(ENSURE_IDENTITY_JS, callback=State.on_identity_ready),
+        ]
 
     def on_identity_ready(self, user_id: str):
         self.my_user_id = user_id
@@ -2023,6 +2100,7 @@ def hold_to_hear(label: str) -> dict:
         "on_mouse_down": lambda: State.start_audio_label_hold(label),
         "on_mouse_up": State.cancel_audio_label_hold,
         "on_mouse_leave": State.cancel_audio_label_hold,
+        "custom_attrs": {"data-sat-hold": "label"},
     }
 
 
@@ -3063,6 +3141,11 @@ def recording_banner() -> rx.Component:
                     ),
                     spacing="3",
                 ),
+                rx.cond(
+                    State.voice_send_status == "uploading",
+                    voice_upload_progress(),
+                    rx.fragment(),
+                ),
                 spacing="3",
                 align="start",
                 width="100%",
@@ -3075,6 +3158,50 @@ def recording_banner() -> rx.Component:
             ),
             rx.fragment(),
         ),
+    )
+
+
+def voice_upload_progress() -> rx.Component:
+    """Upload progress bar. Its width and percentage are written straight to
+    the DOM by UPLOAD_AND_SEND_VOICE_JS_TEMPLATE (ids sat-upload-*), not held
+    in Reflex state -- see the comment on showProgress() there."""
+    return rx.hstack(
+        rx.box(
+            rx.box(
+                id="sat-upload-fill",
+                style={
+                    "width": "0%",
+                    "height": "100%",
+                    "background": COLOR["deep_green"],
+                    "border_radius": "8px",
+                    "transition": "width 0.2s",
+                },
+            ),
+            id="sat-upload-bar",
+            role="progressbar",
+            aria_label=State.t["voice_uploading"],
+            custom_attrs={"aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": "0"},
+            style={
+                "flex": "1",
+                "height": "14px",
+                "background": COLOR["warm_border"],
+                "border_radius": "8px",
+                "overflow": "hidden",
+            },
+        ),
+        rx.text(
+            "0%",
+            id="sat-upload-pct",
+            style={
+                "min_width": "3.2em",
+                "text_align": "right",
+                "font_weight": "700",
+                "color": COLOR["ink"],
+            },
+        ),
+        spacing="3",
+        align="center",
+        width="100%",
     )
 
 
@@ -3106,6 +3233,7 @@ def mic_button() -> rx.Component:
             on_mouse_down=State.start_recording,
             on_mouse_up=State.stop_recording,
             on_mouse_leave=State.stop_recording,
+            custom_attrs={"data-sat-hold": "press"},
             style={
                 "width": "132px",
                 "height": "132px",

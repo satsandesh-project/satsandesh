@@ -546,3 +546,69 @@ the server for its DB-backed tests (the local Python lacks
 - The migration was also checked both ways on a throwaway database: single
   head before and after, `downgrade -1` removes the table and the trigger
   function, `upgrade head` brings them back.
+
+## Week 7 Phase 4 -- storing and serving the pipeline's output (`feat/m2-week7-renderings-store`)
+
+- "Fixed at delivery" (M1's answer on #83) is enforced inside each write's SQL
+  (`INSERT ... SELECT ... WHERE EXISTS (pending message)`, conditional
+  `UPDATE`), not a check followed by a write: `fan_out_message` flips
+  `pending` -> `sent` concurrently, and a check-then-write could slip a
+  rendering in after delivery. Two Postgres traps on the way: an
+  `INSERT ... SELECT` of a bare NULL is typed `text` and refused by a uuid
+  column (every value is cast), and `SET LOCAL`-style purge from Phase 3 is
+  untouched.
+- Found while reading `fan_out_message` (for the wire mapping): it flips
+  `pending` -> `sent` after the undo window and does not look at the
+  pipeline at all. If the pipeline takes longer than the window (CPU ASR/MT/TTS
+  on a shared server very plausibly does), the message is delivered with no
+  renderings, and -- because writes now stop at delivery -- they can never
+  arrive. The orchestrator (Phase 5) must gate delivery on the pipeline, not
+  just add a stage; that is its design note's first question.
+- A page of messages costs one renderings query (plus one for any audio), not
+  one per message -- tested by counting statements.
+- Sabotage check, done the way Phase 3's should have been (rebuild from a known
+  migration between mutations, hard "unmutated is green" precondition): 25
+  mutations. **One survived**: removing the visibility filter inside
+  `renderings_for_wire`, because `message_to_out` filters the same thing again,
+  so nothing leaked either way. That is a real gap (the helper's own promise and
+  its query cost were untested), so I added a direct test and re-ran: caught.
+  A surviving mutant that is "equivalent at the output" is still a finding.
+
+## Week 7 Phase 5 -- the orchestrator (`feat/m2-week7-orchestrator`)
+
+- The design note came first because the obvious build -- "add a `process_message`
+  job" -- is wrong: `fan_out_message` flips `pending -> sent` at the end of the
+  undo window without looking at the pipeline, so any pipeline longer than 30s
+  delivers a message with no renderings (and Phase 4's fixed-at-delivery rule
+  then forbids them ever arriving). The gate (`messages.pipeline_state`, set in
+  the same transaction as the job) and the ordering argument (commit `complete`,
+  then read the clock) are what the phase is really about; the tests for it
+  include one that reads the state from a SECOND connection at the moment
+  delivery is requested.
+- Planning the sabotage check found two behaviours my tests did not pin: a run
+  resumed after a verdict must not ask for a second one, and the author's own
+  language must not be rendered for a circle of others. Tests added before
+  running anything, because those mutations would have survived.
+- My first heredoc-driven patch script was rejected by the shell at parse time
+  and applied nothing; I checked `git status` and a grep before assuming it had,
+  then re-did it from a file. (Same near-miss class as the broken restore in
+  Phase 3: confirm the thing happened.)
+
+## Week 7 Phase 6 -- the moderator console routes (`feat/m2-week7-moderation-api`)
+
+- Checked the role against the DATABASE, not the token: reading `app/auth.py`
+  showed the stub derives `role='elder'` for every token, so the repo's own
+  `require_role("moderator")` could never pass on this gateway. (And that the
+  whole moderation surface then rests on an unauthenticated identity -- #23.)
+- All the new tests passed on the first run, which proves little. Planning the
+  sabotage check showed that my "second release is a 409" test never reaches the
+  atomic claim: the status pre-check refuses first, so the conditional UPDATE
+  that actually makes two simultaneous moderators safe was untested. Wrote a
+  real race (the other moderator's decision lands between the route's read and
+  its claim) and re-ran. Also: my first draft of that mutation ("`if False and
+  not ...`") would never have called the claim at all and so would have been
+  "caught" by every test for the wrong reason; replaced with one that keeps the
+  call and ignores its result.
+- A confused test of mine (it tried to write a rendering onto an already-held
+  message, which is correctly refused, then asserted something meaningless) was
+  rewritten rather than left passing.

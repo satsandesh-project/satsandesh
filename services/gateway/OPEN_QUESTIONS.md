@@ -126,15 +126,14 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
    the fetch endpoint — this week's sweeper doesn't touch that, because
    the connection it would need doesn't exist yet.
 
-7. **The transcript `transcribe_media` produces isn't persisted
-   anywhere, so the job is now opt-in (`TRANSCRIBE_ON_UPLOAD_ENABLED`,
-   default off).** It's logged (`app/jobs.py::_handle_transcribe_media`) and
-   nothing else — there's no column or table for a transcript today.
-   Storing it, and deciding what "the transcript" even means once the
-   real orchestrator exists (`denoise -> transcribe -> pivot -> moderate
-   -> render`, `docs/retro/month-1.md`'s Week 7 row), is that Week 7
-   design's job, not something this week should pre-empt by inventing
-   schema for it now.
+7. **The `transcribe_media` upload job still only logs its transcript —
+   but the orchestrator now has somewhere to put one.** Week 7 Phase 4
+   added `messages.transcript` / `transcript_language`, `pivot_text_en`
+   writers and the `message_renderings` table (`app/db/renderings.py`); the
+   Week 6 `transcribe_media` job (opt-in, `TRANSCRIBE_ON_UPLOAD_ENABLED`) is
+   untouched and still logs. It is keyed to a media object, not a message,
+   so it cannot store a transcript on one; the Week 7 orchestrator job, which
+   runs per message, supersedes it.
 
 8. **`AI_SERVICE_URL` defaults to `http://ai-services:8001`** — the
    hostname `docker-compose.yml`'s existing `ai-services` service already
@@ -231,3 +230,96 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     moderators are meant to review their own circle. #9 (retention sweeps a
     held message's audio at 30 days) is still open and is now the more
     pressing of the two: a held message can outlive its audio.
+
+15. **Rendering audio has no producer yet, and its owner/retention are
+    choices worth confirming.** `message_renderings.audio_media_object_id`
+    points at a `media_objects` row; nothing creates those rows yet. The
+    render service returns a `file://` path on its own disk, so the
+    orchestrator (Phase 5/7) must ingest those bytes into the media store.
+    Assumed: the row is owned by the **message's author** (`author_id` is
+    NOT NULL and gates the author's own access), and it is swept by the
+    same 30-day retention as any media object -- after which the rendering
+    keeps its text and loses its audio (`FK ... SET NULL`, tested). A
+    translated note's audio vanishing at 30 days while its message stays is
+    consistent with the original's, but say if renderings should be kept
+    longer or re-synthesized on demand. Also: only a message's *original*
+    audio is open to a moderator (#14), not its renderings'.
+
+16. **Transcript and renderings are hidden until a message is `sent`, even
+    from its author.** Stored while `pending` (the pipeline runs inside the
+    undo window) but exposed on the wire only once the message is out
+    (`message_to_out`), so a held or pending message leaks neither a
+    translation nor a transcript. The sender therefore sees no transcript of
+    their own voice note until it is delivered. If the sender should be able
+    to read the transcript while pending (to check ASR before the undo window
+    closes), that is a UX call for M1 and a one-line change here.
+
+17. **A classifier NUDGE delivers — an assumption about M4's policy.** The
+    chat contract leaves the action -> status mapping open ("the gateway's,
+    not either enum's"). The orchestrator maps ALLOW and NUDGE to delivery,
+    HOLD to `held`, BLOCK to `blocked`; `PIPELINE_NUDGE_DELIVERS=false` holds
+    nudged messages instead. Say so if a NUDGE should mean something else
+    (hold until the sender acknowledges, say) -- the setting is the whole
+    change.
+
+18. **The sender's notice has no wire surface.** For a non-ALLOW verdict the
+    orchestrator translates the classifier's notice into the sender's language
+    and records it in the event's `notice_text`, but the only thing the sender's
+    client receives is a `message.status` frame carrying `held`/`blocked`. So a
+    sender whose message was held sees the status change and not why. That is
+    a contract gap for M1/M4 (a notice field on `MessageStatusOut`, or an
+    endpoint), not something the gateway should invent. The proposal's promise
+    that nothing happens silently is, today, honoured in the audit trail and
+    not yet on the sender's screen.
+
+19. **With the pipeline on, every real browser voice note is held until the
+    `webm_opus` decision (#2).** Fail-closed, deliberately: a note that cannot
+    be transcribed cannot be ruled on, so it goes to a human. The stopgap
+    `AI_ACCEPT_WEBM_AS_OGG_OPUS=true` makes them flow. Worth knowing before
+    switching the pipeline on for real users: with the default it would send
+    every voice note to the moderators' queue.
+
+20. **Nothing detects a message stuck behind a dead pipeline.** The dead-letter
+    hook holds (or releases) the message when its job dies, and recovery
+    re-schedules fan-outs at startup, but a `pipeline_state = 'pending'`
+    message whose job vanished (deleted by hand) or whose hook itself failed
+    (logged, never raised) waits forever -- and the gate keeps it from
+    delivering. A watchdog that holds messages stuck `pending` past a deadline
+    is the missing safety net; not built here (it needs a deadline someone has
+    to choose).
+
+21. **Closed by the gate: the unlocked pending check on rendering writes.** The
+    #87 review noted `upsert_rendering`'s pending check does not lock the row,
+    so a write racing the `pending -> sent` flip could land after delivery.
+    With the orchestrator, delivery cannot start until the pipeline has
+    finished writing (`pipeline_state`), so the race has no writer left in the
+    pipeline's own flow. It remains possible only for a writer outside the
+    pipeline.
+
+22. **Releasing a held message (Phase 6) must also deliver it.** The renderings
+    of a held message already exist (stored, hidden until out), so a release is
+    a status flip -- but a flip alone sends nothing: `fan_out_message` is what
+    broadcasts `message.new`. The release route has to trigger delivery the same
+    way the orchestrator does.
+
+23. **The moderator routes are only as trustworthy as the identity behind
+    them — and identity is still a stub.** `app/auth.py` accepts any UUID as a
+    bearer token with no signature or expiry, so anyone who knows (or can
+    guess) a moderator's user id can act as them: read the queue, hear held
+    audio, release or block. The routes check the database role correctly
+    (`users.role`; the token-derived role is always `elder`), but that is a
+    lock on a door with no wall. Real JWT verification must land before any
+    moderator account exists on a deployment real people can reach. Not in
+    scope for this phase; recorded because it is the biggest risk the
+    console adds.
+
+24. **Console scope decisions worth confirming with M4.** (a) The queue shows
+    only `held` messages; `blocked` ones are not browsable (appeals are
+    Week 9), though a block can be reversed by releasing it if the id is
+    known. (b) A moderator is a global role (`users.role`); a circle's own
+    moderators (`memberships.role`) cannot review their circle. (c)
+    `ModerationQueueItem.original_text` is `null` for a voice note per M4's
+    contract; whether it should carry the transcript is M4's call (asked on
+    #86). (d) `contracts/chat/mock/` has no moderation routes, so the console
+    has no mock to build against; adding them is a small `contracts/chat/`
+    change not made here. (e) `notice_sent` is always `false` (see #18).

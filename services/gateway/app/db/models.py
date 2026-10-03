@@ -186,6 +186,31 @@ class Message(Base):
             "media_format IS NULL OR media_format IN ('webm_opus', 'ogg_opus', 'wav_pcm16', 'mp3')",
             name="ck_messages_media_format",
         ),
+        # Week 7: the pipeline's transcript of a voice note, and its language
+        # (mirrors contracts/chat/messages.py::MessageOut's rules): both or
+        # neither, voice only, non-empty, bare primary-subtag language.
+        sa.CheckConstraint(
+            "(transcript IS NULL) = (transcript_language IS NULL)",
+            name="ck_messages_transcript_pair",
+        ),
+        sa.CheckConstraint(
+            "transcript IS NULL OR kind = 'voice'", name="ck_messages_transcript_voice_only"
+        ),
+        sa.CheckConstraint(
+            "transcript IS NULL OR length(transcript) > 0", name="ck_messages_transcript_nonempty"
+        ),
+        sa.CheckConstraint(
+            "transcript_language IS NULL OR transcript_language ~ '^[a-z]{2,3}$'",
+            name="ck_messages_transcript_language",
+        ),
+        # Week 7 Phase 5: where the message is in the orchestrator pipeline
+        # (ORCHESTRATOR_DESIGN.md #1). NULL = no pipeline (the default, every
+        # existing row); 'pending' holds delivery back (fan_out_message waits);
+        # 'complete'/'failed' release it.
+        sa.CheckConstraint(
+            "pipeline_state IS NULL OR pipeline_state IN ('pending', 'complete', 'failed')",
+            name="ck_messages_pipeline_state",
+        ),
         # design question #1, option (b): exactly one of the two target FKs
         # is populated, matching target_type.
         sa.CheckConstraint(
@@ -237,6 +262,13 @@ class Message(Base):
     kind: Mapped[str] = mapped_column(sa.Text, nullable=False)
     text: Mapped[str | None] = mapped_column(sa.Text)
     pivot_text_en: Mapped[str | None] = mapped_column(sa.Text)
+    # Week 7: what the ASR heard, in the sender's own language (voice only).
+    # Stored while the message is still `pending`, exposed on the wire only
+    # once it is out (app/messages.py::message_to_out). See
+    # app/db/renderings.py for why writes stop at delivery.
+    transcript: Mapped[str | None] = mapped_column(sa.Text)
+    transcript_language: Mapped[str | None] = mapped_column(sa.Text)
+    pipeline_state: Mapped[str | None] = mapped_column(sa.Text)
     original_media_ref: Mapped[str | None] = mapped_column(sa.Text)
     media_duration_ms: Mapped[int | None] = mapped_column(sa.Integer)
     # Week 6: the real link original_media_ref never had -- see
@@ -628,6 +660,75 @@ class ModerationEvent(Base):
         sa.Boolean, nullable=False, server_default=sa.text("false")
     )
     degraded_reason: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+
+class MessageRendering(Base):
+    """Week 7: one language's rendering of one message -- the pipeline's
+    translated text and, when speech was synthesized, its audio
+    (`contracts/chat/renderings.py::Rendering` is the wire shape). A child
+    table, per docs/SCHEMA_DRAFT.md design question #5's option (i): there is
+    no slot for N per-language results on a flat `messages` row.
+
+    Primary key `(message_id, language)`: one rendering per language, and a
+    retried job's re-write of the same stage is an upsert, never a duplicate.
+
+    FIXED AT DELIVERY (M1's answer on #83): app/db/renderings.py only writes
+    while the message is `pending`.
+
+    `message_id` CASCADEs -- a rendering is derived data with no meaning
+    without its message, and erasing a message must erase what was made from
+    it. `audio_media_object_id` is ON DELETE SET NULL for the same reason as
+    `messages.media_object_id`: retention sweeps the audio after
+    MEDIA_RETENTION_DAYS, and the rendering's words must outlive it (NULL
+    there means "no live audio"). The audio's format and duration live on
+    the media row, not here -- one source of truth.
+
+    `model_version_*` are audit/eval data (M4's eval harness samples
+    renderings per pair); a receiver never sees them, so they are not on the
+    wire shape."""
+
+    __tablename__ = "message_renderings"
+    __table_args__ = (
+        sa.CheckConstraint("length(text) > 0", name="ck_message_renderings_text_nonempty"),
+        sa.CheckConstraint("language ~ '^[a-z]{2,3}$'", name="ck_message_renderings_language"),
+        sa.CheckConstraint(
+            "degraded_reason IS NULL OR degraded_reason IN "
+            "('text_only', 'tts_skipped', 'model_fallback', 'rate_limited')",
+            name="ck_message_renderings_degraded_reason",
+        ),
+        # A reason that says "no audio" must not carry audio (the contract's
+        # own rule, restated where a raw writer can't bypass it).
+        sa.CheckConstraint(
+            "degraded_reason IS NULL OR degraded_reason NOT IN ('text_only', 'tts_skipped') "
+            "OR audio_media_object_id IS NULL",
+            name="ck_message_renderings_no_audio_reasons",
+        ),
+        # Backs user_can_fetch_media's "which message does this audio belong
+        # to" lookup; partial because most renderings have audio but a swept
+        # or text-only one has none to look up.
+        sa.Index(
+            "ix_message_renderings_audio_media_object_id",
+            "audio_media_object_id",
+            postgresql_where=sa.text("audio_media_object_id IS NOT NULL"),
+        ),
+    )
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        sa.ForeignKey("messages.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    language: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    audio_media_object_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("media_objects.id", ondelete="SET NULL")
+    )
+    degraded_reason: Mapped[str | None] = mapped_column(sa.Text)
+    model_version_translate: Mapped[str | None] = mapped_column(sa.Text)
+    model_version_tts: Mapped[str | None] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )

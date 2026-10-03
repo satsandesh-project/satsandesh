@@ -20,6 +20,7 @@ from app.db.models import (
     Membership,
     Message,
     MessageDelivery,
+    MessageRendering,
     PushSubscription,
     User,
 )
@@ -669,7 +670,14 @@ def user_can_fetch_media(session: Session, media: MediaObject, user_id: uuid.UUI
     "the voice note itself, so a moderator can listen"
     (contracts/chat/moderation.py), and without this its play button 404s.
     Nothing else: not a `pending` message (still inside the sender's undo
-    window), not a delivered one they are not a recipient of."""
+    window), not a delivered one they are not a recipient of.
+
+    Week 7: a rendering's audio is reached through its message too -- a
+    media object is "carried" by a message either as the voice note itself
+    (`messages.media_object_id`) or as one of its renderings'
+    audio (`message_renderings.audio_media_object_id`). Without this the
+    recipient a rendering was made for would be refused its audio. The
+    moderator allowance above stays original-audio only."""
     if media.author_id == user_id:
         return True
     role = session.scalar(select(User.role).where(User.id == user_id))
@@ -689,7 +697,14 @@ def user_can_fetch_media(session: Session, media: MediaObject, user_id: uuid.UUI
     granting_message = (
         select(Message.id)
         .where(
-            Message.media_object_id == media.id,
+            or_(
+                Message.media_object_id == media.id,
+                Message.id.in_(
+                    select(MessageRendering.message_id).where(
+                        MessageRendering.audio_media_object_id == media.id
+                    )
+                ),
+            ),
             Message.deleted_at.is_(None),
             Message.status.in_(("sent", "delivered")),
             or_(
