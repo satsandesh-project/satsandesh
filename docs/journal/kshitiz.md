@@ -135,3 +135,53 @@ for *any* `on_mouse_down`, which now also matched the mic button's own
 press-and-hold record control, not a tap action). Fixed by checking for
 the specific `start_audio_label_hold` handler instead of any
 `on_mouse_down` at all, so the test means what it says again.
+
+## Week 7 — language and TTS preferences; a real gap flagged before coding
+
+**Stopped before building the whole task.** Week 7's "text and audio
+together" needs translated renderings — a message shown in the
+receiver's own language, with audio. Checked first: `contracts/chat/`
+has no shape for this at all, and the client never talks to
+`services/ai/` directly, only the gateway — so there was nothing
+concrete, real or mock, to build that part against. M2's own Week 7 task
+is exactly what would define how renderings reach the client, and it
+doesn't exist yet either. Asked rather than either inventing a
+contract shape solo or building UI with no data behind it — user chose:
+build the genuinely independent parts now, leave the rendering-dependent
+part as a tracked gap rather than guessing at someone else's contract.
+
+**What shipped instead:** the two parts of Week 7 that never needed the
+renderings gap at all — a content-language picker (en/hi/te, the
+language incoming voice notes should be translated into) at onboarding
+and in settings, and a TTS on/off toggle. Both fold into the same
+settings card and `/me/settings` PATCH Week 5 already built (still
+pending M2's real endpoint — same "fails soft" note as before, one more
+field on an already-waiting request).
+
+**A naming decision worth recording:** `preferred_language_input` is
+deliberately a *different* field from `State.language` (this app's own
+UI chrome toggle, en/te only, unchanged since Month 1). Conflating them
+would mean a Telugu-reading elder couldn't ask for English audio, or
+vice versa — the two are genuinely different questions ("what language
+do you read this app in" vs "what language do you want incoming voice
+notes translated into"), and LanguageCode's three values (en/hi/te)
+don't even match the UI chrome's two. Defaults `preferred_language_input`
+to whatever UI language is active at join time, as a sensible starting
+point, without ever forcing the two to stay in sync afterward.
+
+**Renamed `quiet_hours_card` → `settings_card`, `save_quiet_hours` →
+`save_settings`.** Week 7 extends the same card and the same PATCH
+call with two more fields — a card called "quiet hours" holding a
+language picker would be actively misleading, more so than the small
+churn of renaming its handful of call sites (fixed in the same commit,
+including a stale `she` pronoun for Veerendra a Week-5-era comment had
+never caught).
+
+**Verification:** same approach as Weeks 5–6 — every touched component
+instantiated in a throwaway venv (`reflex run` still doesn't serve
+locally here), plus 6 new tests in `tests/test_state.py` (15 total):
+parsing the two new fields from a settings response, leaving them alone
+when the server hasn't sent them yet (must not silently reset a
+join-time choice), the two setters clearing the saved flag, and
+`join_circle` actually including the settings-save call so the picked
+language persists past the onboarding screen.
