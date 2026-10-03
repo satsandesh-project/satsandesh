@@ -29,6 +29,7 @@ from app.db.models import User as DbUser
 from app.db.renderings import (
     list_renderings,
     rendering_to_out,
+    renderings_for_wire,
     set_message_pivot_text,
     set_message_transcript,
     upsert_rendering,
@@ -291,6 +292,24 @@ def test_a_text_only_rendering_maps_with_its_reason_and_no_audio(db_session):
     out = rendering_to_out(db_session, stored)
 
     assert out.audio is None and out.degraded_reason.value == "text_only"
+
+
+def test_the_wire_helper_returns_renderings_only_for_messages_that_are_out(db_session):
+    """message_to_out also withholds an unpublished message's renderings, but
+    this helper's own promise -- and its query cost -- is that it does not even
+    fetch them. Checked on its own so the two layers can't silently collapse
+    into one."""
+    out_id, _ = _message(db_session)
+    pending_id, _ = _message(db_session)
+    for message_id in (out_id, pending_id):
+        upsert_rendering(db_session, message_id=message_id, language="hi", text="x")
+    db_session.commit()
+    set_message_status(db_session, out_id, new_status="sent", expected="pending")
+    db_session.commit()
+
+    messages = [db_session.get(Message, out_id), db_session.get(Message, pending_id)]
+
+    assert set(renderings_for_wire(db_session, messages)) == {str(out_id)}
 
 
 # --- transcript and pivot -----------------------------------------------------------------
