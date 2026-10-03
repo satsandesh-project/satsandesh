@@ -391,6 +391,22 @@ def test_a_run_resumed_after_a_verdict_does_not_ask_for_a_second_one(db_session,
     assert _msg(db_session, message_id).pipeline_state == "complete"
 
 
+def test_a_job_that_runs_after_the_pipeline_already_failed_does_nothing(db_session, fake, outbox):
+    """A duplicate or late run of a job whose message the dead-letter hook has
+    already held. Without the guard it would re-run the stages against a held
+    message and record a classifier ruling AFTER the system hold."""
+    message_id = _dm(db_session)
+    pipeline.handle_pipeline_dead(db_session, {"message_id": str(message_id)}, "gone")
+    db_session.commit()
+    fake.calls.clear()
+
+    _run(db_session, message_id)
+
+    assert fake.calls == []
+    assert [e.actor_kind for e in list_moderation_events(db_session, message_id)] == ["system"]
+    assert _msg(db_session, message_id).pipeline_state == "failed"
+
+
 def test_a_message_undone_before_the_job_runs_is_abandoned(db_session, fake, outbox):
     message_id = _dm(db_session)
     set_message_status(db_session, message_id, new_status="cancelled", expected="pending")
