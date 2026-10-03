@@ -22,3 +22,23 @@ html {
     font-size: 17px;
   }
 }
+
+/* Press-and-hold buttons (the mic, and the buttons that read their own label
+   aloud when held -- see TOUCH_HOLD_SHIM_JS in elder_app.py). On a touch screen
+   a long press otherwise starts text selection or the browser's own menu, which
+   cancels the hold. The mic also owns the whole gesture (no scroll or zoom
+   starting on it); the label buttons keep normal tap and scroll behaviour. */
+[data-sat-hold] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+[data-sat-hold="press"] {
+  touch-action: none;
+}
+
+[data-sat-hold="label"] {
+  touch-action: manipulation;
+}
