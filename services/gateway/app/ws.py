@@ -16,6 +16,7 @@ from app.auth import user_from_token
 from app.config import get_settings
 from app.db.base import SessionLocal, get_db
 from app.db.models import Message
+from app.db.renderings import renderings_for_wire
 from app.db.repository import (
     can_post_to_circle,
     count_circle_deliveries,
@@ -489,10 +490,11 @@ async def _handle_sync_request(
     has_more = len(rows) > req.limit
     page = rows[: req.limit]
 
+    by_message = renderings_for_wire(db, page)
     batch = SyncBatch(
         target_type=req.target_type,
         target_id=req.target_id,
-        messages=[message_to_out(row) for row in page],
+        messages=[message_to_out(row, by_message.get(str(row.id))) for row in page],
         has_more=has_more,
     )
     await websocket.send_json(

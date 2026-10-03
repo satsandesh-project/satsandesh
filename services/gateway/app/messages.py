@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from contracts.chat.common import MediaRef, MessageStatus, TargetType
 from contracts.chat.envelope import FrameType, SyncBatch
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
+from contracts.chat.renderings import Rendering
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from sqlalchemy.orm import Session
 
@@ -35,6 +36,7 @@ from app.auth import get_current_user
 from app.config import get_settings
 from app.db.base import SessionLocal, get_db
 from app.db.models import Message
+from app.db.renderings import VISIBLE_STATUSES, renderings_for_wire
 from app.db.repository import (
     can_post_to_circle,
     create_message_with_created_flag,
@@ -66,7 +68,7 @@ def _parse_uuid(value: str, *, field: str) -> uuid.UUID:
         raise HTTPException(status_code=422, detail=f"{field} must be a valid UUID") from None
 
 
-def message_to_out(message: Message) -> MessageOut:
+def message_to_out(message: Message, renderings: list[Rendering] | None = None) -> MessageOut:
     """Maps a stored Message row to its wire shape. Each row's own real
     target, not any caller's frame of reference — for a DM, that flips
     depending on which direction a given message went (docs/SCHEMA_DRAFT.md
@@ -83,7 +85,17 @@ def message_to_out(message: Message) -> MessageOut:
     (app/db/models.py::Message.media_object_id's own comment: ON DELETE
     SET NULL is what keeps this column meaning "is there live audio",
     automatically, with no separate check needed here). None either way
-    -- never a MediaRef pointing at a uri that would 404 if fetched."""
+    -- never a MediaRef pointing at a uri that would 404 if fetched.
+
+    Week 7: `renderings` (wire-shaped, from app/db/renderings.py's
+    renderings_for_wire -- batch-loaded by the caller, so a page of messages
+    costs one query, not one per message) and the voice transcript appear
+    only once the message is OUT (`sent`/`delivered`). A pending, held,
+    blocked or cancelled message exposes neither, even if the pipeline has
+    already stored them: the contract says such a message has none, and a
+    held message's translation must not reach anyone before a moderator
+    has ruled."""
+    out = message.status in VISIBLE_STATUSES
     return MessageOut(
         id=str(message.id),
         author_id=str(message.author_id),
@@ -104,6 +116,9 @@ def message_to_out(message: Message) -> MessageOut:
             if message.media_object_id is not None
             else None
         ),
+        renderings=(renderings or []) if out else [],
+        transcript=message.transcript if out else None,
+        transcript_language=message.transcript_language if out else None,
         created_at=message.created_at,
         status=message.status,
     )
@@ -171,7 +186,9 @@ async def fan_out_message(
 
         new_frame = {
             "type": FrameType.MESSAGE_NEW.value,
-            "data": message_to_out(message).model_dump(mode="json"),
+            "data": message_to_out(
+                message, renderings_for_wire(session, [message]).get(str(message.id))
+            ).model_dump(mode="json"),
         }
         await conn_manager.broadcast(
             _fan_out_recipients(session, message), new_frame, exclude=exclude
@@ -374,7 +391,8 @@ def get_messages(
     has_more = len(rows) > limit
     page = rows[:limit]
 
-    messages = [message_to_out(row) for row in page]
+    by_message = renderings_for_wire(db, page)
+    messages = [message_to_out(row, by_message.get(str(row.id))) for row in page]
     return SyncBatch(
         target_type=target_type, target_id=target_id, messages=messages, has_more=has_more
     )
