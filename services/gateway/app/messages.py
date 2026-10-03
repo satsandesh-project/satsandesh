@@ -49,6 +49,7 @@ from app.db.repository import (
     set_message_status,
 )
 from app.models import User
+from app.pipeline import start_pipeline
 from app.push import maybe_push_for_message
 
 if TYPE_CHECKING:
@@ -170,6 +171,12 @@ async def fan_out_message(
         message = get_message_by_id(session, message_id)
         if message is None or message.status != MessageStatus.PENDING.value:
             return
+        # Week 7: wait for the pipeline (ORCHESTRATOR_DESIGN.md #1). A message
+        # whose transcription/moderation/rendering has not finished must not
+        # go out -- and once it has, the orchestrator itself asks for delivery
+        # if this ran first. NULL (no pipeline) is unchanged behaviour.
+        if message.pipeline_state == "pending":
+            return
 
         updated = set_message_status(
             session,
@@ -290,6 +297,9 @@ async def post_message(
         client_msg_id=body.client_msg_id,
         undo_expires_at=undo_expires_at,
     )
+    if created and settings.PIPELINE_ENABLED:
+        # Same transaction as the message: it never exists without its job.
+        start_pipeline(db, message)
     # create_message_with_created_flag only flushes (SAVEPOINT-scoped) —
     # the repository layer deliberately leaves the transaction boundary to
     # its caller. This is the end of the request's unit of work, so it

@@ -573,3 +573,23 @@ the server for its DB-backed tests (the local Python lacks
   so nothing leaked either way. That is a real gap (the helper's own promise and
   its query cost were untested), so I added a direct test and re-ran: caught.
   A surviving mutant that is "equivalent at the output" is still a finding.
+
+## Week 7 Phase 5 -- the orchestrator (`feat/m2-week7-orchestrator`)
+
+- The design note came first because the obvious build -- "add a `process_message`
+  job" -- is wrong: `fan_out_message` flips `pending -> sent` at the end of the
+  undo window without looking at the pipeline, so any pipeline longer than 30s
+  delivers a message with no renderings (and Phase 4's fixed-at-delivery rule
+  then forbids them ever arriving). The gate (`messages.pipeline_state`, set in
+  the same transaction as the job) and the ordering argument (commit `complete`,
+  then read the clock) are what the phase is really about; the tests for it
+  include one that reads the state from a SECOND connection at the moment
+  delivery is requested.
+- Planning the sabotage check found two behaviours my tests did not pin: a run
+  resumed after a verdict must not ask for a second one, and the author's own
+  language must not be rendered for a circle of others. Tests added before
+  running anything, because those mutations would have survived.
+- My first heredoc-driven patch script was rejected by the shell at parse time
+  and applied nothing; I checked `git status` and a grep before assuming it had,
+  then re-did it from a file. (Same near-miss class as the broken restore in
+  Phase 3: confirm the thing happened.)

@@ -203,6 +203,14 @@ class Message(Base):
             "transcript_language IS NULL OR transcript_language ~ '^[a-z]{2,3}$'",
             name="ck_messages_transcript_language",
         ),
+        # Week 7 Phase 5: where the message is in the orchestrator pipeline
+        # (ORCHESTRATOR_DESIGN.md #1). NULL = no pipeline (the default, every
+        # existing row); 'pending' holds delivery back (fan_out_message waits);
+        # 'complete'/'failed' release it.
+        sa.CheckConstraint(
+            "pipeline_state IS NULL OR pipeline_state IN ('pending', 'complete', 'failed')",
+            name="ck_messages_pipeline_state",
+        ),
         # design question #1, option (b): exactly one of the two target FKs
         # is populated, matching target_type.
         sa.CheckConstraint(
@@ -260,6 +268,7 @@ class Message(Base):
     # app/db/renderings.py for why writes stop at delivery.
     transcript: Mapped[str | None] = mapped_column(sa.Text)
     transcript_language: Mapped[str | None] = mapped_column(sa.Text)
+    pipeline_state: Mapped[str | None] = mapped_column(sa.Text)
     original_media_ref: Mapped[str | None] = mapped_column(sa.Text)
     media_duration_ms: Mapped[int | None] = mapped_column(sa.Integer)
     # Week 6: the real link original_media_ref never had -- see
