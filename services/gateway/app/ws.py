@@ -26,6 +26,7 @@ from app.db.repository import (
     is_circle_member,
     list_member_ids_for_circle,
     record_circle_delivery,
+    resolve_owned_media_object,
     set_message_status,
 )
 from app.messages import fan_out_message, message_to_out
@@ -184,6 +185,26 @@ async def _handle_message_send(
             return
         target_user_id = target_uuid
 
+    # Same rule as app/messages.py's post_message: a media_ref must resolve
+    # to a media object the sender owns, and not-found / not-yours are one
+    # indistinguishable error. detail.client_msg_id for the same reason as
+    # the authorization errors above -- the client must know which
+    # optimistic "Sending..." bubble to mark failed.
+    media_object_id: uuid.UUID | None = None
+    media_format: str | None = None
+    if msg.media_ref is not None:
+        media = resolve_owned_media_object(db, uri=msg.media_ref.uri, author_id=caller_id)
+        if media is None:
+            await _send_error(
+                websocket,
+                ErrorCode.VALIDATION_FAILED,
+                "media_ref does not refer to a media object you own",
+                detail={"client_msg_id": msg.client_msg_id},
+            )
+            return
+        media_object_id = media.id
+        media_format = media.format
+
     settings = get_settings()
     undo_expires_at = datetime.now(UTC) + timedelta(seconds=settings.UNDO_WINDOW_SECONDS)
 
@@ -210,6 +231,8 @@ async def _handle_message_send(
             text=msg.text,
             original_media_ref=msg.media_ref.uri if msg.media_ref is not None else None,
             media_duration_ms=msg.media_ref.duration_ms if msg.media_ref is not None else None,
+            media_object_id=media_object_id,
+            media_format=media_format,
             source_lang=msg.source_lang,
             client_msg_id=msg.client_msg_id,
             undo_expires_at=undo_expires_at,

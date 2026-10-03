@@ -445,3 +445,50 @@ a second stacked branch and continuing linearly on the one already-open
 PR was judged the safer of two imperfect options, not a default the
 DISCIPLINE instruction actually anticipated. Flagged here rather than
 silently deviating from the stated rule.
+
+## Phase: Week 6 hardening -- "notes survive", checked against the deliverable
+
+**Asked for:** complete Week 6 fully, without flaws. Re-read the merged
+work against its own deliverable ("notes survive a saturated CPU") rather
+than against the PRs that built it.
+
+**Produced:** failing tests first (confirmed red on the server for the
+right reasons), then fixes: WebSocket `message.send` validates `media_ref`
+(PR #73 only closed the HTTP path); the job queue gained lease ownership
+checks, a lease heartbeat, per-process unique worker ids, permanent-failure
+handling and a `JOB_MAX_ATTEMPTS` that is actually read; `GET /media/{id}`
+is now authorized; messages left `pending` by a restart are re-scheduled at
+startup; the proof-only transcription job is opt-in.
+
+**What was wrong -- including in my own earlier work:**
+
+- Real flaws found only by re-reading, not by any failing test: any
+  logged-in user could download any voice note; `JOB_MAX_ATTEMPTS` was
+  documented and ignored; a worker whose lease expired could overwrite the
+  job's new owner; a restart left `pending` messages undelivered forever.
+- **My first "saturated CPU" proofs were not saturated.** I ran the gateway
+  with `docker run --cpus=1` plus four busy loops and reported it as pinned
+  to one CPU. A check I added only because upload latency (31 ms) looked too
+  healthy showed `cfs_quota_us = -1` -- the limit was never enforced on that
+  host -- and `--cpuset-cpus` was ignored the same way (`Cpus_allowed_list`
+  stayed `0-15`). Four loops on 16 cores saturate nothing. Two earlier runs
+  and their "passes" proved the kill/restart path but not CPU saturation.
+  The final runs pin the gateway, the load driver and the busy loops to one
+  core with `sched_setaffinity`, verified from `/proc`; only there did
+  latency move (p50 27 -> 107 ms, worst 80 -> 576 ms, same core, same notes).
+- Two mutation checks were first reported "passing" when the mutation had
+  silently failed to apply (a quoting error in my own helper). Caught
+  because the result matched the unmutated run; redone, and both tests then
+  failed as they should.
+- Two of my own scripts used `ps` (absent in the image) and a `GROUP BY`
+  over an aggregate, printing empty evidence rather than failing. Treated
+  empty evidence as no evidence.
+
+**Decided differently:** `TRANSCRIBE_ON_UPLOAD_ENABLED` defaults off. The
+earlier Step 2 proof asked for the flow end to end against the mock; that
+still works when switched on, but on by default it creates a job that
+cannot succeed on staging (ai-services is a health-check stub) for every
+upload, and every real browser note (`webm_opus`) has no AI-contract format.
+`app/undo.py` was deliberately not rewritten: restart recovery is additive;
+moving the undo window onto the jobs table is the proper fix and would
+rewrite another member's module.

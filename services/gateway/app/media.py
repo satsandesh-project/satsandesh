@@ -38,7 +38,13 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.config import get_settings
 from app.db.base import get_db
-from app.db.repository import create_media_object, enqueue_job, find_media_object, get_media_object
+from app.db.repository import (
+    create_media_object,
+    enqueue_job,
+    find_media_object,
+    get_media_object,
+    user_can_fetch_media,
+)
 from app.id import generate_uuid7
 from app.media_storage import get_media_storage
 from app.models import User
@@ -149,7 +155,13 @@ async def upload_media(
         # Same transaction as the row itself (both flushed now, committed
         # together below), so a media object is never left on disk
         # without its transcription ever having been queued.
-        enqueue_job(db, job_type="transcribe_media", payload={"media_id": str(media.id)})
+        if settings.TRANSCRIBE_ON_UPLOAD_ENABLED:
+            enqueue_job(
+                db,
+                job_type="transcribe_media",
+                payload={"media_id": str(media.id)},
+                max_attempts=settings.JOB_MAX_ATTEMPTS,
+            )
     db.commit()
     return _to_media_upload_out(media)
 
@@ -166,7 +178,9 @@ def fetch_media(
         raise HTTPException(status_code=404, detail="media not found") from None
 
     media = get_media_object(db, media_uuid)
-    if media is None:
+    # Not found and not-allowed-to-hear-it are deliberately one response:
+    # a 403 would confirm the (guessable) id is a real voice note.
+    if media is None or not user_can_fetch_media(db, media, uuid.UUID(user.id)):
         raise HTTPException(status_code=404, detail="media not found")
 
     storage = get_media_storage()

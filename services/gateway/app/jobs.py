@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -27,7 +29,13 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.base import SessionLocal
-from app.db.repository import claim_next_job, complete_job, fail_job, get_media_object
+from app.db.repository import (
+    claim_next_job,
+    complete_job,
+    extend_job_lease,
+    fail_job,
+    get_media_object,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +44,14 @@ logger = logging.getLogger(__name__)
 # HTTP framing, same "no framework in this layer" rule app/db/repository.py
 # already follows.
 JobHandler = Callable[[Session, dict], None]
+
+
+class PermanentJobError(Exception):
+    """Raised by a handler for a failure no retry can fix. The worker lands
+    the job in 'dead' immediately (with this message as last_error) instead
+    of backing off and retrying max_attempts times first. Anything else a
+    handler raises is treated as transient and retried."""
+
 
 # contracts/chat/'s media format enum and contracts/ai/'s audio format
 # enum don't fully agree -- webm_opus (a real, allowed
@@ -72,7 +88,7 @@ def _handle_transcribe_media(session: Session, payload: dict) -> None:
 
     audio_format = _AI_AUDIO_FORMAT_BY_CHAT_FORMAT.get(media.format)
     if audio_format is None:
-        raise ValueError(
+        raise PermanentJobError(
             f"no contracts.ai AudioFormat for chat format {media.format!r} "
             "(see app/jobs.py's _AI_AUDIO_FORMAT_BY_CHAT_FORMAT)"
         )
@@ -86,6 +102,13 @@ def _handle_transcribe_media(session: Session, payload: dict) -> None:
         json=request.model_dump(mode="json"),
         timeout=10.0,
     )
+    # A 4xx (other than "slow down"/"timed out") means the AI service
+    # rejected THIS request -- retrying the identical request can't change
+    # that. A 5xx or an unreachable service is transient and is retried.
+    if 400 <= response.status_code < 500 and response.status_code not in (408, 429):
+        raise PermanentJobError(
+            f"AI service rejected the transcribe request with HTTP {response.status_code}"
+        )
     response.raise_for_status()
     result = TranscribeResponse.model_validate(response.json())
     logger.info(
@@ -131,12 +154,43 @@ def register_handler(job_type: str, handler: JobHandler) -> None:
     _HANDLERS[job_type] = handler
 
 
+# Fixed for this process's whole life, but NOT just the OS pid: a container's
+# pid is 1 on every fresh start, so a restarted worker would be
+# indistinguishable from the one it replaced in jobs.claimed_by -- and the
+# ownership checks (complete_job/fail_job/extend_job_lease worker_id=)
+# can't tell the old holder from the new one if the ids collide. The random
+# suffix makes each process incarnation unique; the pid stays for humans
+# reading logs or `docker compose ps`.
+_WORKER_ID = f"gateway-{os.getpid()}-{secrets.token_hex(4)}"
+
+
 def worker_id() -> str:
-    # Not a random uuid: a worker's own OS pid, stable for that process's
-    # whole life and visible in `docker compose ps`/logs, so a stuck lease's
-    # claimed_by column tells you directly which process (or which restart
-    # of it) to go look at.
-    return f"gateway-{os.getpid()}"
+    return _WORKER_ID
+
+
+def _heartbeat(job_id: uuid.UUID, this_worker_id: str, lease_seconds: int, stop: threading.Event):
+    """Renew this job's lease every lease/3 seconds while its handler runs,
+    so a job longer than JOB_LEASE_SECONDS is never handed to a second
+    worker mid-flight. Stops when the handler finishes (`stop`), or as soon
+    as the job is no longer ours (extend_job_lease returns False)."""
+    interval = max(0.5, lease_seconds / 3)
+    while not stop.wait(interval):
+        session = SessionLocal()
+        try:
+            still_ours = extend_job_lease(
+                session, job_id, worker_id=this_worker_id, lease_seconds=lease_seconds
+            )
+            session.commit()
+        except Exception:
+            logger.exception("job %s: lease heartbeat failed, will retry", job_id)
+            continue
+        finally:
+            session.close()
+        if not still_ours:
+            logger.warning(
+                "job %s: no longer held by %s, stopping heartbeat", job_id, this_worker_id
+            )
+            return
 
 
 def _run_one_claimed_job(*, this_worker_id: str) -> bool:
@@ -144,12 +198,13 @@ def _run_one_claimed_job(*, this_worker_id: str) -> bool:
     (whether the handler then succeeded or failed), False if nothing was
     eligible -- the caller uses this to decide whether to poll again
     immediately or sleep out the poll interval."""
+    lease_seconds = get_settings().JOB_LEASE_SECONDS
     claim_session = SessionLocal()
     try:
         job = claim_next_job(
             claim_session,
             worker_id=this_worker_id,
-            lease_seconds=get_settings().JOB_LEASE_SECONDS,
+            lease_seconds=lease_seconds,
         )
         claim_session.commit()
         if job is None:
@@ -165,21 +220,50 @@ def _run_one_claimed_job(*, this_worker_id: str) -> bool:
     # committed. See app/db/models.py's Job docstring and
     # tests/test_job_queue.py's rollback test for why that separation is
     # the point, not an accident.
+    stop_heartbeat = threading.Event()
+    heartbeat = threading.Thread(
+        target=_heartbeat,
+        args=(job_id, this_worker_id, lease_seconds, stop_heartbeat),
+        name=f"job-heartbeat-{job_id}",
+        daemon=True,
+    )
+    heartbeat.start()
     work_session = SessionLocal()
     try:
         handler = _HANDLERS.get(job_type)
         if handler is None:
-            fail_job(work_session, job_id, error=f"no handler registered for job_type={job_type!r}")
+            outcome = fail_job(
+                work_session,
+                job_id,
+                error=f"no handler registered for job_type={job_type!r}",
+                worker_id=this_worker_id,
+            )
         else:
             try:
                 handler(work_session, payload)
-            except Exception as exc:  # noqa: BLE001 -- any handler failure is a retryable job failure, not a worker crash
+            except PermanentJobError as exc:
                 work_session.rollback()
-                fail_job(work_session, job_id, error=str(exc))
+                outcome = fail_job(
+                    work_session, job_id, error=str(exc), worker_id=this_worker_id, permanent=True
+                )
+            except Exception as exc:  # noqa: BLE001 -- any other handler failure is a retryable job failure, not a worker crash
+                work_session.rollback()
+                outcome = fail_job(work_session, job_id, error=str(exc), worker_id=this_worker_id)
             else:
-                complete_job(work_session, job_id)
+                outcome = (
+                    "done"
+                    if complete_job(work_session, job_id, worker_id=this_worker_id)
+                    else "lost"
+                )
         work_session.commit()
+        if outcome == "lost":
+            # The lease was lost mid-run (heartbeat failing for a whole
+            # lease, or the process was suspended) and another worker owns
+            # this job now: our result is discarded, theirs stands.
+            logger.warning("job %s: finished but no longer held by %s", job_id, this_worker_id)
     finally:
+        stop_heartbeat.set()
+        heartbeat.join(timeout=5)
         work_session.close()
     return True
 

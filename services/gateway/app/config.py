@@ -113,6 +113,25 @@ class Settings(BaseSettings):
     # now.
     AI_SERVICE_URL: str = "http://ai-services:8001"
 
+    # Whether POST /media enqueues a "transcribe_media" job for each new
+    # upload (app/jobs.py). Off by default: the job only calls the AI
+    # service and LOGS the result -- nothing stores a transcript until Week
+    # 7's orchestrator exists -- and on a deployment whose ai-services is
+    # still a health-check stub (staging today) every such job would just
+    # fail. Real browser voice notes are also webm_opus, which
+    # contracts/ai's AudioFormat has no value for (OPEN_QUESTIONS.md #2),
+    # so those jobs are rejected as permanent failures anyway. Turn on to
+    # exercise the queue end to end against services/ai/mock/.
+    TRANSCRIBE_ON_UPLOAD_ENABLED: bool = False
+
+    # Re-schedule delivery of every still-`pending` message at startup
+    # (app/recovery.py), so a gateway restart inside or after a message's
+    # undo window doesn't strand it forever -- app/undo.py's registry is
+    # in-memory. Same test-only off switch as JOB_WORKER_ENABLED:
+    # tests/conftest.py disables it so a TestClient's lifespan doesn't scan
+    # the test database.
+    STARTUP_RECOVERY_ENABLED: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

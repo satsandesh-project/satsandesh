@@ -655,6 +655,45 @@ def resolve_owned_media_object(
     return media
 
 
+def user_can_fetch_media(session: Session, media: MediaObject, user_id: uuid.UUID) -> bool:
+    """Who may download a stored voice note: its author always; otherwise
+    only a recipient of a message that carries it and has actually been
+    delivered (`sent`/`delivered`, not deleted). A DM's recipient is the
+    message's target user; a circle message's recipients are the circle's
+    members. A message still inside its undo window (`pending`), undone
+    (`cancelled`), held or blocked grants nothing -- those recipients were
+    never meant to hear it yet (or at all)."""
+    if media.author_id == user_id:
+        return True
+    member_circles = select(Membership.circle_id).where(Membership.user_id == user_id)
+    granting_message = (
+        select(Message.id)
+        .where(
+            Message.media_object_id == media.id,
+            Message.deleted_at.is_(None),
+            Message.status.in_(("sent", "delivered")),
+            or_(
+                and_(Message.target_type == "user", Message.target_user_id == user_id),
+                and_(Message.target_type == "circle", Message.target_circle_id.in_(member_circles)),
+            ),
+        )
+        .limit(1)
+    )
+    return session.execute(granting_message).first() is not None
+
+
+def list_pending_messages(session: Session) -> list[tuple[uuid.UUID, datetime | None]]:
+    """(id, undo_expires_at) of every message still `pending` -- the ones
+    whose scheduled delivery (app/undo.py, in-memory) may have been lost to
+    a restart. app/recovery.py re-schedules them at startup."""
+    rows = session.execute(
+        select(Message.id, Message.undo_expires_at).where(
+            Message.status == "pending", Message.deleted_at.is_(None)
+        )
+    ).all()
+    return [(row[0], row[1]) for row in rows]
+
+
 def compute_backoff_seconds(attempts: int, *, base: float = 5.0, cap: float = 300.0) -> float:
     """Exponential backoff, capped. `attempts` is the job's attempts count
     AFTER the failure being backed off from, so attempts=1 (first failure)
@@ -739,12 +778,46 @@ def claim_next_job(
     return job
 
 
-def complete_job(session: Session, job_id: uuid.UUID) -> None:
-    session.execute(update(Job).where(Job.id == job_id).values(status="done"))
+def complete_job(session: Session, job_id: uuid.UUID, *, worker_id: str | None = None) -> bool:
+    """Mark a job done. With `worker_id`, only if that worker still holds
+    the job (status running, claimed_by that worker): a worker whose lease
+    expired and whose job another worker has since reclaimed must not
+    overwrite the new owner's claim. Returns whether this call applied.
+    Without `worker_id` it is unconditional (the original behavior)."""
+    stmt = update(Job).where(Job.id == job_id)
+    if worker_id is not None:
+        stmt = stmt.where(Job.claimed_by == worker_id, Job.status == "running")
+    result = session.execute(stmt.values(status="done"))
     session.flush()
+    return result.rowcount > 0
 
 
-def fail_job(session: Session, job_id: uuid.UUID, *, error: str) -> str:
+def extend_job_lease(
+    session: Session, job_id: uuid.UUID, *, worker_id: str, lease_seconds: int
+) -> bool:
+    """Push a running job's lease out by `lease_seconds` from now -- the
+    heartbeat app/jobs.py runs while a handler works, so a job that takes
+    longer than JOB_LEASE_SECONDS is not handed to a second worker while
+    the first is still honestly working on it. Only the current owner can
+    extend (claimed_by == worker_id AND status running); returns False if
+    the job is no longer this worker's, which tells the heartbeat to stop."""
+    result = session.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.claimed_by == worker_id, Job.status == "running")
+        .values(lease_expires_at=datetime.now(UTC) + timedelta(seconds=lease_seconds))
+    )
+    session.flush()
+    return result.rowcount > 0
+
+
+def fail_job(
+    session: Session,
+    job_id: uuid.UUID,
+    *,
+    error: str,
+    worker_id: str | None = None,
+    permanent: bool = False,
+) -> str:
     """Record a failed attempt, called by the worker that currently holds
     this job's lease -- never a second claim, and never sharing a
     transaction with whatever DB work the failing handler itself did (see
@@ -752,11 +825,24 @@ def fail_job(session: Session, job_id: uuid.UUID, *, error: str) -> str:
     happened separately, before this call). Moves the job to 'dead' if
     attempts has reached max_attempts, otherwise back to 'queued' with
     next_attempt_at pushed out by compute_backoff_seconds. Returns the
-    resulting status ('queued' or 'dead')."""
+    resulting status ('queued' or 'dead').
+
+    `permanent=True` goes straight to 'dead' regardless of attempts: for a
+    failure no retry can fix (a format with no AI-contract equivalent, a
+    4xx from the AI service), where backing off and retrying max_attempts
+    times only delays the same answer.
+
+    `worker_id`: only apply if that worker still holds the job, exactly as
+    complete_job's -- returns 'lost' (and changes nothing) if another worker
+    has reclaimed it, so a slow worker's late failure can't clobber the
+    current owner's claim."""
     job = session.get(Job, job_id)
     assert job is not None
+    session.refresh(job)
+    if worker_id is not None and (job.status != "running" or job.claimed_by != worker_id):
+        return "lost"
 
-    new_status = "dead" if job.attempts >= job.max_attempts else "queued"
+    new_status = "dead" if permanent or job.attempts >= job.max_attempts else "queued"
     values: dict = {
         "status": new_status,
         "last_error": error,
@@ -767,8 +853,13 @@ def fail_job(session: Session, job_id: uuid.UUID, *, error: str) -> str:
         backoff = compute_backoff_seconds(job.attempts)
         values["next_attempt_at"] = datetime.now(UTC) + timedelta(seconds=backoff)
 
-    session.execute(update(Job).where(Job.id == job_id).values(**values))
+    stmt = update(Job).where(Job.id == job_id)
+    if worker_id is not None:
+        stmt = stmt.where(Job.claimed_by == worker_id, Job.status == "running")
+    result = session.execute(stmt.values(**values))
     session.flush()
+    if worker_id is not None and result.rowcount == 0:
+        return "lost"
     session.refresh(job)
     return new_status
 

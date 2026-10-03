@@ -16,6 +16,7 @@ from app.messages import router as messages_router
 from app.models import User
 from app.onboarding import router as onboarding_router
 from app.push import router as push_router
+from app.recovery import recover_pending_fan_outs
 from app.retention import run_retention_sweep_loop
 from app.ws import router as ws_router
 
@@ -48,6 +49,14 @@ async def lifespan(app: FastAPI):
         worker_task = asyncio.create_task(run_worker_loop(stop_event, this_worker_id=worker_id()))
     if settings.MEDIA_RETENTION_SWEEP_ENABLED:
         retention_task = asyncio.create_task(run_retention_sweep_loop(stop_event))
+    if settings.STARTUP_RECOVERY_ENABLED:
+        # A failure here must never keep the gateway from starting: the
+        # worst case is the pre-existing behavior (a pending message that
+        # isn't re-scheduled), not an outage.
+        try:
+            await recover_pending_fan_outs()
+        except Exception:
+            logging.getLogger(__name__).exception("startup recovery of pending messages failed")
     try:
         yield
     finally:
