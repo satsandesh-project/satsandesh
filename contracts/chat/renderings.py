@@ -33,6 +33,12 @@ from pydantic import BaseModel, Field, model_validator
 
 from contracts.chat.common import MediaRef
 
+LANGUAGE_PATTERN = r"^[a-z]{2,3}$"
+"""A bare lowercase BCP-47 primary subtag (`hi`, `te`, `en`). Shared by
+`Rendering.language` and `MessageOut.transcript_language`: a client compares
+either with `preferred_language`, so a regional form like `hi-IN` would
+silently never match."""
+
 MAX_RENDERINGS_PER_MESSAGE = 8
 """
 Upper bound on `MessageOut.renderings` (docs/security-checklist.md, Part A:
@@ -84,7 +90,7 @@ class Rendering(BaseModel):
     the rendering is complete.
     """
 
-    language: str = Field(pattern=r"^[a-z]{2,3}$")
+    language: str = Field(pattern=LANGUAGE_PATTERN)
     text: str = Field(min_length=1)
     audio: MediaRef | None = None
     degraded_reason: RenderingDegradedReason | None = None

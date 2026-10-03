@@ -148,8 +148,12 @@ def main() -> None:
                         format=AudioFormat.WEBM_OPUS,
                         duration_ms=4200,
                     ),
+                    # Week 7: a delivered voice note carries its transcript, in
+                    # its own language (DECISIONS.md #17).
+                    transcript="ఈ రోజు సత్సంగం ఎప్పుడు జరుగుతుంది?",
+                    transcript_language="te",
                     created_at="2026-08-17T09:00:00Z",
-                    status=MessageStatus.PENDING,
+                    status=MessageStatus.DELIVERED,
                 ),
             ],
             has_more=False,
