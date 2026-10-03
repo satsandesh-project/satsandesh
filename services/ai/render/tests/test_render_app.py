@@ -21,6 +21,7 @@ from urllib.request import url2pathname
 
 import pytest
 
+_hf_token_was_set = "HF_TOKEN" in os.environ
 os.environ.setdefault("HF_TOKEN", "test-token-unused-by-stub-tests")
 
 import services.ai.render.app as render_app
@@ -30,6 +31,12 @@ from contracts.ai.render import RenderResponse
 from fastapi.testclient import TestClient
 from services.ai.render.engine import MtEngine, TranslationResult, flores_code_for
 from services.ai.render.settings import Settings, SettingsError
+
+# The placeholder is only needed while render.app is imported (it reads Settings at import
+# time). Left in os.environ it leaks into the whole pytest session and stops other suites'
+# "skip unless HF_TOKEN is set" real-model tests from skipping.
+if not _hf_token_was_set:
+    del os.environ["HF_TOKEN"]
 
 _STUB_TRANSLATIONS = {
     LanguageCode.HINDI: "सुप्रभात, आपका दिन शांतिपूर्ण हो।",
