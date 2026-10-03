@@ -121,3 +121,27 @@ The one file touched outside my two owned directories was moving the repo itself
 from `Documents/SatSandesh` to `Projects/SatSandesh` before any other member's
 directories existed — flagged here for visibility, not something to defend in
 review of the contracts themselves.
+
+## 12. Hindi Piper voice (`hi_IN-pratham-medium`) — CC BY-NC-SA licensing resolved as non-commercial scope
+
+Flagged as an open item in `docs/RENDER_ENVIRONMENT_SPIKE.md` and in PR #78:
+the Hindi voice's training data (AI4Bharat's `indicnlp_corpus`, via trainer
+PravalX) is licensed CC BY-NC-SA 4.0 — non-commercial, share-alike. I checked
+the other two Hindi Piper voices as a possible swap: `priyamvada` draws from
+the same `indicnlp_corpus` under the same CC BY-NC-SA terms, so it does not
+avoid the issue. `rohan` is trained on IIT Madras's IndicTTS "Hindi Mono Male"
+data instead, under IIT Madras's own EULA, which reads as commercially
+permissive — a real alternative if this ever needs to stop being
+non-commercial, but it has not been through the human intelligibility check
+`pratham` has, so it is not swapped in here.
+
+**Decision:** SatSandesh is a student capstone project, not a commercial
+product, so CC BY-NC-SA's non-commercial term is satisfied as-is. Attribution
+and share-alike terms are satisfied via the root `NOTICE` file. No voice swap
+needed for this PR.
+
+**Not closed forever:** if this project is ever deployed somewhere
+monetized (even indirectly — ads, a paid tier, institutional licensing), this
+license no longer permits the Hindi voice's current training data, and
+`hi_IN-rohan-medium` (or another commercially-licensed voice) would need to
+be evaluated and substituted at that point, not assumed to still be fine.
