@@ -528,7 +528,12 @@ and that should be visible rather than implied:
 - **Verbal only:** Sandesh (M3) accepted the reversal verbally. He did not
   post a written confirmation on #35 or approve a document recording it,
   despite being asked directly there more than once.
-- **Not recorded either way:** Sainathan (M4).
+- **Written, on the record — after the merge:** Sainathan (M4) posted his
+  position on issue #35 on 2026-09-22, agreeing with the reversal on
+  stewardship-lane grounds:
+  https://github.com/satsandesh-project/satsandesh/issues/35#issuecomment-5774391922
+  Posted fourteen days after PR #43 merged, so it does not change the fact
+  that the merge itself had three of four owners on record.
 
   Correction (2026-09-22): PR #57 briefly changed this line to claim
   Sainathan "posted an independent position on issue #35 on 2026-09-22."
@@ -541,6 +546,11 @@ and that should be visible rather than implied:
   standing on an unverified claim. If Sainathan does post a position on
   #35, a future PR should cite the real comment link, not restate this
   from memory.
+
+  Resolved (2026-09-25): the comment now exists and is linked above —
+  posted 2026-09-22 at 09:46 UTC, eighteen minutes after #66 was opened
+  and roughly eighteen hours before it merged, so the correction note
+  above was accurate when written and already stale when it landed.
 
 So this reversal does **not** yet meet the standard R6 sets — an ADR status
 change reviewed in a PR by every owner. **This PR is the vehicle for

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from contracts.chat.common import (
     MediaRef,
@@ -10,6 +10,7 @@ from contracts.chat.common import (
     TargetType,
     VersionedModel,
 )
+from contracts.chat.renderings import MAX_RENDERINGS_PER_MESSAGE, Rendering
 
 
 class MessageIn(VersionedModel):
@@ -47,7 +48,15 @@ class MessageOut(VersionedModel):
     for a text message; for a voice message, whatever `MediaRef` the storage
     layer resolved at write time (see DECISIONS.md #15) — not necessarily
     byte-identical to what the client uploaded, since a backend is free to
-    transcode before storing."""
+    transcode before storing.
+
+    `renderings` (Week 7): what the pipeline made of this message for each
+    language it was rendered into -- see contracts/chat/renderings.py and
+    DECISIONS.md #16. Empty for a message nothing was rendered for (a text
+    message to a receiver who shares its language, a message still moving
+    through the pipeline, one held or blocked) and for any producer that
+    predates the field, so an older payload without it still parses.
+    At most one rendering per language."""
 
     id: str
     author_id: str
@@ -56,8 +65,17 @@ class MessageOut(VersionedModel):
     kind: MessageKind
     text: str | None = None
     media_ref: MediaRef | None = None
+    renderings: list[Rendering] = Field(default_factory=list, max_length=MAX_RENDERINGS_PER_MESSAGE)
     created_at: datetime
     status: MessageStatus
+
+    @model_validator(mode="after")
+    def _one_rendering_per_language(self) -> "MessageOut":
+        languages = [r.language for r in self.renderings]
+        duplicates = sorted({lang for lang in languages if languages.count(lang) > 1})
+        if duplicates:
+            raise ValueError(f"duplicate rendering language(s): {duplicates}")
+        return self
 
 
 class AckOut(VersionedModel):
