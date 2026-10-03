@@ -501,6 +501,41 @@ def test_a_second_release_of_the_same_message_is_a_conflict(
     assert len([f for f in sent_frames if f[1]["type"] == "message.new"]) == 1, "delivered once"
 
 
+def test_two_moderators_acting_at_once_cannot_both_win(
+    client, db_session, login_as, moderator, sent_frames, monkeypatch
+):
+    """The sequential 'second release is a 409' test never reaches the atomic
+    claim: the status pre-check refuses first. This is the real race: the
+    other moderator's decision lands AFTER this request read the message and
+    BEFORE it claims it. Only the conditional UPDATE stands between them."""
+    from sqlalchemy import text
+
+    import app.moderation as moderation_module
+
+    message_id, _, _ = _held(db_session)
+    real = moderation_module.latest_moderation_event
+
+    def read_then_lose_the_race(session, mid):
+        event = real(session, mid)
+        # The other moderator blocks it now (raw SQL: the session's objects
+        # keep believing it is still held, exactly as a concurrent request's
+        # would).
+        session.execute(
+            text("update messages set status = 'blocked' where id = :i"), {"i": message_id}
+        )
+        return event
+
+    monkeypatch.setattr(moderation_module, "latest_moderation_event", read_then_lose_the_race)
+    login_as(moderator)
+
+    resp = _release(client, message_id)
+
+    assert resp.status_code == 409
+    db_session.rollback()
+    assert len(list_moderation_events(db_session, message_id)) == 1, "the loser records nothing"
+    assert [f for f in sent_frames if f[1]["type"] == "message.new"] == [], "and delivers nothing"
+
+
 def test_an_unknown_message_is_404(client, db_session, login_as, moderator):
     login_as(moderator)
     assert _release(client, uuid.uuid4()).status_code == 404
