@@ -334,6 +334,15 @@ def test_a_stored_event_cannot_be_deleted(db_session):
     _expect_blocked(db_session, "DELETE FROM moderation_events WHERE id = :id", id=event.id)
 
 
+def test_the_purge_opt_in_never_allows_an_update(db_session):
+    message_id = _message(db_session)
+    event = _classifier_event(db_session, message_id)
+    db_session.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
+    _expect_blocked(
+        db_session, "UPDATE moderation_events SET action = 'ALLOW' WHERE id = :id", id=event.id
+    )
+
+
 def test_the_trail_cannot_be_truncated(db_session):
     message_id = _message(db_session)
     _classifier_event(db_session, message_id)
