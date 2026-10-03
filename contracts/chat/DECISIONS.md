@@ -451,3 +451,38 @@ receiver is refused the audio the contract just promised.
 **Reversal cost:** Low to remove (`renderings` defaults to empty; a consumer
 that never read it is unaffected). Moderate to change `degraded_reason`'s
 vocabulary once M1 branches on its values.
+
+## 17. `MessageOut.transcript` / `transcript_language`; `CONTRACTS_VERSION` bumped to `0.4.0`
+
+Closes the first of the renderings open questions (raised on #83, answered
+there by M1). A voice message's `text` is `null` by design (it is what the
+sender *typed*), so a receiver in the sender's own language was handed audio
+and nothing to read -- an accessibility gap for elders who find audio hard to
+follow, while the pipeline's ASR transcript was computed anyway and then lost
+on the read side.
+
+**Decision: a separate field pair, not a source-language rendering.** The
+alternative (let `renderings` include an entry for the source language whose
+`text` is the transcript and `audio` is `null`) reuses what exists but breaks
+the rule that a rendering is derived from the English pivot. The transcript is
+a different thing -- what ASR heard, before any translation -- so it gets its
+own name.
+
+Rules in the model: `transcript` and `transcript_language` are set together or
+not at all (text with no language can't be matched against a reader's
+preference; a language with no text is a claim about nothing); voice messages
+only; non-empty; `transcript_language` is the same bare primary subtag as
+`Rendering.language` (the shared `LANGUAGE_PATTERN`). A pending voice message
+has none yet. Additive, default null -- an older payload still parses.
+
+Also recorded from the same review: v1 renders only the languages the
+recipients prefer (avoids tripling speech synthesis on the shared server; the
+receiver screen only offers languages present in `renderings`), and
+renderings fixed at delivery is acceptable for v1.
+
+**Not decided here:** `ModerationQueueItem.original_text` (M4's) is still
+`null` for a voice note. A moderator would plausibly want the transcript too;
+that is M4's shape to change.
+
+**Reversal cost:** Low (default null; a consumer that never read it is
+unaffected).
