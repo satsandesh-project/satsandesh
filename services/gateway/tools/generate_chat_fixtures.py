@@ -23,6 +23,7 @@ from contracts.chat.envelope import SyncBatch, SyncRequest
 from contracts.chat.errors import ErrorCode, ErrorPayload
 from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
+from contracts.chat.renderings import Rendering, RenderingDegradedReason
 from pydantic import BaseModel
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "chat"
@@ -64,6 +65,24 @@ def main() -> None:
             target_id="circle-satsang-evening",
             kind=MessageKind.TEXT,
             text="ఈ రోజు సత్సంగం ఎప్పుడు జరుగుతుంది?",
+            # Week 7: one complete rendering (text + audio) and one text-only,
+            # the two shapes a receiver screen has to handle.
+            renderings=[
+                Rendering(
+                    language="hi",
+                    text="आज सत्संग कब होगा?",
+                    audio=MediaRef(
+                        uri="media:0f6a1d52-3c8e-4b7a-9d21-5e4c8a7b1f90",
+                        format=AudioFormat.WAV_PCM16,
+                        duration_ms=3100,
+                    ),
+                ),
+                Rendering(
+                    language="en",
+                    text="When is satsang today?",
+                    degraded_reason=RenderingDegradedReason.TEXT_ONLY,
+                ),
+            ],
             created_at="2026-08-17T09:00:00Z",
             status=MessageStatus.DELIVERED,
         ),

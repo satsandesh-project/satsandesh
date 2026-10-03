@@ -125,3 +125,41 @@ things need a decision from whoever builds that side:
    not foreclose them: an appeal is more events on the same message, plus a
    thread the sender can read. Worth confirming that reading is the
    intent before the table is created.
+
+## Renderings (Week 7) — open points
+
+`contracts/chat/renderings.py` and `MessageOut.renderings` (`DECISIONS.md`
+#16) are M2's proposal for the receiver-facing output of the orchestrator,
+ahead of M1's receiver screen. Three things need a decision from M1 (what the
+screen needs) and M3/M4 (what the pipeline can produce):
+
+1. **A voice note's original-language transcript has no read-side home.**
+   `MessageOut.text` is `null` for a voice message, and so is
+   `ModerationQueueItem.original_text`. So a Telugu receiver of a Telugu voice
+   note gets the audio and nothing to read — and the ASR transcript, which the
+   pipeline computes anyway, is thrown away on the read side. Options: a
+   `MessageOut.transcript` (+ language) field; or let `renderings` include an
+   entry for the source language whose `text` is the transcript and `audio` is
+   `null`. The second reuses what exists but bends "a rendering is derived
+   from the pivot"; the first is one more field on every message. Not decided
+   here — it changes M1's accessibility story and M4's console, not just
+   storage.
+
+2. **Which languages get rendered, and what does the language picker offer?**
+   The render service takes a list of target languages, so the orchestrator
+   chooses. Rendering only the languages the recipients prefer is cheapest, but
+   then a receiver who picks another language in the UI finds no rendering and
+   gets the original. Rendering all three supported languages for every
+   message always has something to offer, at three times the render cost
+   (CPU TTS on a shared server). A third option is an on-demand
+   `POST /messages/{id}/renderings?language=`. The contract as written works
+   with any of them — a client only offers languages present in `renderings` —
+   but the screen's behaviour differs.
+
+3. **What if renderings are produced or replaced after delivery?** The
+   contract assumes they exist by the time a message is delivered (the
+   pipeline gates delivery). A later re-render (a better model, a language
+   added) or a late-arriving rendering has no way to reach a client that
+   already holds the message: there is no frame for it. Worth confirming
+   that "renderings are fixed at delivery" is acceptable for v1, rather than
+   discovering it when the first model upgrade lands.
