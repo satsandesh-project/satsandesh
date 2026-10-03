@@ -492,3 +492,35 @@ upload, and every real browser note (`webm_opus`) has no AI-contract format.
 `app/undo.py` was deliberately not rewritten: restart recovery is additive;
 moving the undo window onto the jobs table is the proper fix and would
 rewrite another member's module.
+
+## Week 7 Phase 2 -- the AI-service client (`feat/m2-week7-ai-client`)
+
+Built from reading `services/ai/*/app.py`, not from the contracts alone.
+What reading them changed:
+
+- **The Week 6 transcribe handler could never have worked against the real
+  ASR.** It sent `media:<uuid>`; the real services open `uri` as a local path
+  and would answer 422 for every note (which my own 4xx-is-permanent rule
+  would then have dead-lettered on the first try). The mock never opens the
+  file, so nothing I ran in Week 6 could have shown it. `app/ai_audio.py` +
+  `AI_AUDIO_MOUNT_ROOT`; the choice of shared volume vs. a contract change is
+  left to M3 (OPEN_QUESTIONS #11).
+- The services fail in five different shapes (503 PipelineError, 422
+  PipelineError, FastAPI's default 422, bare 500, `degraded` on a 200) and
+  the mock fails in a sixth (every code as 422). `app/ai_client.py` collapses
+  them into "retry or give up", deliberately returning (not raising) a
+  degraded 200 -- moderation's fail-closed HOLD is a decision, not an outage.
+- The demo console, which the brief called the reference, never reads
+  `degraded` and does its chaining in the browser; it was only a reference for
+  timeouts.
+
+Checking: the first sabotage of "a degraded 200 must not raise" was reported
+CAUGHT -- by the wrong test (my mutation made `.json()` blow up on an
+unrelated case first, and `-x` stopped there). Redone with a mutation that
+cannot reach other paths and without `-x`: the two intended tests fail. A
+sabotage that "passes" is only evidence if the right test is the one that
+failed.
+
+Process: I committed the implementation as a "wip" checkpoint to push it to
+the server for its DB-backed tests (the local Python lacks
+`pydantic_settings`). The message is poor; history is not rewritten.
