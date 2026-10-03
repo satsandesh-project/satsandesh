@@ -369,6 +369,28 @@ def test_running_a_finished_message_again_changes_and_calls_nothing(db_session, 
     assert len(_renderings(db_session, message_id)) == 1
 
 
+def test_a_run_resumed_after_a_verdict_does_not_ask_for_a_second_one(db_session, fake, outbox):
+    """A crash between recording the verdict and recording completion: the job
+    is reclaimed. It must not rule on the message twice (two events, a possibly
+    different verdict) -- it picks up at the stage after moderation."""
+    message_id = _dm(db_session, target_lang="hi")
+    _run(db_session, message_id)
+    db_session.execute(
+        text("update messages set pipeline_state = 'pending' where id = :i"), {"i": message_id}
+    )
+    db_session.execute(
+        text("delete from message_renderings where message_id = :i"), {"i": message_id}
+    )
+    db_session.commit()
+    fake.calls.clear()
+
+    _run(db_session, message_id)
+
+    assert fake.stages() == ["render"], "only the missing stage is redone"
+    assert len(list_moderation_events(db_session, message_id)) == 1
+    assert _msg(db_session, message_id).pipeline_state == "complete"
+
+
 def test_a_message_undone_before_the_job_runs_is_abandoned(db_session, fake, outbox):
     message_id = _dm(db_session)
     set_message_status(db_session, message_id, new_status="cancelled", expected="pending")
@@ -398,6 +420,20 @@ def test_a_circle_is_rendered_into_its_members_languages_minus_the_senders_and_u
     # hi twice -> once; te is the message's own language; ta cannot be rendered.
     assert fake.requests("render")[0]["target_languages"] == ["en", "hi"]
     assert set(_renderings(db_session, message_id)) == {"en", "hi"}
+
+
+def test_the_authors_own_language_is_not_rendered_for_a_circle_of_others(db_session, fake, outbox):
+    # The author reads Hindi but wrote in Telugu; nobody else in the circle
+    # reads Hindi, so there is no one to render Hindi for.
+    author = _user(db_session, "Author", "hi")
+    circle = create_circle(db_session, name="Satsang", created_by=author.id)
+    add_member(db_session, circle_id=circle.id, user_id=author.id, role="admin")
+    add_member(db_session, circle_id=circle.id, user_id=_user(db_session, "Other", "en").id)
+    message_id = _message(db_session, author, target_circle=circle, source_lang="te")
+
+    _run(db_session, message_id)
+
+    assert fake.requests("render")[0]["target_languages"] == ["en"]
 
 
 def test_nothing_is_rendered_when_every_recipient_already_speaks_the_senders_language(
