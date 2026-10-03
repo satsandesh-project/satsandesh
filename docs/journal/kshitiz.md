@@ -220,3 +220,50 @@ tests in `tests/test_state.py` (18 total) pass in the app's own container.
 demo is plain HTTP, where `getUserMedia` is blocked, so recording was tested with
 a stubbed audio stream. Synthetic touch events are not the same as a physical
 touch; the first real-device check is still owed.
+
+## 2026-10-03 — Week 7 part 2: the receiver experience
+
+The dependency map's Week 7 M1 line: text and audio together, original always one
+tap away, 0.8-1.2x speed control, opt-in autoplay, language pick that holds, per-user
+TTS on/off. Part 1 (#68) did the pickers; this is the screen itself. It builds
+against `MessageOut.renderings` / `transcript` (#83, #86), which the gateway will
+fill from #87/#88.
+
+**What a message shows.** If it carries a rendering in the receiver's content
+language: that text, plus its audio when speech is on, plus a button to flip to the
+original (the voice note itself and its transcript). If not (same language, or none
+made): the original, as before. A degraded rendering says so ("No audio for this
+message", "Approximate translation") instead of looking broken. With speech off the
+audio and its note disappear and the text stays -- the useful mode for an elder who
+finds audio hard to follow.
+
+**Playback was broken against the real gateway, independent of any of this.** The
+old `<audio src=GATEWAY/media/id>` cannot send the `Authorization` header that `GET
+/media/{id}` has always required, so every received voice note would have been
+refused. Audio is now fetched with the token and played from a blob URL (cached per
+media id; a failed load shows a tap-to-retry line).
+
+**Speed and autoplay.** 0.8x / 1x / 1.2x buttons (44 px targets), remembered on the
+device. Autoplay is opt-in (off by default) from the settings card, and starts only
+the newest voice message from someone else. `renderCurrentThread` rebuilds the whole
+thread on every update, which used to cut off a playing note; the playing note now
+resumes where it was.
+
+**"Holds".** The gateway's `/me/settings` still doesn't exist, so the preferences
+(content language, speech on/off, autoplay) are also kept in localStorage; they
+survive a reload on this device. Server values still win once the endpoint exists.
+
+**Verification:** on my demo stack (port 18300) at 375x812 against the real gateway:
+my own two voice notes played from blob URLs with real durations; speed 1.2x applied
+to every player and was saved; injected incoming messages (the gateway doesn't emit
+renderings yet) showed the translated view, the original + transcript view, the
+no-rendering fallback, the "approximate" and "no audio" notes, and speech-off; autoplay
+started the marked message at 1.2x and kept playing across a re-render (0.44 s -> 0.87
+s on a new element); a bogus media id showed the retry line; language + autoplay held
+across a reload. 5 new tests in `tests/test_state.py` (20 total) pass in the app's
+container.
+
+**Not verified:** a real translated message end to end (needs #87/#88 deployed; I
+used injected messages), a real phone, and the Telugu strings -- I wrote them and they
+need a native reader's eye before the pilot. Blob URLs live for the page's lifetime;
+fine for a session of voice notes, worth a revoke-on-leave later.

@@ -226,6 +226,14 @@ TEXTS = {
         "tts_title": "Read messages aloud",
         "tts_on_label": "On",
         "tts_off_label": "Off",
+        "autoplay_title": "Play new voice messages automatically",
+        "recv_show_original": "Show original",
+        "recv_show_translation": "Show translation",
+        "recv_audio_failed": "Could not load the audio. Tap to try again.",
+        "recv_speed": "Speed",
+        "recv_transcript": "Text",
+        "recv_no_audio": "No audio for this message",
+        "recv_approximate": "Approximate translation",
     },
     "te": {
         "app_name": "సత్‌సందేశ్",
@@ -304,6 +312,14 @@ TEXTS = {
         "tts_title": "సందేశాలను చదివి వినిపించు",
         "tts_on_label": "ఆన్",
         "tts_off_label": "ఆఫ్",
+        "autoplay_title": "కొత్త వాయిస్ సందేశాలను ఆటోమేటిక్‌గా ప్లే చేయి",
+        "recv_show_original": "అసలు చూపించు",
+        "recv_show_translation": "అనువాదం చూపించు",
+        "recv_audio_failed": "ఆడియో లోడ్ కాలేదు. మళ్లీ ప్రయత్నించడానికి నొక్కండి.",
+        "recv_speed": "వేగం",
+        "recv_transcript": "వచనం",
+        "recv_no_audio": "ఈ సందేశానికి ఆడియో లేదు",
+        "recv_approximate": "సుమారు అనువాదం",
     },
 }
 
@@ -477,11 +493,245 @@ window.__satsandeshWsInit = true;
     return %(status_pending)s;
   }
 
+  // ---- Week 7: the receiver experience ----------------------------------
+  // What a message shows its receiver: the translation into their own language
+  // (text, plus audio when speech was made and they have it on), the original
+  // always one tap away, 0.8x-1.2x speed, and opt-in autoplay. A message with no
+  // rendering in their language just shows the original, as before.
+  //
+  // Audio is fetched WITH the login token and played from a blob URL: GET
+  // /media/{id} needs the bearer header, and an <audio src=...> cannot send one,
+  // so the old direct src was refused by the real gateway.
+  const RECV_TEXT = %(recv_text)s;
+  const SPEEDS = [0.8, 1, 1.2];
+  window.__satShowOriginal = window.__satShowOriginal || {};
+  window.__satAudioUrls = window.__satAudioUrls || {};
+  window.__satAudioPending = window.__satAudioPending || {};
+
+  function recvText() {
+    const ui = (window.__satPrefs && window.__satPrefs.ui) || "en";
+    return RECV_TEXT[ui] || RECV_TEXT.en;
+  }
+
+  function currentSpeed() {
+    if (typeof window.__satSpeed !== "number") {
+      let saved = 1;
+      try { saved = parseFloat(localStorage.getItem("sat_speed")) || 1; } catch (e) {}
+      window.__satSpeed = SPEEDS.indexOf(saved) !== -1 ? saved : 1;
+    }
+    return window.__satSpeed;
+  }
+
+  function styleChoice(button, on) {
+    button.style.background = on ? "#2F5D50" : "#FFFCF6";
+    button.style.color = on ? "#FFFCF6" : "#4A3A24";
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function makeButton(label, onClick) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.style.minHeight = "44px";
+    b.style.minWidth = "44px";
+    b.style.padding = "0 12px";
+    b.style.borderRadius = "12px";
+    b.style.fontWeight = "700";
+    b.style.fontSize = "16px";
+    b.style.cursor = "pointer";
+    b.style.border = "2px solid #EADCC4";
+    b.style.fontFamily = "inherit";
+    styleChoice(b, false);
+    b.onclick = onClick;
+    return b;
+  }
+
+  function applySpeed(speed) {
+    window.__satSpeed = speed;
+    try { localStorage.setItem("sat_speed", String(speed)); } catch (e) {}
+    document.querySelectorAll("#live-chat-messages audio").forEach((a) => {
+      a.playbackRate = speed;
+    });
+    document.querySelectorAll("#live-chat-messages [data-speed]").forEach((b) => {
+      styleChoice(b, parseFloat(b.dataset.speed) === speed);
+    });
+  }
+
+  function mediaIdOf(ref) {
+    return String(ref.uri || "").replace(/^media:/, "");
+  }
+
+  function loadAudioUrl(ref) {
+    const id = mediaIdOf(ref);
+    if (window.__satAudioUrls[id]) return Promise.resolve(window.__satAudioUrls[id]);
+    if (!window.__satAudioPending[id]) {
+      window.__satAudioPending[id] = fetch(GATEWAY_URL + "/media/" + id, {
+        headers: { Authorization: "Bearer " + window.__satToken },
+      })
+        .then((resp) => {
+          if (!resp.ok) throw new Error("audio fetch failed: " + resp.status);
+          return resp.blob();
+        })
+        .then((blob) => {
+          const url = URL.createObjectURL(blob);
+          window.__satAudioUrls[id] = url;
+          return url;
+        })
+        .finally(() => { delete window.__satAudioPending[id]; });
+    }
+    return window.__satAudioPending[id];
+  }
+
+  // `resume` is what was playing before this re-render (renderCurrentThread
+  // rebuilds the whole thread on every update): without it a status tick or a
+  // new message would cut off a voice note the receiver is listening to.
+  function audioPlayer(ref, key, resume) {
+    const t = recvText();
+    const wrap = document.createElement("div");
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.preload = "auto";
+    audio.dataset.key = key;
+    audio.style.width = "100%%";
+    audio.style.maxWidth = "260px";
+    audio.defaultPlaybackRate = currentSpeed();
+    audio.playbackRate = currentSpeed();
+    wrap.appendChild(audio);
+
+    const failed = document.createElement("button");
+    failed.type = "button";
+    failed.textContent = t.recv_audio_failed;
+    failed.style.display = "none";
+    failed.style.minHeight = "44px";
+    failed.style.padding = "6px 10px";
+    failed.style.border = "none";
+    failed.style.background = "transparent";
+    failed.style.color = "#8A3E0F";
+    failed.style.fontWeight = "700";
+    failed.style.fontFamily = "inherit";
+    failed.style.textAlign = "left";
+    wrap.appendChild(failed);
+
+    function attach() {
+      failed.style.display = "none";
+      loadAudioUrl(ref).then((url) => {
+        audio.src = url;
+        audio.playbackRate = currentSpeed();
+        const wantsAutoplay =
+          window.__satAutoplayKey && key.indexOf(window.__satAutoplayKey + ":") === 0;
+        if (wantsAutoplay) window.__satAutoplayKey = null;
+        if (resume && resume.key === key) {
+          audio.addEventListener("loadedmetadata", () => {
+            audio.currentTime = resume.time;
+            audio.playbackRate = currentSpeed();
+            audio.play().catch(() => {});
+          }, { once: true });
+        } else if (wantsAutoplay) {
+          audio.play().catch(() => {});
+        }
+      }).catch(() => { failed.style.display = "block"; });
+    }
+    failed.onclick = attach;
+    attach();
+
+    const speedRow = document.createElement("div");
+    speedRow.style.display = "flex";
+    speedRow.style.alignItems = "center";
+    speedRow.style.gap = "6px";
+    speedRow.style.marginTop = "6px";
+    const speedLabel = document.createElement("span");
+    speedLabel.textContent = t.recv_speed;
+    speedLabel.style.fontSize = "14px";
+    speedLabel.style.color = "#6E6047";
+    speedRow.appendChild(speedLabel);
+    for (const speed of SPEEDS) {
+      const b = makeButton(speed + "×", () => applySpeed(speed));
+      b.dataset.speed = String(speed);
+      styleChoice(b, speed === currentSpeed());
+      speedRow.appendChild(b);
+    }
+    wrap.appendChild(speedRow);
+    return wrap;
+  }
+
+  function textBlock(text, size, color) {
+    const el = document.createElement("div");
+    el.style.fontSize = size || "20px";
+    el.style.color = color || "#2A2118";
+    el.textContent = text || "";
+    return el;
+  }
+
+  function noteLine(text) {
+    const el = document.createElement("div");
+    el.style.fontSize = "14px";
+    el.style.color = "#6E6047";
+    el.style.margin = "4px 0";
+    el.textContent = text;
+    return el;
+  }
+
+  function findRendering(msg, lang) {
+    if (!Array.isArray(msg.renderings)) return null;
+    return msg.renderings.find((r) => r.language === lang) || null;
+  }
+
+  function buildMessageBody(bubble, msg, isOwn, key, resume) {
+    const prefs = window.__satPrefs || {};
+    const t = recvText();
+    const rendering = isOwn ? null : findRendering(msg, prefs.lang || "en");
+    const showOriginal = !rendering || !!window.__satShowOriginal[key];
+
+    if (rendering && !showOriginal) {
+      bubble.appendChild(textBlock(rendering.text));
+      if (prefs.tts !== false) {
+        if (rendering.audio) {
+          bubble.appendChild(audioPlayer(rendering.audio, key + ":t", resume));
+        } else if (
+          rendering.degraded_reason === "text_only" ||
+          rendering.degraded_reason === "tts_skipped"
+        ) {
+          bubble.appendChild(noteLine(t.recv_no_audio));
+        }
+      }
+      if (rendering.degraded_reason === "model_fallback") {
+        bubble.appendChild(noteLine(t.recv_approximate));
+      }
+    } else if (msg.kind === "voice") {
+      if (msg.media_ref) bubble.appendChild(audioPlayer(msg.media_ref, key + ":o", resume));
+      else if (!msg.transcript) bubble.appendChild(noteLine(t.recv_no_audio));
+      if (msg.transcript) {
+        bubble.appendChild(noteLine(t.recv_transcript));
+        bubble.appendChild(textBlock(msg.transcript));
+      }
+    } else {
+      bubble.appendChild(textBlock(msg.text));
+    }
+
+    if (rendering) {
+      const toggle = makeButton(
+        showOriginal ? t.recv_show_translation : t.recv_show_original,
+        () => {
+          window.__satShowOriginal[key] = !showOriginal;
+          renderCurrentThread();
+        }
+      );
+      toggle.style.marginTop = "8px";
+      bubble.appendChild(toggle);
+    }
+  }
+
   function renderCurrentThread() {
     const messagesEl = document.getElementById("live-chat-messages");
     const contactId = window.__satCurrentContactId;
     if (!messagesEl || !contactId) return;
     const thread = threadFor(contactId);
+    const playingNow = Array.from(messagesEl.querySelectorAll("audio")).find(
+      (a) => !a.paused && !a.ended && a.dataset.key
+    );
+    const resume = playingNow
+      ? { key: playingNow.dataset.key, time: playingNow.currentTime }
+      : null;
     messagesEl.innerHTML = "";
     if (thread.length === 0) {
       const empty = document.createElement("div");
@@ -520,24 +770,13 @@ window.__satsandeshWsInit = true;
         who.textContent = (msg.author_id || "").slice(0, 8);
         bubble.appendChild(who);
       }
-      if (msg.kind === "voice" && msg.media_ref) {
-        // media_ref.uri is this package's own opaque "media:<id>" scheme
-        // (contracts/chat/common.py's validate_media_uri) -- GET
-        // /media/{id} resolves it; playback UI beyond a plain player
-        // (speed control, original-always-one-tap-away) is Week 7's job,
-        // not this week's (Week 6 is capture and send, not receive).
-        const audio = document.createElement("audio");
-        audio.controls = true;
-        audio.style.maxWidth = "220px";
-        audio.src = GATEWAY_URL + "/media/" + msg.media_ref.uri.replace(/^media:/, "");
-        bubble.appendChild(audio);
-      } else {
-        const text = document.createElement("div");
-        text.style.fontSize = "20px";
-        text.style.color = "#2A2118";
-        text.textContent = msg.text;
-        bubble.appendChild(text);
-      }
+      buildMessageBody(
+        bubble,
+        msg,
+        isOwn,
+        msg.id || msg.client_msg_id || String(thread.indexOf(msg)),
+        resume
+      );
       if (isOwn) {
         const status = document.createElement("div");
         status.style.fontSize = "12px";
@@ -686,6 +925,14 @@ window.__satsandeshWsInit = true;
       // of who sent it -- otherPartyId's "the other side of a DM" logic
       // doesn't apply once there can be more than two parties.
       const contactId = data.target_type === "circle" ? data.target_id : otherPartyId(data);
+      if (
+        data.author_id !== window.__satUserId &&
+        data.kind === "voice" &&
+        window.__satPrefs &&
+        window.__satPrefs.autoplay
+      ) {
+        window.__satAutoplayKey = data.id;
+      }
       upsertMessage(contactId, {
         id: data.id,
         author_id: data.author_id,
@@ -694,6 +941,9 @@ window.__satsandeshWsInit = true;
         kind: data.kind,
         text: data.text,
         media_ref: data.media_ref,
+        renderings: data.renderings || [],
+        transcript: data.transcript || null,
+        transcript_language: data.transcript_language || null,
         status: data.status,
       });
       if (data.author_id !== window.__satUserId) sendDeliveredAck(data.id);
@@ -722,6 +972,9 @@ window.__satsandeshWsInit = true;
         kind: m.kind,
         text: m.text,
         media_ref: m.media_ref,
+        renderings: m.renderings || [],
+        transcript: m.transcript || null,
+        transcript_language: m.transcript_language || null,
         status: m.status,
       }));
       for (const m of data.messages) {
@@ -1076,6 +1329,47 @@ UPLOAD_AND_SEND_VOICE_JS_TEMPLATE = """
 # is the write path that never did, until now.
 # ---------------------------------------------------------------------------
 
+# Receiver preferences (content language, speech on/off, autoplay) are mirrored to
+# `window.__satPrefs`, which the chat JS reads when it draws a message, and to
+# localStorage. The localStorage copy is what makes a choice "hold" across a reload
+# today: the gateway's GET/PATCH /me/settings does not exist yet (M2's), so
+# without it every reload would reset the language the elder picked. Once that
+# endpoint exists the server values still win (on_settings_loaded runs after).
+SYNC_PREFS_JS_TEMPLATE = """
+(() => {
+    const prefs = %(prefs)s;
+    window.__satPrefs = prefs;
+    try {
+        localStorage.setItem("sat_prefs", JSON.stringify({
+            lang: prefs.lang, tts: prefs.tts, autoplay: prefs.autoplay,
+        }));
+    } catch (e) {}
+    if (window.__satRenderCurrentThread) window.__satRenderCurrentThread();
+})()
+"""
+
+LOAD_PREFS_JS = """
+(() => {
+    try {
+        return localStorage.getItem("sat_prefs") || "";
+    } catch (e) {
+        return "";
+    }
+})()
+"""
+
+# The words the chat JS needs when it draws a message (it is built once, outside
+# Reflex, so it gets both languages up front and picks by the current UI language).
+RECEIVER_TEXT_KEYS = (
+    "recv_show_original",
+    "recv_show_translation",
+    "recv_audio_failed",
+    "recv_speed",
+    "recv_transcript",
+    "recv_no_audio",
+    "recv_approximate",
+)
+
 LOAD_SETTINGS_JS_TEMPLATE = """
 (async () => {
     try {
@@ -1327,6 +1621,9 @@ class State(rx.State):
     # read the app in Telugu and still ask for English audio.
     preferred_language_input: str = "en"
     tts_on_input: bool = True
+    # Whether a newly arrived voice message plays by itself. Off by default: sound
+    # nobody asked for is a worse surprise than a tap -- the elder opts in.
+    autoplay_input: bool = False
 
     settings_saved: bool = False
     settings_error: bool = False
@@ -1376,6 +1673,30 @@ class State(rx.State):
 
     def toggle_language(self):
         self.language = "te" if self.language == "en" else "en"
+        return self._sync_prefs()
+
+    def _sync_prefs(self):
+        """Push the receiver preferences to the chat JS and localStorage."""
+        prefs = {
+            "lang": self.preferred_language_input,
+            "tts": self.tts_on_input,
+            "autoplay": self.autoplay_input,
+            "ui": self.language,
+        }
+        return rx.call_script(SYNC_PREFS_JS_TEMPLATE % {"prefs": json.dumps(prefs)})
+
+    def on_prefs_loaded(self, result: str):
+        try:
+            saved = json.loads(result) if result else {}
+        except (json.JSONDecodeError, TypeError):
+            saved = {}
+        if saved.get("lang") in ("en", "hi", "te"):
+            self.preferred_language_input = saved["lang"]
+        if isinstance(saved.get("tts"), bool):
+            self.tts_on_input = saved["tts"]
+        if isinstance(saved.get("autoplay"), bool):
+            self.autoplay_input = saved["autoplay"]
+        return self._sync_prefs()
 
     def set_active_tab(self, tab: str):
         self.active_tab = tab
@@ -1396,6 +1717,7 @@ class State(rx.State):
             rx.call_script(LOAD_NAME_JS, callback=State.on_name_loaded),
             rx.call_script(LOAD_CONTACTS_JS, callback=State.on_contacts_loaded),
             self.load_circles(),
+            rx.call_script(LOAD_PREFS_JS, callback=State.on_prefs_loaded),
             self.load_settings(),
         ]
 
@@ -1425,6 +1747,12 @@ class State(rx.State):
             "status_cancelled": json.dumps(TEXTS["en"]["status_cancelled"]),
             "send_error_not_member": json.dumps(TEXTS["en"]["send_error_not_member"]),
             "send_error_announcement_only": json.dumps(TEXTS["en"]["send_error_announcement_only"]),
+            "recv_text": json.dumps(
+                {
+                    lang: {key: TEXTS[lang][key] for key in RECEIVER_TEXT_KEYS}
+                    for lang in ("en", "te")
+                }
+            ),
             "uuid_v4_fallback": _UUID_V4_JS_FALLBACK,
         }
         return rx.call_script(js)
@@ -1692,6 +2020,7 @@ class State(rx.State):
             self.preferred_language_input = parsed["preferred_language"]
         if "tts_on" in parsed and parsed["tts_on"] is not None:
             self.tts_on_input = parsed["tts_on"]
+        return self._sync_prefs()
 
     def set_quiet_hours_start_input(self, value: str):
         self.quiet_hours_start_input = value
@@ -1704,10 +2033,16 @@ class State(rx.State):
     def set_preferred_language_input(self, value: str):
         self.preferred_language_input = value
         self.settings_saved = False
+        return self._sync_prefs()
 
     def set_tts_on_input(self, value: bool):
         self.tts_on_input = value
         self.settings_saved = False
+        return self._sync_prefs()
+
+    def set_autoplay_input(self, value: bool):
+        self.autoplay_input = value
+        return self._sync_prefs()
 
     def save_settings(self):
         self.settings_saved = False
@@ -2063,6 +2398,27 @@ def settings_card() -> rx.Component:
             rx.button(
                 rx.cond(State.tts_on_input, State.t["tts_on_label"], State.t["tts_off_label"]),
                 on_click=lambda: State.set_tts_on_input(~State.tts_on_input),
+                style={
+                    "min_height": "44px",
+                    "padding": "0 20px",
+                    "border_radius": "12px",
+                    "font_weight": "700",
+                    "cursor": "pointer",
+                    **pill_button_style(True),
+                },
+            ),
+            width="100%",
+            align="center",
+            style={"margin_top": "4px"},
+        ),
+        rx.hstack(
+            rx.text(
+                State.t["autoplay_title"],
+                style={"font_weight": "700", "color": COLOR["ink"], "flex": "1"},
+            ),
+            rx.button(
+                rx.cond(State.autoplay_input, State.t["tts_on_label"], State.t["tts_off_label"]),
+                on_click=lambda: State.set_autoplay_input(~State.autoplay_input),
                 style={
                     "min_height": "44px",
                     "padding": "0 20px",
