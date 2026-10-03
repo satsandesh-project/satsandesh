@@ -33,3 +33,10 @@ clients/
 infra/
 db/
 *.zip
+
+# Two runtime files that live under paths excluded above (infra/ai/Dockerfile.*):
+# the moderation service reads its policy document at startup (it IS the
+# prompt's source of truth), and the speech service warms up on a fixture that
+# lives under services/ai/tests/. Exceptions are exact paths, nothing broader.
+!docs/policy-taxonomy.md
+!services/ai/tests/fixtures/tone_2s.wav
