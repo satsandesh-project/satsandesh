@@ -253,3 +253,51 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     their own voice note until it is delivered. If the sender should be able
     to read the transcript while pending (to check ASR before the undo window
     closes), that is a UX call for M1 and a one-line change here.
+
+17. **A classifier NUDGE delivers — an assumption about M4's policy.** The
+    chat contract leaves the action -> status mapping open ("the gateway's,
+    not either enum's"). The orchestrator maps ALLOW and NUDGE to delivery,
+    HOLD to `held`, BLOCK to `blocked`; `PIPELINE_NUDGE_DELIVERS=false` holds
+    nudged messages instead. Say so if a NUDGE should mean something else
+    (hold until the sender acknowledges, say) -- the setting is the whole
+    change.
+
+18. **The sender's notice has no wire surface.** For a non-ALLOW verdict the
+    orchestrator translates the classifier's notice into the sender's language
+    and records it in the event's `notice_text`, but the only thing the sender's
+    client receives is a `message.status` frame carrying `held`/`blocked`. So a
+    sender whose message was held sees the status change and not why. That is
+    a contract gap for M1/M4 (a notice field on `MessageStatusOut`, or an
+    endpoint), not something the gateway should invent. The proposal's promise
+    that nothing happens silently is, today, honoured in the audit trail and
+    not yet on the sender's screen.
+
+19. **With the pipeline on, every real browser voice note is held until the
+    `webm_opus` decision (#2).** Fail-closed, deliberately: a note that cannot
+    be transcribed cannot be ruled on, so it goes to a human. The stopgap
+    `AI_ACCEPT_WEBM_AS_OGG_OPUS=true` makes them flow. Worth knowing before
+    switching the pipeline on for real users: with the default it would send
+    every voice note to the moderators' queue.
+
+20. **Nothing detects a message stuck behind a dead pipeline.** The dead-letter
+    hook holds (or releases) the message when its job dies, and recovery
+    re-schedules fan-outs at startup, but a `pipeline_state = 'pending'`
+    message whose job vanished (deleted by hand) or whose hook itself failed
+    (logged, never raised) waits forever -- and the gate keeps it from
+    delivering. A watchdog that holds messages stuck `pending` past a deadline
+    is the missing safety net; not built here (it needs a deadline someone has
+    to choose).
+
+21. **Closed by the gate: the unlocked pending check on rendering writes.** The
+    #87 review noted `upsert_rendering`'s pending check does not lock the row,
+    so a write racing the `pending -> sent` flip could land after delivery.
+    With the orchestrator, delivery cannot start until the pipeline has
+    finished writing (`pipeline_state`), so the race has no writer left in the
+    pipeline's own flow. It remains possible only for a writer outside the
+    pipeline.
+
+22. **Releasing a held message (Phase 6) must also deliver it.** The renderings
+    of a held message already exist (stored, hidden until out), so a release is
+    a status flip -- but a flip alone sends nothing: `fan_out_message` is what
+    broadcasts `message.new`. The release route has to trigger delivery the same
+    way the orchestrator does.
