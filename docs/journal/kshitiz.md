@@ -185,3 +185,38 @@ when the server hasn't sent them yet (must not silently reset a
 join-time choice), the two setters clearing the saved flag, and
 `join_circle` actually including the settings-save call so the picked
 language persists past the onboarding screen.
+
+## 2026-10-03 — Weeks 5/6 audit against the dependency map: touch screens and upload progress
+
+Re-read M1's Week 5 and Week 6 deliverables in the Month 2-3 dependency map
+against the code, rather than against the PRs that built them. Two real gaps,
+both invisible on a laptop:
+
+**Hold-to-record and hold-to-hear were mouse-only.** The mic button and the five
+buttons that read their label aloud used `on_mouse_down`/`up`/`leave`. A phone or
+tablet fires `mousedown` only after a tap is released, so on a touch screen the mic
+recorded for zero seconds and no hold was ever seen -- on exactly the devices the
+elders use. Reflex 0.9.9 has no touch or pointer triggers (checked the installed
+package), so `TOUCH_HOLD_SHIM_JS` translates touchstart/touchend into the mouse
+events those buttons already handle, keyed on a `data-sat-hold` attribute
+("press" for the mic, which owns the whole gesture; "label" for the others, which
+keep the browser's normal tap/click). CSS stops text selection and the long-press
+menu from cancelling the hold.
+
+**Voice upload had no progress display** (the Week 6 line says "upload with
+progress and retry"). It now uses `XMLHttpRequest` (fetch cannot report upload
+progress) and a progress bar written straight to the DOM, and makes three
+attempts (1s, 2s pauses) instead of two.
+
+**Verification:** on my own demo stack (port 18300, not the shared 8095) with the
+browser pane at 375x812, synthetic touch events: a 100 ms tap on a label button
+fetched nothing, a 700 ms hold fetched `/audio-labels/circle`, and the guard flag
+and timer were clear afterwards; a 1.6 s touch hold on the mic recorded a 21 KB
+clip; the upload bar went 0% -> 100% with `role=progressbar`; with the first two
+upload attempts forced to fail, the third succeeded and the message sent. 3 new
+tests in `tests/test_state.py` (18 total) pass in the app's own container.
+
+**Not verified:** a real finger on a real phone, and the real microphone -- the
+demo is plain HTTP, where `getUserMedia` is blocked, so recording was tested with
+a stubbed audio stream. Synthetic touch events are not the same as a physical
+touch; the first real-device check is still owed.
