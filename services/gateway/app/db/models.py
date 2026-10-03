@@ -532,3 +532,102 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
+
+
+class ModerationEvent(Base):
+    """Week 7: one row of the append-only moderation trail --
+    `contracts/chat/moderation.py::ModerationEvent`'s storage (M4's contract,
+    issue #65; the table was left to the gateway).
+
+    Append-only for real, not by convention: a trigger (see the migration)
+    refuses UPDATE, DELETE and TRUNCATE. A release, a block and a later
+    reversal are each a NEW row; `messages.status` is the current state and
+    this is the history that explains it. The single deliberate purge path is
+    a transaction-local `SET LOCAL app.allow_audit_purge = 'on'` (erasing a
+    person's data on request -- the contract's SYSTEM actor kind names that
+    case). UPDATE is refused even then.
+
+    The CHECK constraints are the contract's own rules, which it says "the
+    gateway enforces, not this model": `actor_id` is set exactly for a
+    moderator; a human or system event has no `confidence` or `model_version`
+    (reusing 0.0/1.0 for a person would make "the human was certain"
+    indistinguishable from "the model said so"); `degraded` is only for a
+    classifier that failed closed.
+
+    `degraded_reason` has no counterpart on the wire (the chat contract's
+    `degraded` is a bool) -- it keeps WHY the classifier fell back (timeout vs
+    unparseable reply) for whoever reads the audit trail, from the AI
+    contract's `DegradedMode.reason`.
+
+    `message_id` is RESTRICT, not CASCADE: an audit trail must outlive the
+    thing it audits, same reasoning as messages.author_id."""
+
+    __tablename__ = "moderation_events"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "actor_kind IN ('classifier', 'moderator', 'system')",
+            name="ck_moderation_events_actor_kind",
+        ),
+        sa.CheckConstraint(
+            "label IN ('A_DEVOTIONAL', 'B_ORGANIZATIONAL', 'C_PERSONAL', "
+            "'D_DISPUTATIONAL', 'E_HARMFUL')",
+            name="ck_moderation_events_label",
+        ),
+        sa.CheckConstraint(
+            "action IN ('ALLOW', 'NUDGE', 'HOLD', 'BLOCK')",
+            name="ck_moderation_events_action",
+        ),
+        sa.CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="ck_moderation_events_confidence_range",
+        ),
+        sa.CheckConstraint(
+            "(actor_kind = 'moderator') = (actor_id IS NOT NULL)",
+            name="ck_moderation_events_actor_id_iff_moderator",
+        ),
+        sa.CheckConstraint(
+            "actor_kind = 'classifier' OR (confidence IS NULL AND model_version IS NULL)",
+            name="ck_moderation_events_only_classifier_has_model_opinion",
+        ),
+        sa.CheckConstraint(
+            "NOT degraded OR actor_kind = 'classifier'",
+            name="ck_moderation_events_degraded_only_classifier",
+        ),
+        sa.CheckConstraint(
+            "degraded_reason IS NULL OR (degraded AND degraded_reason IN "
+            "('text_only', 'tts_skipped', 'model_fallback', 'rate_limited'))",
+            name="ck_moderation_events_degraded_reason",
+        ),
+        sa.CheckConstraint(
+            "note IS NULL OR length(note) <= 2000", name="ck_moderation_events_note_length"
+        ),
+        # The trail for one message, oldest first -- the console's audit view
+        # and the "latest event" lookup both read it in this order.
+        sa.Index("ix_moderation_events_message_id_created_at_id", "message_id", "created_at", "id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=generate_uuid7
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("messages.id", ondelete="RESTRICT"), nullable=False
+    )
+    actor_kind: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    label: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    action: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(sa.Float)
+    rationale: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(sa.Text)
+    notice_text: Mapped[str | None] = mapped_column(sa.Text)
+    policy_version: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    model_version: Mapped[str | None] = mapped_column(sa.Text)
+    degraded: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    degraded_reason: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )

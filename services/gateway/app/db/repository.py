@@ -661,10 +661,30 @@ def user_can_fetch_media(session: Session, media: MediaObject, user_id: uuid.UUI
     delivered (`sent`/`delivered`, not deleted). A DM's recipient is the
     message's target user; a circle message's recipients are the circle's
     members. A message still inside its undo window (`pending`), undone
-    (`cancelled`), held or blocked grants nothing -- those recipients were
-    never meant to hear it yet (or at all)."""
+    (`cancelled`), held or blocked grants no RECIPIENT anything -- those
+    recipients were never meant to hear it yet (or at all).
+
+    Week 7: a moderator or admin (global `users.role`) may also fetch the
+    audio of a `held` or `blocked`, non-deleted message -- the console shows
+    "the voice note itself, so a moderator can listen"
+    (contracts/chat/moderation.py), and without this its play button 404s.
+    Nothing else: not a `pending` message (still inside the sender's undo
+    window), not a delivered one they are not a recipient of."""
     if media.author_id == user_id:
         return True
+    role = session.scalar(select(User.role).where(User.id == user_id))
+    if role in ("moderator", "admin"):
+        under_review = (
+            select(Message.id)
+            .where(
+                Message.media_object_id == media.id,
+                Message.deleted_at.is_(None),
+                Message.status.in_(("held", "blocked")),
+            )
+            .limit(1)
+        )
+        if session.execute(under_review).first() is not None:
+            return True
     member_circles = select(Membership.circle_id).where(Membership.user_id == user_id)
     granting_message = (
         select(Message.id)

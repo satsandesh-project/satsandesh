@@ -60,6 +60,7 @@ def db_session(engine):
     issuing statements in the same test (e.g. two separate invalid inserts),
     which would otherwise require SAVEPOINT bookkeeping this doesn't need.
     Truncating between tests is simpler and just as isolated."""
+    from sqlalchemy import text
     from sqlalchemy.orm import Session
 
     from app.db.base import Base
@@ -71,6 +72,10 @@ def db_session(engine):
         session.rollback()
         session.close()
         with engine.begin() as conn:
+            # moderation_events is append-only (a trigger refuses UPDATE/DELETE/
+            # TRUNCATE); this transaction-local setting is its one deliberate
+            # purge path -- see tests/test_moderation_store.py.
+            conn.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
             for table in reversed(Base.metadata.sorted_tables):
                 conn.execute(table.delete())
 
