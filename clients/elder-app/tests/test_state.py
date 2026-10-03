@@ -33,6 +33,8 @@ round 1 did.
 """
 
 from elder_app.elder_app import (
+    RECEIVER_TEXT_KEYS,
+    TEXTS,
     State,
     add_person_button,
     bottom_tabs,
@@ -258,3 +260,54 @@ def test_discard_recording_resets_both_the_url_and_the_send_status():
 
     assert state.last_recording_data_url == ""
     assert state.voice_send_status == ""
+
+
+def test_receiver_text_exists_in_both_ui_languages():
+    # The chat JS is built once outside Reflex and is handed both languages; a key
+    # missing from one of them would be a KeyError when the connection is set up.
+    for lang in ("en", "te"):
+        for key in RECEIVER_TEXT_KEYS:
+            assert TEXTS[lang].get(key), f"{key} missing or empty in {lang}"
+
+
+def test_on_prefs_loaded_restores_saved_choices():
+    state = _fresh_state()
+
+    state.on_prefs_loaded('{"lang": "hi", "tts": false, "autoplay": true}')
+
+    assert state.preferred_language_input == "hi"
+    assert state.tts_on_input is False
+    assert state.autoplay_input is True
+
+
+def test_on_prefs_loaded_ignores_missing_or_corrupt_data():
+    state = _fresh_state()
+
+    state.on_prefs_loaded("")
+    state.on_prefs_loaded("not json")
+    state.on_prefs_loaded('{"lang": "xx", "tts": "yes", "autoplay": 1}')
+
+    # An unknown language and non-boolean flags must not overwrite the defaults.
+    assert state.preferred_language_input == "en"
+    assert state.tts_on_input is True
+    assert state.autoplay_input is False
+
+
+def test_autoplay_is_off_by_default_and_the_setter_changes_it():
+    state = _fresh_state()
+    assert state.autoplay_input is False
+
+    state.set_autoplay_input(True)
+
+    assert state.autoplay_input is True
+
+
+def test_chat_js_draws_translated_and_original_views():
+    # The chat JS is a browser-side string, not unit-testable headless; this guards the
+    # parts a refactor could silently drop.
+    from elder_app.elder_app import CHAT_CONNECT_JS_TEMPLATE
+
+    assert "buildMessageBody" in CHAT_CONNECT_JS_TEMPLATE
+    assert "Authorization" in CHAT_CONNECT_JS_TEMPLATE.split("function loadAudioUrl")[1][:400]
+    assert "renderings: data.renderings" in CHAT_CONNECT_JS_TEMPLATE
+    assert "renderings: m.renderings" in CHAT_CONNECT_JS_TEMPLATE
