@@ -1,0 +1,4 @@
+# Synthesized audio and downloaded Piper voice files are runtime artifacts,
+# never committed. See README.md.
+output/
+voices/

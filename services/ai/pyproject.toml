@@ -59,9 +59,27 @@ indicconformer = [
     "onnxruntime==1.20.1",
     "onnx==1.20.1",
 ]
+# Render service's own en->indic MT step (IndicTrans2 stack) plus TTS (piper-tts); transformers is pinned to 4.44.2 as in the mt group on feat/ai-mt-pivot-w6, because 5.x breaks IndicTransToolkit's collator import (`ImportError: cannot import name 'PreTrainedTokenizerBase'`).
+render = [
+    "indictranstoolkit",
+    "transformers==4.44.2",
+    "torch",
+    "sentencepiece",
+    "piper-tts",
+]
+# Just the TTS half of `render`, above. render/tests/test_render_app.py always uses
+# the real Piper voices even in its "stub" tests (only the MT step is stubbed there) --
+# so this lean group (piper-tts only: onnxruntime + pathvalidate, no torch) is what
+# CI's ai-tests job installs to run that suite for real, without pulling in the
+# much heavier en-indic MT stack the `render` group above also carries. Only the one
+# `integration`-marked test in that file (the real en-indic model path) needs `render`
+# itself, and stays skipped by default.
+render-tts = [
+    "piper-tts",
+]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "moderation/tests", "mt/tests", "speech_indicconformer/tests"]
+testpaths = ["tests", "moderation/tests", "mt/tests", "speech_indicconformer/tests", "render/tests"]
 markers = [
     "integration: requires real model weights and a CUDA GPU; skipped by default",
 ]

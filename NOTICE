@@ -1,0 +1,48 @@
+SatSandesh
+Copyright the SatSandesh project contributors.
+
+This project is licensed under the Apache License, Version 2.0 (see LICENSE).
+It also uses the following third-party models/data, included here as
+attribution notices, not as a modification of this project's own license.
+
+================================================================================
+Piper TTS voice: hi_IN-rohan-medium (Hindi)
+================================================================================
+Used by: services/ai/render/ (English-pivot -> Hindi speech)
+
+- Voice model fine-tuned from the US English "lessac" voice, using IIT
+  Madras's IndicTTS "Hindi Mono Male" data
+  (https://www.iitm.ac.in/donlab/indictts), distributed via the
+  rhasspy/piper-voices Hugging Face repository.
+- License: per IIT Madras's IndicTTS EULA
+  (https://www.iitm.ac.in/donlab/indictts/downloads/license.pdf) — commercially
+  permissive, but redistributors must retain this verbatim notice:
+
+  "COPYRIGHT 2016 TTS Consortium, TDIL, Meity represented by Hema A Murthy &
+  S Umesh, DEPARTMENT OF Computer Science and Engineering and Electrical
+  Engineering, IIT Madras. ALL RIGHTS RESERVED"
+
+================================================================================
+Piper TTS voice: te_IN-maya-medium (Telugu)
+================================================================================
+Used by: services/ai/render/ (English-pivot -> Telugu speech)
+
+- Voice model fine-tuned from the US English "lessac" voice, using IIT
+  Madras's IndicTTS Telugu data (https://www.iitm.ac.in/donlab/indictts),
+  distributed via the rhasspy/piper-voices Hugging Face repository.
+- License: per IIT Madras's IndicTTS license terms
+  (https://www.iitm.ac.in/donlab/indictts/downloads/license.pdf).
+- Redistributors must retain this verbatim IIT Madras notice:
+
+  "COPYRIGHT 2016 TTS Consortium, TDIL, Meity represented by Hema A Murthy &
+  S Umesh, DEPARTMENT OF Computer Science and Engineering and Electrical
+  Engineering, IIT Madras. ALL RIGHTS RESERVED"
+
+================================================================================
+AI4Bharat IndicTrans2 (MT models)
+================================================================================
+Used by: services/ai/mt/ and services/ai/render/
+
+- Models: ai4bharat/indictrans2-indic-en-dist-200M,
+  ai4bharat/indictrans2-en-indic-dist-200M.
+- License: MIT.
