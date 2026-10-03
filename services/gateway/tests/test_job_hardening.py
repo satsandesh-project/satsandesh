@@ -274,39 +274,98 @@ def test_transcribe_media_for_a_format_the_ai_contract_lacks_is_permanent(db_ses
         jobs_module._handle_transcribe_media(db_session, payload)
 
 
-def _fake_post(status_code):
-    def post(url, **kwargs):
-        return httpx.Response(status_code, request=httpx.Request("POST", url), json={})
+def _ai_client_answering(handler):
+    """An AiClient whose transport is `handler`, wired in where the handler
+    builds its client (Week 7: the call goes through app/ai_client.py)."""
+    from app.ai_client import AiClient, AiStage
 
-    return post
+    return AiClient(
+        urls={stage: "http://ai.test" for stage in AiStage},
+        http=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
 
 
 def test_transcribe_media_ai_service_4xx_is_permanent(db_session, monkeypatch):
     payload = _transcribe_job_for(db_session, fmt="wav_pcm16")
-    monkeypatch.setattr(jobs_module.httpx, "post", _fake_post(404))
+    client = _ai_client_answering(lambda request: httpx.Response(404, json={}))
+    monkeypatch.setattr(jobs_module, "_ai_client", lambda: client)
 
     with pytest.raises(jobs_module.PermanentJobError, match="404"):
         jobs_module._handle_transcribe_media(db_session, payload)
 
 
 def test_transcribe_media_ai_service_5xx_stays_retryable(db_session, monkeypatch):
-    payload = _transcribe_job_for(db_session, fmt="wav_pcm16")
-    monkeypatch.setattr(jobs_module.httpx, "post", _fake_post(503))
+    from app.ai_client import AiCallError
 
-    with pytest.raises(httpx.HTTPStatusError):
+    payload = _transcribe_job_for(db_session, fmt="wav_pcm16")
+    client = _ai_client_answering(lambda request: httpx.Response(503, json={}))
+    monkeypatch.setattr(jobs_module, "_ai_client", lambda: client)
+
+    with pytest.raises(AiCallError) as info:
         jobs_module._handle_transcribe_media(db_session, payload)
+    assert info.value.retryable
 
 
 def test_transcribe_media_ai_service_unreachable_stays_retryable(db_session, monkeypatch):
+    from app.ai_client import AiCallError
+
     payload = _transcribe_job_for(db_session, fmt="wav_pcm16")
 
-    def refuse(url, **kwargs):
+    def refuse(request):
         raise httpx.ConnectError("connection refused")
 
-    monkeypatch.setattr(jobs_module.httpx, "post", refuse)
+    client = _ai_client_answering(refuse)
+    monkeypatch.setattr(jobs_module, "_ai_client", lambda: client)
 
-    with pytest.raises(httpx.ConnectError):
+    with pytest.raises(AiCallError) as info:
         jobs_module._handle_transcribe_media(db_session, payload)
+    assert info.value.retryable
+
+
+def _capture_transcribe_request(db_session, monkeypatch, *, fmt):
+    """Run the handler against a fake service that returns a valid transcript
+    and hand back the JSON body the handler actually sent."""
+    sent = {}
+
+    def answer(request):
+        import json
+
+        sent.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "text": "hello",
+                "detected_language": "en",
+                "model_version": "fake",
+                "duration_ms": 1.0,
+            },
+        )
+
+    client = _ai_client_answering(answer)
+    monkeypatch.setattr(jobs_module, "_ai_client", lambda: client)
+    jobs_module._handle_transcribe_media(db_session, _transcribe_job_for(db_session, fmt=fmt))
+    return sent
+
+
+def test_transcribe_media_sends_a_file_uri_the_real_asr_can_open(db_session, monkeypatch):
+    # The real ASR resolves `uri` as a local path / file:// URI; it does not
+    # know the gateway's `media:<id>` scheme (Week 7 finding).
+    monkeypatch.setattr(get_settings(), "AI_AUDIO_MOUNT_ROOT", "/ai-media")
+    sent = _capture_transcribe_request(db_session, monkeypatch, fmt="wav_pcm16")
+    assert sent["audio"]["uri"].startswith("file:///ai-media/")
+    assert sent["audio"]["uri"].endswith(".bin")
+
+
+def test_transcribe_media_keeps_the_media_uri_when_no_mount_is_configured(db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "AI_AUDIO_MOUNT_ROOT", None)
+    sent = _capture_transcribe_request(db_session, monkeypatch, fmt="wav_pcm16")
+    assert sent["audio"]["uri"].startswith("media:")
+
+
+def test_transcribe_media_sends_webm_as_ogg_opus_only_when_opted_in(db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "AI_ACCEPT_WEBM_AS_OGG_OPUS", True)
+    sent = _capture_transcribe_request(db_session, monkeypatch, fmt="webm_opus")
+    assert sent["audio"]["format"] == "ogg_opus"
 
 
 # -- 5. upload enqueue honors config ------------------------------------------------

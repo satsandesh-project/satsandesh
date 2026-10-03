@@ -23,12 +23,18 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
    upload format (`app/db/models.py::MediaObject`'s own CHECK constraint)
    but has no matching value in `contracts/ai/common.py`'s `AudioFormat`
    enum — found while wiring `app/jobs.py`'s `transcribe_media` handler
-   (Step 2). A `webm_opus` upload's transcription job fails loudly right
-   now (`ValueError` → retried → eventually dead-lettered) rather than
-   silently mislabeling the format. Not fixed here: `contracts/ai/` is
-   out of scope this week, and the actual fix (add the missing enum
-   value, or pick a real transcode step per #1) is a cross-package,
-   cross-lane decision.
+   (Step 2). A `webm_opus` upload's transcription job fails loudly
+   (`PermanentJobError` → dead after one attempt) rather than silently
+   mislabeling the format. Not fixed here: `contracts/ai/` is out of
+   scope, and the actual fix (add the missing enum value, or pick a real
+   transcode step per #1) is a cross-package, cross-lane decision (M3's).
+   **Week 7 stopgap, off by default:** `AI_ACCEPT_WEBM_AS_OGG_OPUS=true`
+   labels WebM/Opus as `ogg_opus` in the AI request
+   (`app/ai_audio.py`). ffmpeg sniffs the container from the bytes, and a
+   real WebM/Opus file decoded with the ASR service's exact command (host
+   ffmpeg 4.2.7; not Chrome `MediaRecorder` output, and the service itself
+   was not run), so it should work — but it is a mislabel in the request,
+   which is why it is an explicit opt-in and not the default.
 
 3. **What the job queue does NOT do.** Worth being explicit, since none
    of this is visible from the code alone:
@@ -174,3 +180,31 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     they are reviewing -- a role-based allowance to add when that lands,
     not before: until then a held message's audio is unreachable by
     anyone but its author.
+
+11. **The real ASR cannot open `media:<id>` — how the AI services read
+    audio is undecided.** Found in Week 7 by reading `services/ai/`:
+    both ASR services resolve `AudioRef.uri` as a local path or `file://`
+    URI (`_resolve_local_path`), and render returns a `file://` path on its
+    own disk. The gateway's Week 6 transcribe handler sent `media:<id>`,
+    which the mock accepts (it never opens the file) and the real service
+    would reject with 422 for every note. `app/ai_audio.py` now builds a
+    `file://` URI when `AI_AUDIO_MOUNT_ROOT` is set (the ASR container mounts
+    the media volume there) and keeps `media:<id>` when it is not. That is
+    one of two resolutions; the other is a contract change (the AI services
+    fetch bytes over HTTP, or `AudioRef` carries a fetchable URL) — M3's
+    call. **Provisional:** the shared-volume path works on one host and
+    would not survive the AI services moving to another machine or to
+    object storage.
+
+12. **The mock and the real AI services disagree in ways a client of both
+    must survive.** (a) The mock injects every `ErrorCode` as a 422,
+    including the transient ones (`TIMEOUT`, `OUT_OF_MEMORY`), where a real
+    service answers 5xx/503 — `app/ai_client.py` therefore classifies by
+    error code as well as status. (b) The mock's NUDGE notice is Telugu
+    (`nudge_language: te`); the real moderation service's notices are
+    always English masters (`nudge_language: en`), so nothing may assume the
+    notice is already in the sender's language. (c) No real service
+    registers an exception handler: a schema-invalid body is FastAPI's
+    default `{"detail": [...]}` 422 (not a `PipelineError`), and an
+    unexpected exception is a bare 500 — both handled, both worth M3/M4
+    knowing about. Not fixed here: `services/ai/` is out of scope.

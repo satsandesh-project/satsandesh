@@ -113,6 +113,42 @@ class Settings(BaseSettings):
     # now.
     AI_SERVICE_URL: str = "http://ai-services:8001"
 
+    # Week 7: the real AI services are four separate processes on four ports
+    # (speech 8002, moderation 8003, mt 8004, render 8005), while
+    # services/ai/mock/ is one server answering all four paths. Each stage
+    # therefore has its own optional URL, falling back to AI_SERVICE_URL when
+    # unset -- so the mock (and today's single-host default) needs no change.
+    AI_TRANSCRIBE_URL: str | None = None
+    AI_PIVOT_URL: str | None = None
+    AI_MODERATION_URL: str | None = None
+    AI_RENDER_URL: str | None = None
+
+    # Per-call timeouts (seconds). Deliberately longer than each service's own
+    # limit: moderation gives up at 20s and answers 200 + HOLD (fail closed) --
+    # a client that hung up first would turn that decision into a retry. CPU
+    # ASR on a cold model is slow (the demo console allows 120s); render does
+    # one MT + one TTS pass per target language.
+    AI_TRANSCRIBE_TIMEOUT_S: float = 120.0
+    AI_PIVOT_TIMEOUT_S: float = 90.0
+    AI_MODERATION_TIMEOUT_S: float = 30.0
+    AI_RENDER_TIMEOUT_S: float = 180.0
+
+    # Where the ASR service sees the gateway's media store, as an absolute
+    # path (the media_data volume mounted into the ASR container). The real
+    # ASR resolves AudioRef.uri as a local path / file:// URI and does not
+    # understand the gateway's `media:<id>` scheme, so with this unset it is
+    # sent `media:<id>` (fine for the mock, which never opens the file).
+    # PROVISIONAL: a shared volume is one of two ways to close that gap; the
+    # other is a contract change that is M3's call (OPEN_QUESTIONS.md).
+    AI_AUDIO_MOUNT_ROOT: str | None = None
+
+    # Stopgap for the webm_opus gap: label a browser WebM/Opus note as
+    # ogg_opus when calling the AI services. ffmpeg sniffs the container from
+    # the bytes, so it decodes (checked against a real WebM/Opus file), but it
+    # IS a mislabel in the request. Off by default; whether to add webm_opus
+    # to contracts/ai or transcode here is M3's decision (OPEN_QUESTIONS.md #2).
+    AI_ACCEPT_WEBM_AS_OGG_OPUS: bool = False
+
     # Whether POST /media enqueues a "transcribe_media" job for each new
     # upload (app/jobs.py). Off by default: the job only calls the AI
     # service and LOGS the result -- nothing stores a transcript until Week
