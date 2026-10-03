@@ -212,9 +212,7 @@ def test_slow_down_and_timed_out_are_retryable(status) -> None:
 @pytest.mark.parametrize("status", [500, 502, 504])
 def test_a_5xx_with_no_pipeline_error_body_is_retryable(status) -> None:
     # An unhandled exception inside a service is a bare 500 with a text body.
-    err = _expect_error(
-        "render", _RENDER, _respond(status, text="Internal Server Error")
-    )
+    err = _expect_error("render", _RENDER, _respond(status, text="Internal Server Error"))
     assert err.retryable and err.kind is AiErrorKind.SERVER_ERROR
 
 

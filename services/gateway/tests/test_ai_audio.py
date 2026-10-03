@@ -70,9 +70,7 @@ def test_the_file_name_matches_what_the_media_store_actually_writes(tmp_path) ->
 
 
 def test_the_reference_carries_format_and_duration() -> None:
-    ref = ai_audio_ref(
-        _Media("ogg_opus", 4200), mount_root="/ai-media", webm_as_ogg_opus=False
-    )
+    ref = ai_audio_ref(_Media("ogg_opus", 4200), mount_root="/ai-media", webm_as_ogg_opus=False)
     assert ref.format is AudioFormat.OGG_OPUS
     assert ref.duration_ms == 4200
 

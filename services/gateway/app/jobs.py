@@ -21,12 +21,11 @@ import time
 import uuid
 from collections.abc import Callable
 
-import httpx
-from contracts.ai.common import AudioFormat as AiAudioFormat
-from contracts.ai.common import AudioRef
-from contracts.ai.transcribe import TranscribeRequest, TranscribeResponse
+from contracts.ai.transcribe import TranscribeRequest
 from sqlalchemy.orm import Session
 
+from app.ai_audio import UnsupportedAudioFormatError, ai_audio_ref
+from app.ai_client import AiCallError, AiClient
 from app.config import get_settings
 from app.db.base import SessionLocal
 from app.db.repository import (
@@ -53,30 +52,24 @@ class PermanentJobError(Exception):
     handler raises is treated as transient and retried."""
 
 
-# contracts/chat/'s media format enum and contracts/ai/'s audio format
-# enum don't fully agree -- webm_opus (a real, allowed
-# app/db/models.py::MediaObject.format value) has no counterpart in
-# contracts/ai/common.py's AudioFormat. Not something this file can fix
-# (contracts/ai/ is out of scope this week) -- see OPEN_QUESTIONS.md.
-# _handle_transcribe_media fails loudly (fail_job) rather than silently
-# mislabeling a webm_opus upload as some other format.
-_AI_AUDIO_FORMAT_BY_CHAT_FORMAT: dict[str, AiAudioFormat] = {
-    "wav_pcm16": AiAudioFormat.WAV_PCM16,
-    "ogg_opus": AiAudioFormat.OGG_OPUS,
-    "mp3": AiAudioFormat.MP3,
-}
+def _ai_client() -> AiClient:
+    """A fresh client per call: the handler runs in a worker thread and this
+    job runs rarely enough that a connection pool buys nothing. A seam for
+    tests, too."""
+    return AiClient.from_settings(get_settings())
 
 
 def _handle_transcribe_media(session: Session, payload: dict) -> None:
     """Week 6 Step 2: proves a real job can flow through this queue and
-    reach services/ai/mock/ for anything AI-side -- never real ASR, which
-    doesn't exist to call yet (Week 8). Deliberately does not persist the
-    transcript anywhere: there's no column or table for one yet, and
-    inventing that storage is Week 7's orchestrator design
-    ("denoise -> transcribe -> pivot -> moderate -> render",
-    docs/retro/month-1.md), not this week's. The mock's response is
-    logged instead -- enough to prove the call really happened and really
-    reached the mock, not real ASR."""
+    reach the AI service. Deliberately does not persist the transcript
+    anywhere: there's no column or table for one yet, and inventing that
+    storage is Week 7's orchestrator design, not this handler's. The
+    response is logged instead.
+
+    Week 7 Phase 2: the call now goes through app/ai_client.py, which decides
+    retry-vs-give-up for every way an AI service can fail, and the audio
+    reference through app/ai_audio.py, which hands the real ASR a path it can
+    actually open (it does not understand `media:<id>`)."""
     media_id = uuid.UUID(payload["media_id"])
     media = get_media_object(session, media_id)
     if media is None:
@@ -86,31 +79,27 @@ def _handle_transcribe_media(session: Session, payload: dict) -> None:
         # this job's own work.
         return
 
-    audio_format = _AI_AUDIO_FORMAT_BY_CHAT_FORMAT.get(media.format)
-    if audio_format is None:
-        raise PermanentJobError(
-            f"no contracts.ai AudioFormat for chat format {media.format!r} "
-            "(see app/jobs.py's _AI_AUDIO_FORMAT_BY_CHAT_FORMAT)"
+    settings = get_settings()
+    try:
+        audio = ai_audio_ref(
+            media,
+            mount_root=settings.AI_AUDIO_MOUNT_ROOT,
+            webm_as_ogg_opus=settings.AI_ACCEPT_WEBM_AS_OGG_OPUS,
         )
+    except UnsupportedAudioFormatError as exc:
+        raise PermanentJobError(str(exc)) from exc
 
-    request = TranscribeRequest(
-        audio=AudioRef(uri=f"media:{media.id}", format=audio_format, duration_ms=media.duration_ms)
-    )
-    ai_service_url = get_settings().AI_SERVICE_URL
-    response = httpx.post(
-        f"{ai_service_url}/v1/transcribe",
-        json=request.model_dump(mode="json"),
-        timeout=10.0,
-    )
-    # A 4xx (other than "slow down"/"timed out") means the AI service
-    # rejected THIS request -- retrying the identical request can't change
-    # that. A 5xx or an unreachable service is transient and is retried.
-    if 400 <= response.status_code < 500 and response.status_code not in (408, 429):
-        raise PermanentJobError(
-            f"AI service rejected the transcribe request with HTTP {response.status_code}"
-        )
-    response.raise_for_status()
-    result = TranscribeResponse.model_validate(response.json())
+    client = _ai_client()
+    try:
+        result = client.transcribe(TranscribeRequest(audio=audio))
+    except AiCallError as exc:
+        # Retryable (service down / loading / slow): let the worker back off
+        # and try again. Anything else cannot be fixed by retrying.
+        if exc.retryable:
+            raise
+        raise PermanentJobError(str(exc)) from exc
+    finally:
+        client.close()
     logger.info(
         "transcribe_media: media_id=%s model_version=%s detected_language=%s text=%r",
         media_id,
