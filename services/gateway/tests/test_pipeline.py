@@ -853,3 +853,37 @@ def test_a_websocket_send_with_the_pipeline_on_starts_it_too(
     db_session.expire_all()
     assert db_session.get(Message, message_id).pipeline_state == "pending"
     assert len(db_session.scalars(select(Job)).all()) == 1
+
+
+# --- against the team's real AI mock (contract compatibility, not scripted) -----------------
+
+
+def test_the_whole_pipeline_runs_against_the_real_ai_mock(db_session, outbox, monkeypatch):
+    """Everything above scripts the AI services; this runs the same code
+    against services/ai/mock/ -- the server M1/M3/M4 build against -- so a
+    contract mismatch between the orchestrator and the real response shapes
+    fails here."""
+    from fastapi.testclient import TestClient
+    from services.ai.mock.app import app as ai_mock_app
+
+    from app.ai_client import AiClient, AiStage
+
+    monkeypatch.setattr(get_settings(), "AI_RENDER_AUDIO_ROOT", None)
+    with TestClient(ai_mock_app) as http:
+        client = AiClient(urls={stage: "http://testserver" for stage in AiStage}, http=http)
+        monkeypatch.setattr(pipeline, "_ai_client", lambda: client)
+        message_id = _dm(db_session, target_lang="hi", due=True)
+
+        _run(db_session, message_id)
+
+    message = _msg(db_session, message_id)
+    assert message.pipeline_state == "complete"
+    assert message.pivot_text_en
+    (event,) = list_moderation_events(db_session, message_id)
+    assert event.actor_kind == "classifier" and event.action == "ALLOW"
+    rendering = _renderings(db_session, message_id)["hi"]
+    assert rendering.text
+    # The mock's audio is a mock:// URI with no file behind it: text kept,
+    # honestly marked as having no voice.
+    assert rendering.audio_media_object_id is None and rendering.degraded_reason == "tts_skipped"
+    assert outbox["delivery"] == [message_id]
