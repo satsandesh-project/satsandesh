@@ -7,9 +7,13 @@ only — state resets on restart. Same shape as services/ai/mock/app.py.
 """
 
 import asyncio
+import io
 import itertools
+import math
 import os
+import struct
 import uuid
+import wave
 from datetime import datetime, timezone
 
 from fastapi import (
@@ -23,11 +27,12 @@ from fastapi import (
 )
 
 from contracts.chat.circles import Circle, CircleCreate, Membership, MembershipCreate
-from contracts.chat.common import AudioFormat, MessageStatus, TargetType
+from contracts.chat.common import AudioFormat, MediaRef, MessageStatus, TargetType
 from contracts.chat.envelope import FrameType, RawFrame, SyncBatch, SyncRequest
 from contracts.chat.errors import ErrorCode, ErrorPayload
 from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
+from contracts.chat.renderings import Rendering, RenderingDegradedReason
 
 app = FastAPI(title="SatSandesh Chat — Mock Gateway", version="0.1.0")
 
@@ -66,6 +71,68 @@ _MEDIA_CONTENT_TYPE: dict[AudioFormat, str] = {
 }
 
 
+# Week 7: renderings. Keyword -> degraded reason, so a client developer can
+# exercise every state the real orchestrator will produce without a real
+# pipeline -- same trick as _STATUS_KEYWORDS above.
+_RENDERING_KEYWORDS: dict[str, RenderingDegradedReason] = {
+    "tts-skip": RenderingDegradedReason.TTS_SKIPPED,
+    "text-only": RenderingDegradedReason.TEXT_ONLY,
+}
+
+# The languages v1 supports (contracts/ai/language.py), restated here because
+# this package does not import contracts/ai/ (DECISIONS.md #5).
+_RENDER_LANGUAGES: tuple[str, ...] = ("en", "hi", "te")
+
+_RENDERING_AUDIO_MS = 500
+
+
+def _tone_wav(duration_ms: int = _RENDERING_AUDIO_MS) -> bytes:
+    """A short, audible 440 Hz tone as a real 16 kHz mono PCM16 WAV -- so a
+    client developer can verify playback end to end, not just that a URL
+    exists. Mock-only; the real service returns synthesized speech."""
+    rate = 16000
+    n = rate * duration_ms // 1000
+    frames = b"".join(
+        struct.pack("<h", int(6000 * math.sin(2 * math.pi * 440 * i / rate))) for i in range(n)
+    )
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(frames)
+    return buf.getvalue()
+
+
+def _make_renderings(msg: MessageIn, status: MessageStatus) -> list[Rendering]:
+    """One rendering per supported language other than the message's own
+    (`source_lang`; every supported language when it's unknown). Only for a
+    message a receiver can actually see -- a pending, held or blocked message
+    has none, same as the real pipeline (contracts/chat/renderings.py)."""
+    if status is not MessageStatus.DELIVERED:
+        return []
+    lowered = (msg.text or "").lower()
+    reason = next((r for kw, r in _RENDERING_KEYWORDS.items() if kw in lowered), None)
+    renderings = []
+    for language in _RENDER_LANGUAGES:
+        if language == msg.source_lang:
+            continue
+        text = f"[{language}] {msg.text}" if msg.text else f"[{language}] (translated voice note)"
+        audio = None
+        if reason is None:
+            media_id = str(uuid.uuid4())
+            _media[media_id] = (_tone_wav(), AudioFormat.WAV_PCM16)
+            audio = MediaRef(
+                uri=f"media:{media_id}",
+                format=AudioFormat.WAV_PCM16,
+                duration_ms=_RENDERING_AUDIO_MS,
+            )
+        renderings.append(
+            Rendering(language=language, text=text, audio=audio, degraded_reason=reason)
+        )
+    return renderings
+
+
 async def _sleep_for_latency(x_mock_latency_ms: str | None) -> None:
     """Per-request `X-Mock-Latency-Ms` header overrides the MOCK_LATENCY_MS
     env var default — lets one client simulate a slow moderation/translation
@@ -76,11 +143,14 @@ async def _sleep_for_latency(x_mock_latency_ms: str | None) -> None:
         await asyncio.sleep(latency_ms / 1000)
 
 
-def _resolve_status(msg: MessageIn) -> MessageStatus:
+def _resolve_status(msg: MessageIn, deliver_voice: bool = False) -> MessageStatus:
     if msg.kind.value == "voice":
         # No real ASR in a mock — voice messages sit PENDING until a real
         # transcription pipeline (or a future mock endpoint) resolves them.
-        return MessageStatus.PENDING
+        # Opt-in (X-Mock-Deliver-Voice header / ?deliver_voice= on the WS) to
+        # deliver one straight away, so a client can build the receiver side
+        # of a voice note -- translated text + audio -- against this mock.
+        return MessageStatus.DELIVERED if deliver_voice else MessageStatus.PENDING
     lowered = (msg.text or "").lower()
     for keyword, status in _STATUS_KEYWORDS.items():
         if keyword in lowered:
@@ -88,7 +158,8 @@ def _resolve_status(msg: MessageIn) -> MessageStatus:
     return MessageStatus.DELIVERED
 
 
-def _store_message(msg: MessageIn, author_id: str) -> MessageOut:
+def _store_message(msg: MessageIn, author_id: str, deliver_voice: bool = False) -> MessageOut:
+    status = _resolve_status(msg, deliver_voice)
     record = MessageOut(
         id=str(uuid.uuid4()),
         author_id=author_id,
@@ -99,8 +170,9 @@ def _store_message(msg: MessageIn, author_id: str) -> MessageOut:
         # Week 6: previously dropped -- OPEN_QUESTIONS.md #1's gap. Passed
         # through unchanged; this mock never transcodes.
         media_ref=msg.media_ref,
+        renderings=_make_renderings(msg, status),
         created_at=datetime.now(timezone.utc),
-        status=_resolve_status(msg),
+        status=status,
     )
     key = (msg.target_type.value, msg.target_id)
     _messages.setdefault(key, []).append(record)
@@ -127,9 +199,12 @@ async def send_message(
     msg: MessageIn,
     x_mock_user_id: str = Header(default="mock-user-1"),
     x_mock_latency_ms: str | None = Header(default=None),
+    x_mock_deliver_voice: str | None = Header(default=None),
 ) -> AckOut:
     await _sleep_for_latency(x_mock_latency_ms)
-    record = _store_message(msg, x_mock_user_id)
+    record = _store_message(
+        msg, x_mock_user_id, deliver_voice=(x_mock_deliver_voice or "").lower() == "true"
+    )
     return AckOut(client_msg_id=msg.client_msg_id, id=record.id, status=record.status)
 
 
@@ -226,13 +301,14 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     # for the real gateway's token-based auth (see app/ws.py in
     # services/gateway/ for the pattern this will eventually follow).
     user_id = websocket.query_params.get("user_id", "mock-user-1")
+    deliver_voice = websocket.query_params.get("deliver_voice", "").lower() == "true"
     await websocket.accept()
     try:
         while True:
             raw = RawFrame.model_validate(await websocket.receive_json())
             if raw.type is FrameType.MESSAGE_SEND:
                 msg = MessageIn.model_validate(raw.data)
-                record = _store_message(msg, user_id)
+                record = _store_message(msg, user_id, deliver_voice)
                 ack = AckOut(client_msg_id=msg.client_msg_id, id=record.id, status=record.status)
                 await websocket.send_json(
                     {

@@ -382,3 +382,72 @@ visibly different version string for a payload shape that changed.
 `CONTRACTS_VERSION` bump itself isn't reversible in the sense that
 matters — once published, going back to `0.1.0` would just be confusing,
 not unsafe.
+
+## 16. Renderings are embedded in `MessageOut`; `CONTRACTS_VERSION` bumped to `0.3.0`
+
+Week 7. The orchestrator turns one message into one version per receiver
+language (transcribe -> pivot -> moderate -> render); a receiver screen
+needs those versions. `MessageOut.renderings` carries them
+(`contracts/chat/renderings.py`): a list of `Rendering` — `language`, `text`,
+optional `audio` (a `MediaRef`), optional `degraded_reason`.
+
+**Why embedded, not a second endpoint or a separate WS frame.** The pipeline
+runs *before* delivery — a message that moderation holds or blocks is never
+sent — so when a receiver can first see a message its renderings already
+exist. Embedding means a `message.new` frame or one sync page carries
+everything the receiver screen needs: no per-message follow-up request on the
+flaky networks the pilot targets, and the offline-sync path gets renderings
+without a second code path. A separate endpoint would add N requests to a
+sync of N messages; a separate frame type would add a state ("message arrived,
+renderings not yet") that the delivery gate makes unnecessary. The cost is
+bytes on every sync page — bounded by decision below.
+
+**Rendering rules, and why each is in the model rather than left to callers:**
+
+- `language` is a validated bare primary subtag (`^[a-z]{2,3}$`), not
+  `contracts.ai.language.LanguageCode` (decision #5) and not a free string. A
+  client matches it against `preferred_language`; `hi-IN` vs `hi` would
+  silently never match and show the original with no error anywhere.
+- `text` is never empty. The render service reports `""` for a silent note;
+  the orchestrator omits that rendering instead of giving a client a blank
+  bubble to special-case.
+- One field, `degraded_reason`, not a `degraded: bool` plus a reason: two
+  fields can disagree, one cannot. `None` means complete. (The moderation
+  contract's `degraded` is a bool because a moderator only needs "fail-closed
+  or not"; a receiver needs to know *what is missing*.) Values mirror
+  `contracts.ai.common.DegradedReason` minus `none`, duplicated rather than
+  imported, with a drift-guard test — same pattern as the moderation enums.
+- `text_only` / `tts_skipped` cannot carry `audio`. A rendering claiming "no
+  audio" while carrying some leaves a client guessing which half to believe.
+- At most `MAX_RENDERINGS_PER_MESSAGE` (8), one per language.
+  `docs/security-checklist.md` Part A requires an upper bound on anything
+  that fans out; v1 has three languages, eight leaves room for the stretch
+  ones without letting a bug put an unbounded list on every sync page.
+
+**Deliberately absent:** the English pivot (a moderation input, not
+receiver-facing — moderators get it via `ModerationQueueItem.pivot_text_en`),
+and model versions (audit/eval data the gateway stores; a receiver has no use
+for it, and putting it on every sync page costs bytes for nothing). A
+rendering for the message's own language is not produced — by convention, not
+enforced, since a `Rendering` cannot see its message: a receiver in the
+sender's language uses the original, which is already on the message.
+
+`MessageStatusOut` does not gain renderings — it is a status-only push frame
+(same call as decision #15).
+
+`CONTRACTS_VERSION` moves `0.2.0` -> `0.3.0`: additive and defaulted to
+empty, so an older payload without the field still parses and an older
+client ignores the new key (checked against the elder-app, which reads
+message fields as plain keys) — but it is still a shape change and still
+gets a visible bump (`OPEN_QUESTIONS.md` #6 remains open).
+
+**Consequence for the gateway (not this package):** a rendering's `audio` is
+fetched through `GET /media/{id}`, and the real gateway's download rule
+(`user_can_fetch_media`) only knows a media object via
+`messages.media_object_id`. Rendering audio belongs to no message that way, so
+that rule needs extending when renderings are stored — otherwise the
+receiver is refused the audio the contract just promised.
+
+**Reversal cost:** Low to remove (`renderings` defaults to empty; a consumer
+that never read it is unaffected). Moderate to change `degraded_reason`'s
+vocabulary once M1 branches on its values.

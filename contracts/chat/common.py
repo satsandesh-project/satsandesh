@@ -3,7 +3,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
 
-CONTRACTS_VERSION = "0.2.0"
+CONTRACTS_VERSION = "0.3.0"
 """
 Schema-shape version for everything in contracts/chat/. Mirrors
 contracts/ai/common.CONTRACTS_VERSION in purpose — bump when any field is
@@ -18,6 +18,10 @@ constrained `uri` shape, and MessageOut gained `media_ref` — see
 DECISIONS.md #13-#15 and OPEN_QUESTIONS.md #1 (now closed). No agreed
 semver policy yet (OPEN_QUESTIONS.md #6) — this is a visible bump for a
 real shape change, not a claim about major-vs-minor.
+
+0.2.0 -> 0.3.0 (Week 7): MessageOut gained `renderings` (additive, defaults
+to empty, so an older payload still parses) — see contracts/chat/renderings.py
+and DECISIONS.md #16.
 """
 
 
