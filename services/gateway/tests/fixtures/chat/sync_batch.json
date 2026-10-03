@@ -1,10 +1,10 @@
 {
-  "contract_version": "0.3.0",
+  "contract_version": "0.4.0",
   "has_more": false,
   "messages": [
     {
       "author_id": "user-elder-42",
-      "contract_version": "0.3.0",
+      "contract_version": "0.4.0",
       "created_at": "2026-08-17T09:00:00Z",
       "id": "msg-01H8X5Q7Z1",
       "kind": "voice",
@@ -14,10 +14,12 @@
         "uri": "media:7c1e6e2a-9b0e-4c4a-8f2e-4a2e6b1c9d3a"
       },
       "renderings": [],
-      "status": "pending",
+      "status": "delivered",
       "target_id": "circle-satsang-evening",
       "target_type": "circle",
-      "text": null
+      "text": null,
+      "transcript": "ఈ రోజు సత్సంగం ఎప్పుడు జరుగుతుంది?",
+      "transcript_language": "te"
     }
   ],
   "target_id": "circle-satsang-evening",
