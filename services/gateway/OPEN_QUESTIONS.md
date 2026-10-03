@@ -49,24 +49,25 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
    - **Not priority-ordered.** `claim_next_job` orders strictly by
      `next_attempt_at`, then `created_at` — first due, first claimed.
      There's no way to say "this job type matters more."
-   - **No lease renewal/heartbeat.** A job's lease
-     (`JOB_LEASE_SECONDS`) must be set longer than that job type's real
-     worst-case runtime, or a second worker could legitimately reclaim
-     a job that's still being honestly worked on. Confirmed directly
-     while building the Step 3 kill-and-restart proof: a deliberately
-     short 5s lease against a 25s synthetic job left the lease expired
-     *while the original worker was still alive and working* — harmless
-     there because nothing else was running concurrently, but a real
-     footgun if a real job type's runtime is ever close to or longer than
-     its lease.
-   - **`claimed_by` doesn't reliably identify a process.**
-     `app/jobs.py::worker_id()` embeds `os.getpid()`, which resets to 1
-     inside every fresh container's own PID namespace — the Step 3 proof
-     showed both the killed container and its replacement claiming as
-     `gateway-1`. `attempts` is the real evidence a reclaim happened;
-     `claimed_by` is not, in a containerized deployment. Worth fixing
-     (e.g. include the container id or a random per-process suffix) but
-     not blocking anything today.
+   - **Lease renewal and process identity -- fixed (hardening pass).**
+     These were open limits when the queue first merged and are closed
+     now: a heartbeat renews a running job's lease every lease/3 seconds
+     (`app/db/repository.py::extend_job_lease`, driven from
+     `app/jobs.py`), so a job longer than `JOB_LEASE_SECONDS` is no
+     longer handed to a second worker mid-flight; `complete_job` /
+     `fail_job` / `extend_job_lease` only act for the worker that still
+     holds the job, so a slow worker's late result can't overwrite the
+     worker that reclaimed it; and `worker_id()` is
+     `gateway-<pid>-<random 8 hex>`, unique per process incarnation (the
+     bare pid was `1` in every fresh container). Still true: the lease
+     should be a comfortable multiple of the heartbeat interval, and a
+     process that is suspended for a whole lease still loses its job
+     (correctly -- the other worker's result stands).
+   - **Permanent vs. transient failures.** A handler can raise
+     `PermanentJobError` to land a job in `dead` after one attempt
+     (no format mapping, a 4xx from the AI service); anything else is
+     retried with backoff up to `JOB_MAX_ATTEMPTS`, which is now actually
+     honored when a job is enqueued.
 
 4. **Disk estimate for the 30-elder pilot — and where it's grounded, not
    guessed.** ~100KB per 30-second Opus voice note is itself an
@@ -90,14 +91,21 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
 
 5. **`app/undo.py` is still the in-memory `dict[str, asyncio.Task]`
    pattern** this week's job queue was explicitly built to demonstrate
-   the alternative to — see that file's own docstring, and
-   `app/db/models.py`'s `Job` docstring, which names it directly. Not
-   touched this week (out of scope — it isn't a new addition, and
-   DISCIPLINE says extend, don't refactor existing code another member's
-   phase wrote). A real follow-up: migrate the undo-window fan-out onto
-   this same `jobs` table, which would fix the exact failure mode
-   `app/undo.py`'s docstring already names (a scheduled task lost on
-   restart, invisible to a second gateway process).
+   the alternative to -- see that file's own docstring. What changed in
+   the hardening pass: a restart no longer strands a message. At startup
+   `app/recovery.py::recover_pending_fan_outs` re-schedules delivery for
+   every message still `pending` (immediately if its undo window already
+   elapsed, otherwise after only the time left); it is safe to run twice
+   or from two processes because `fan_out_message` only acts on a
+   `pending` message through an atomic status transition. What is still
+   true: `app/undo.py` itself is unchanged and per-process (an undo
+   request that lands on a different gateway process than the one that
+   scheduled the delivery can't cancel that process's task -- the DB
+   status check still prevents a double or post-undo delivery, but the
+   task keeps sleeping), and moving the undo window onto the `jobs` table
+   so it needs no recovery at all would mean rewriting that module and
+   how `DELETE /messages/{id}` cancels -- a bigger change to code another
+   member wrote, left as the proper follow-up.
 
 6. **Swept media and message history don't currently interact, because
    nothing does yet.** `messages.original_media_ref` is still a plain
@@ -113,7 +121,8 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
    the connection it would need doesn't exist yet.
 
 7. **The transcript `transcribe_media` produces isn't persisted
-   anywhere.** It's logged (`app/jobs.py::_handle_transcribe_media`) and
+   anywhere, so the job is now opt-in (`TRANSCRIBE_ON_UPLOAD_ENABLED`,
+   default off).** It's logged (`app/jobs.py::_handle_transcribe_media`) and
    nothing else — there's no column or table for a transcript today.
    Storing it, and deciding what "the transcript" even means once the
    real orchestrator exists (`denoise -> transcribe -> pivot -> moderate
@@ -154,3 +163,14 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
    resolving this when he builds the moderation console — this item exists
    so the collision is documented before the sweeper is live on staging,
    not to pre-empt that design.
+
+10. **Who may download a voice note, beyond the author and delivered
+    recipients.** `GET /media/{id}` now allows only the author, or a
+    recipient of a message carrying the media whose status is `sent` or
+    `delivered` and that isn't deleted (a DM's target user, or a circle's
+    members); everyone else gets the same 404 as a missing id. That is
+    deliberately the narrowest rule that lets the app work today. Week 7's
+    moderator console will need moderators/admins to hear a `held` message
+    they are reviewing -- a role-based allowance to add when that lands,
+    not before: until then a held message's audio is unreachable by
+    anyone but its author.
