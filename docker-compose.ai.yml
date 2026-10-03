@@ -1,0 +1,153 @@
+# The real AI services, wired to the gateway's pipeline orchestrator.
+#
+# An OVERRIDE, not part of the default stack: use it with
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ai.yml up -d
+#
+# so a plain `docker compose up` (and staging) is exactly what it was. It adds
+# the services below, switches the gateway's pipeline on, and points it at
+# them. Read infra/ai/README.md first: what is and is not proven, the secrets
+# it needs, and the choices that are still M3's.
+#
+# Network: everything here is on the compose-internal network only -- NO
+# `ports:`, and nothing is added to infra/caddy/Caddyfile. The real ASR opens
+# whatever local path a request names, unauthenticated; it must never be
+# reachable from outside. (The existing `/ai/*` Caddy route still points at the
+# Week-1 health-check stub, not at any of these.)
+
+services:
+  gateway:
+    environment:
+      PIPELINE_ENABLED: ${PIPELINE_ENABLED:-true}
+      PIPELINE_NUDGE_DELIVERS: ${PIPELINE_NUDGE_DELIVERS:-true}
+      # One URL per stage: the real services are four processes on four ports
+      # (the mock answers all four on one -- see the `ai-mock` profile).
+      AI_TRANSCRIBE_URL: ${AI_TRANSCRIBE_URL:-http://speech:8002}
+      AI_PIVOT_URL: ${AI_PIVOT_URL:-http://mt:8004}
+      AI_MODERATION_URL: ${AI_MODERATION_URL:-http://moderation:8003}
+      AI_RENDER_URL: ${AI_RENDER_URL:-http://render:8005}
+      # Where the ASR container sees the gateway's media store (it mounts the
+      # same volume below). The real ASR opens files by path and does not
+      # understand `media:<id>`. PROVISIONAL -- OPEN_QUESTIONS.md #11.
+      AI_AUDIO_MOUNT_ROOT: /ai-media
+      # Where THIS container sees the render service's output directory.
+      AI_RENDER_AUDIO_ROOT: /render-output
+      # Stopgap for browser WebM/Opus notes (contracts/ai has no webm_opus):
+      # OFF by default, so every real voice note is HELD until M3 decides.
+      AI_ACCEPT_WEBM_AS_OGG_OPUS: ${AI_ACCEPT_WEBM_AS_OGG_OPUS:-false}
+      UNDO_WINDOW_SECONDS: ${UNDO_WINDOW_SECONDS:-30}
+      JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
+    volumes:
+      - render_output:/render-output:ro
+    # Deliberately NO depends_on for the AI services: models take minutes to
+    # load, and the gateway must start (and keep serving chat) regardless --
+    # the pipeline retries a not-ready service with backoff, and a message
+    # waits behind its pipeline rather than being lost.
+
+  speech:
+    build:
+      context: .
+      dockerfile: infra/ai/Dockerfile.speech
+    restart: unless-stopped
+    environment:
+      ASR_MODEL_NAME: ${ASR_MODEL_NAME:-small}
+      ASR_CPU_THREADS: ${ASR_CPU_THREADS:-4}
+    volumes:
+      # The gateway's media store, READ-ONLY, at the path AI_AUDIO_MOUNT_ROOT
+      # tells the gateway to put in file:// URIs.
+      - media_data:/ai-media:ro
+      - ai_models:/models
+    expose:
+      - "8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      # First start downloads the model weights.
+      start_period: 120s
+
+  moderation:
+    build:
+      context: .
+      dockerfile: infra/ai/Dockerfile.moderation
+    restart: unless-stopped
+    environment:
+      # `stub` = keyword heuristic, NOT fit for the pilot. `llama_cpp` needs a
+      # GGUF placed by hand and an image that builds llama-cpp-python.
+      MOD_BACKEND: ${MOD_BACKEND:-stub}
+    expose:
+      - "8003"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  mt:
+    build:
+      context: .
+      dockerfile: infra/ai/Dockerfile.mt
+    restart: unless-stopped
+    environment:
+      # Required for this service to start (the model is gated) -- but NOT
+      # enforced here with `:?`, because compose interpolates every service
+      # when the file loads and that would break a mock-only run. The service
+      # itself fails fast with a clear error when it is empty. Set it in .env
+      # on the server; never commit it, never paste it into a chat.
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - ai_models:/models
+    expose:
+      - "8004"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 60
+      start_period: 180s
+
+  render:
+    build:
+      context: .
+      dockerfile: infra/ai/Dockerfile.render
+    restart: unless-stopped
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - ai_models:/models
+      - render_output:/render-output
+    expose:
+      - "8005"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 60
+      start_period: 180s
+
+  # The stand-in for mt AND render when the gated models are not available:
+  #   AI_PIVOT_URL=http://ai-mock:8001 AI_RENDER_URL=http://ai-mock:8001 \
+  #   docker compose -f docker-compose.yml -f docker-compose.ai.yml \
+  #       --profile mock up -d postgres gateway speech moderation ai-mock
+  # Its answers are canned: wiring is real, translation is not.
+  ai-mock:
+    profiles: ["mock"]
+    build:
+      context: .
+      dockerfile: infra/ai/Dockerfile.mock
+    restart: unless-stopped
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/ready', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  # Model weights and Piper voices: downloaded once, kept across re-creation.
+  ai_models:
+  # Rendered speech (.wav) written by `render`, read by the gateway.
+  render_output:
