@@ -18,7 +18,7 @@ import pytest
 from contracts.ai.moderation import ModerationAction, ModerationLabel
 from sqlalchemy import select, text
 
-import app.pipeline as pipeline
+from app import pipeline
 from app.ai_client import AiCallError
 from app.config import get_settings
 from app.db.models import Job, MediaObject, Message, MessageRendering
