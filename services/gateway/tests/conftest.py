@@ -34,6 +34,8 @@ os.environ.setdefault("JOB_WORKER_ENABLED", "false")
 # Same reasoning, same fixture, same lifespan -- see app/retention.py's
 # sweep loop, wired into app/main.py's lifespan alongside the job worker.
 os.environ.setdefault("MEDIA_RETENTION_SWEEP_ENABLED", "false")
+# Same again for the startup scan of still-pending messages (app/recovery.py).
+os.environ.setdefault("STARTUP_RECOVERY_ENABLED", "false")
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
