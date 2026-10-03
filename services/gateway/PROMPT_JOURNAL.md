@@ -593,3 +593,22 @@ the server for its DB-backed tests (the local Python lacks
   and applied nothing; I checked `git status` and a grep before assuming it had,
   then re-did it from a file. (Same near-miss class as the broken restore in
   Phase 3: confirm the thing happened.)
+
+## Week 7 Phase 6 -- the moderator console routes (`feat/m2-week7-moderation-api`)
+
+- Checked the role against the DATABASE, not the token: reading `app/auth.py`
+  showed the stub derives `role='elder'` for every token, so the repo's own
+  `require_role("moderator")` could never pass on this gateway. (And that the
+  whole moderation surface then rests on an unauthenticated identity -- #23.)
+- All the new tests passed on the first run, which proves little. Planning the
+  sabotage check showed that my "second release is a 409" test never reaches the
+  atomic claim: the status pre-check refuses first, so the conditional UPDATE
+  that actually makes two simultaneous moderators safe was untested. Wrote a
+  real race (the other moderator's decision lands between the route's read and
+  its claim) and re-ran. Also: my first draft of that mutation ("`if False and
+  not ...`") would never have called the claim at all and so would have been
+  "caught" by every test for the wrong reason; replaced with one that keeps the
+  call and ignores its result.
+- A confused test of mine (it tried to write a rendering onto an already-held
+  message, which is correctly refused, then asserted something meaningless) was
+  rewritten rather than left passing.

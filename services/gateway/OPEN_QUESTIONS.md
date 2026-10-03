@@ -301,3 +301,25 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     a status flip -- but a flip alone sends nothing: `fan_out_message` is what
     broadcasts `message.new`. The release route has to trigger delivery the same
     way the orchestrator does.
+
+23. **The moderator routes are only as trustworthy as the identity behind
+    them — and identity is still a stub.** `app/auth.py` accepts any UUID as a
+    bearer token with no signature or expiry, so anyone who knows (or can
+    guess) a moderator's user id can act as them: read the queue, hear held
+    audio, release or block. The routes check the database role correctly
+    (`users.role`; the token-derived role is always `elder`), but that is a
+    lock on a door with no wall. Real JWT verification must land before any
+    moderator account exists on a deployment real people can reach. Not in
+    scope for this phase; recorded because it is the biggest risk the
+    console adds.
+
+24. **Console scope decisions worth confirming with M4.** (a) The queue shows
+    only `held` messages; `blocked` ones are not browsable (appeals are
+    Week 9), though a block can be reversed by releasing it if the id is
+    known. (b) A moderator is a global role (`users.role`); a circle's own
+    moderators (`memberships.role`) cannot review their circle. (c)
+    `ModerationQueueItem.original_text` is `null` for a voice note per M4's
+    contract; whether it should carry the transcript is M4's call (asked on
+    #86). (d) `contracts/chat/mock/` has no moderation routes, so the console
+    has no mock to build against; adding them is a small `contracts/chat/`
+    change not made here. (e) `notice_sent` is always `false` (see #18).
