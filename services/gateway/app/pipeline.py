@@ -221,7 +221,7 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
     # -- already ruled on (a resumed run): skip straight to finishing ----------------
     event = latest_moderation_event(session, message_id)
     if event is None or event.actor_kind != "classifier":
-        source_language = _source_language(message, author)
+        source_language: str | None = None
 
         # -- 1. transcribe (voice only) -------------------------------------------------
         if message.kind == "voice":
@@ -241,7 +241,15 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
                     )
                 except UnsupportedAudioFormatError as exc:
                     raise PermanentJobError(str(exc)) from exc
-                hint = LanguageCode(source_language) if source_language else None
+                # The hint is what the sender DECLARED, never their stored
+                # language: that is what they want to RECEIVE (Telugu for every
+                # user today), and forcing it would push a Hindi or English
+                # note through a Telugu transcription. Undeclared (or a
+                # declaration the pipeline cannot use) -> no hint; the ASR
+                # detects, and the transcript's own language is what the rest
+                # of the pipeline uses.
+                declared = _primary_subtag(message.source_lang)
+                hint = LanguageCode(declared) if declared in SUPPORTED_LANGUAGES else None
                 try:
                     transcribed = client.transcribe(
                         TranscribeRequest(audio=audio, language_hint=hint)
@@ -265,6 +273,10 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
             source_text = message.transcript
             source_language = message.transcript_language
         else:
+            # Typed text has no second chance to detect its language, so an
+            # undeclared one falls back to the author's stored language -- weak
+            # (an old client that sends no source_lang), and documented.
+            source_language = _source_language(message, author)
             source_text = message.text
 
         # -- 2. pivot ------------------------------------------------------------------------
