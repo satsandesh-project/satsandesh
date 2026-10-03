@@ -126,15 +126,14 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
    the fetch endpoint — this week's sweeper doesn't touch that, because
    the connection it would need doesn't exist yet.
 
-7. **The transcript `transcribe_media` produces isn't persisted
-   anywhere, so the job is now opt-in (`TRANSCRIBE_ON_UPLOAD_ENABLED`,
-   default off).** It's logged (`app/jobs.py::_handle_transcribe_media`) and
-   nothing else — there's no column or table for a transcript today.
-   Storing it, and deciding what "the transcript" even means once the
-   real orchestrator exists (`denoise -> transcribe -> pivot -> moderate
-   -> render`, `docs/retro/month-1.md`'s Week 7 row), is that Week 7
-   design's job, not something this week should pre-empt by inventing
-   schema for it now.
+7. **The `transcribe_media` upload job still only logs its transcript —
+   but the orchestrator now has somewhere to put one.** Week 7 Phase 4
+   added `messages.transcript` / `transcript_language`, `pivot_text_en`
+   writers and the `message_renderings` table (`app/db/renderings.py`); the
+   Week 6 `transcribe_media` job (opt-in, `TRANSCRIBE_ON_UPLOAD_ENABLED`) is
+   untouched and still logs. It is keyed to a media object, not a message,
+   so it cannot store a transcript on one; the Week 7 orchestrator job, which
+   runs per message, supersedes it.
 
 8. **`AI_SERVICE_URL` defaults to `http://ai-services:8001`** — the
    hostname `docker-compose.yml`'s existing `ai-services` service already
@@ -231,3 +230,26 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     moderators are meant to review their own circle. #9 (retention sweeps a
     held message's audio at 30 days) is still open and is now the more
     pressing of the two: a held message can outlive its audio.
+
+15. **Rendering audio has no producer yet, and its owner/retention are
+    choices worth confirming.** `message_renderings.audio_media_object_id`
+    points at a `media_objects` row; nothing creates those rows yet. The
+    render service returns a `file://` path on its own disk, so the
+    orchestrator (Phase 5/7) must ingest those bytes into the media store.
+    Assumed: the row is owned by the **message's author** (`author_id` is
+    NOT NULL and gates the author's own access), and it is swept by the
+    same 30-day retention as any media object -- after which the rendering
+    keeps its text and loses its audio (`FK ... SET NULL`, tested). A
+    translated note's audio vanishing at 30 days while its message stays is
+    consistent with the original's, but say if renderings should be kept
+    longer or re-synthesized on demand. Also: only a message's *original*
+    audio is open to a moderator (#14), not its renderings'.
+
+16. **Transcript and renderings are hidden until a message is `sent`, even
+    from its author.** Stored while `pending` (the pipeline runs inside the
+    undo window) but exposed on the wire only once the message is out
+    (`message_to_out`), so a held or pending message leaks neither a
+    translation nor a transcript. The sender therefore sees no transcript of
+    their own voice note until it is delivered. If the sender should be able
+    to read the transcript while pending (to check ASR before the undo window
+    closes), that is a UX call for M1 and a one-line change here.
