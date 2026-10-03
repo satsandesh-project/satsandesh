@@ -33,6 +33,8 @@ round 1 did.
 """
 
 from elder_app.elder_app import (
+    CHAT_CONNECT_JS_TEMPLATE,
+    CHAT_SEND_JS,
     State,
     add_person_button,
     bottom_tabs,
@@ -258,3 +260,13 @@ def test_discard_recording_resets_both_the_url_and_the_send_status():
 
     assert state.last_recording_data_url == ""
     assert state.voice_send_status == ""
+
+
+def test_typed_messages_declare_their_language_and_resends_keep_it():
+    # The pipeline translates from source_lang and otherwise falls back to the author's
+    # stored language (Telugu for everyone today), so a Hindi message would be treated
+    # as Telugu. These pieces must all stay wired: the detector, the send, the resend.
+    assert "window.__satDetectLang = function" in CHAT_CONNECT_JS_TEMPLATE
+    assert "0x0C00" in CHAT_CONNECT_JS_TEMPLATE and "0x0900" in CHAT_CONNECT_JS_TEMPLATE
+    assert "source_lang: sourceLang" in CHAT_SEND_JS
+    assert "source_lang: msg.source_lang" in CHAT_CONNECT_JS_TEMPLATE
