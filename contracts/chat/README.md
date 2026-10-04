@@ -45,6 +45,10 @@ and a real AI/moderation pipeline:
   This opts one in to `delivered` straight away, with renderings, so the
   receiver side of a voice note can be built against the mock. See
   "Renderings" below.
+- `X-Mock-Role: moderator` (or `admin`) header — required by every
+  `/moderation/*` route (anything else is a 403). The real gateway checks the
+  user's role in its database; the mock has no role table. See "Moderator
+  console routes" below.
 - WebSocket `/ws?user_id=...` — same idea over the WS transport, mirroring
   how `services/gateway/app/ws.py`'s real `/ws` reads a token from a query
   param because browsers can't set custom headers on a WS handshake.
@@ -406,6 +410,33 @@ clears the saved time). `preferred_language` and `tts_on` cannot be cleared -- a
 - A token that is not a user id (the stub's fixed fallback identity) has no settings: 404.
 
 The chat mock serves the same two routes, in memory per `X-Mock-User-Id`.
+
+## Moderator console routes (Week 7)
+
+M4's contract is `contracts/chat/moderation.py`; the real routes are
+`services/gateway/app/moderation.py` (issue #65). The mock serves the same four, so the
+console (`clients/admin-console/`) can be built against it:
+
+| Route | What it does |
+|---|---|
+| `GET /moderation/queue?cursor=&limit=` | `held` messages that have an event, oldest first, keyset-paged; each with the original, the pivot, and the latest event. |
+| `GET /moderation/messages/{id}/events` | The full trail, oldest first. 404 for an unknown message. |
+| `POST /moderation/messages/{id}/release` | Appends a moderator `ALLOW` event; the message becomes `delivered`. Works on `held` or `blocked`. |
+| `POST /moderation/messages/{id}/block` | Appends a moderator `BLOCK` event; the message becomes `blocked`. Only on `held`. |
+
+Send `X-Mock-Role: moderator`. A 409 means the message is not in a state that action
+accepts, or `expected_event_id` is no longer the latest event (someone else decided first).
+
+**How to get something into the queue:** send a text message containing the word `hold`
+(or `block`, which goes straight to `blocked` and is *not* queued, as on the real gateway).
+It gets one classifier event; a release or block adds a moderator event.
+
+**What the mock does not do:** no real classifier (the keyword trick), no WebSocket push on a
+release (the status flips, nothing is sent), voice notes are never queued (they stay
+`pending`), the pivot is an obviously fake `[en] <text>`, and non-UUID mock identities such as
+`mock-user-1` are mapped to a stable UUID because the contract's ids are UUIDs.
+`notice_sent` is always `false`, as on the real gateway (the sender-notice surface is
+undecided, `services/gateway/OPEN_QUESTIONS.md` #18).
 
 ## WebSocket envelope
 

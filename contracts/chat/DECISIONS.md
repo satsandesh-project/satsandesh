@@ -515,3 +515,21 @@ is therefore part of this contract (optional, settable, clearable) even though n
 it -- see the gateway's OPEN_QUESTIONS #28.
 
 **Reversal cost:** low (new routes and models; a client that never calls them is unaffected).
+
+## 19. The chat mock serves the moderator console's routes
+
+M4's console is built against this mock until Week 8 (issue #65), and the mock had no
+moderation routes, so there was nothing to build against. It now serves the four routes of
+`contracts/chat/moderation.py`, with the real gateway's rules (only `held` messages queue,
+moderator-only, 409 on a stale `expected_event_id` or a message that is not waiting, every
+decision appends an event, keyset cursor).
+
+**Where a mock cannot be honest, it says so instead of pretending:** a moderator is whoever
+sends `X-Mock-Role: moderator` (no role table); the classifier is the existing `hold`/`block`
+keyword trick; a release sends no WebSocket push; `notice_sent` is always false. Non-UUID mock
+identities map to a stable UUID, because the contract's ids are UUIDs and the mock's default
+user is `mock-user-1`.
+
+No payload changed, so `CONTRACTS_VERSION` stays `0.5.0`.
+
+**Reversal cost:** none (mock only).
