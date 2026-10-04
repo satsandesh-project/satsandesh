@@ -135,3 +135,135 @@ for *any* `on_mouse_down`, which now also matched the mic button's own
 press-and-hold record control, not a tap action). Fixed by checking for
 the specific `start_audio_label_hold` handler instead of any
 `on_mouse_down` at all, so the test means what it says again.
+
+## Week 7 — language and TTS preferences; a real gap flagged before coding
+
+**Stopped before building the whole task.** Week 7's "text and audio
+together" needs translated renderings — a message shown in the
+receiver's own language, with audio. Checked first: `contracts/chat/`
+has no shape for this at all, and the client never talks to
+`services/ai/` directly, only the gateway — so there was nothing
+concrete, real or mock, to build that part against. M2's own Week 7 task
+is exactly what would define how renderings reach the client, and it
+doesn't exist yet either. Asked rather than either inventing a
+contract shape solo or building UI with no data behind it — user chose:
+build the genuinely independent parts now, leave the rendering-dependent
+part as a tracked gap rather than guessing at someone else's contract.
+
+**What shipped instead:** the two parts of Week 7 that never needed the
+renderings gap at all — a content-language picker (en/hi/te, the
+language incoming voice notes should be translated into) at onboarding
+and in settings, and a TTS on/off toggle. Both fold into the same
+settings card and `/me/settings` PATCH Week 5 already built (still
+pending M2's real endpoint — same "fails soft" note as before, one more
+field on an already-waiting request).
+
+**A naming decision worth recording:** `preferred_language_input` is
+deliberately a *different* field from `State.language` (this app's own
+UI chrome toggle, en/te only, unchanged since Month 1). Conflating them
+would mean a Telugu-reading elder couldn't ask for English audio, or
+vice versa — the two are genuinely different questions ("what language
+do you read this app in" vs "what language do you want incoming voice
+notes translated into"), and LanguageCode's three values (en/hi/te)
+don't even match the UI chrome's two. Defaults `preferred_language_input`
+to whatever UI language is active at join time, as a sensible starting
+point, without ever forcing the two to stay in sync afterward.
+
+**Renamed `quiet_hours_card` → `settings_card`, `save_quiet_hours` →
+`save_settings`.** Week 7 extends the same card and the same PATCH
+call with two more fields — a card called "quiet hours" holding a
+language picker would be actively misleading, more so than the small
+churn of renaming its handful of call sites (fixed in the same commit,
+including a stale `she` pronoun for Veerendra a Week-5-era comment had
+never caught).
+
+**Verification:** same approach as Weeks 5–6 — every touched component
+instantiated in a throwaway venv (`reflex run` still doesn't serve
+locally here), plus 6 new tests in `tests/test_state.py` (15 total):
+parsing the two new fields from a settings response, leaving them alone
+when the server hasn't sent them yet (must not silently reset a
+join-time choice), the two setters clearing the saved flag, and
+`join_circle` actually including the settings-save call so the picked
+language persists past the onboarding screen.
+
+## 2026-10-03 — Weeks 5/6 audit against the dependency map: touch screens and upload progress
+
+Re-read M1's Week 5 and Week 6 deliverables in the Month 2-3 dependency map
+against the code, rather than against the PRs that built them. Two real gaps,
+both invisible on a laptop:
+
+**Hold-to-record and hold-to-hear were mouse-only.** The mic button and the five
+buttons that read their label aloud used `on_mouse_down`/`up`/`leave`. A phone or
+tablet fires `mousedown` only after a tap is released, so on a touch screen the mic
+recorded for zero seconds and no hold was ever seen -- on exactly the devices the
+elders use. Reflex 0.9.9 has no touch or pointer triggers (checked the installed
+package), so `TOUCH_HOLD_SHIM_JS` translates touchstart/touchend into the mouse
+events those buttons already handle, keyed on a `data-sat-hold` attribute
+("press" for the mic, which owns the whole gesture; "label" for the others, which
+keep the browser's normal tap/click). CSS stops text selection and the long-press
+menu from cancelling the hold.
+
+**Voice upload had no progress display** (the Week 6 line says "upload with
+progress and retry"). It now uses `XMLHttpRequest` (fetch cannot report upload
+progress) and a progress bar written straight to the DOM, and makes three
+attempts (1s, 2s pauses) instead of two.
+
+**Verification:** on my own demo stack (port 18300, not the shared 8095) with the
+browser pane at 375x812, synthetic touch events: a 100 ms tap on a label button
+fetched nothing, a 700 ms hold fetched `/audio-labels/circle`, and the guard flag
+and timer were clear afterwards; a 1.6 s touch hold on the mic recorded a 21 KB
+clip; the upload bar went 0% -> 100% with `role=progressbar`; with the first two
+upload attempts forced to fail, the third succeeded and the message sent. 3 new
+tests in `tests/test_state.py` (18 total) pass in the app's own container.
+
+**Not verified:** a real finger on a real phone, and the real microphone -- the
+demo is plain HTTP, where `getUserMedia` is blocked, so recording was tested with
+a stubbed audio stream. Synthetic touch events are not the same as a physical
+touch; the first real-device check is still owed.
+
+## 2026-10-03 — Week 7 part 2: the receiver experience
+
+The dependency map's Week 7 M1 line: text and audio together, original always one
+tap away, 0.8-1.2x speed control, opt-in autoplay, language pick that holds, per-user
+TTS on/off. Part 1 (#68) did the pickers; this is the screen itself. It builds
+against `MessageOut.renderings` / `transcript` (#83, #86), which the gateway will
+fill from #87/#88.
+
+**What a message shows.** If it carries a rendering in the receiver's content
+language: that text, plus its audio when speech is on, plus a button to flip to the
+original (the voice note itself and its transcript). If not (same language, or none
+made): the original, as before. A degraded rendering says so ("No audio for this
+message", "Approximate translation") instead of looking broken. With speech off the
+audio and its note disappear and the text stays -- the useful mode for an elder who
+finds audio hard to follow.
+
+**Playback was broken against the real gateway, independent of any of this.** The
+old `<audio src=GATEWAY/media/id>` cannot send the `Authorization` header that `GET
+/media/{id}` has always required, so every received voice note would have been
+refused. Audio is now fetched with the token and played from a blob URL (cached per
+media id; a failed load shows a tap-to-retry line).
+
+**Speed and autoplay.** 0.8x / 1x / 1.2x buttons (44 px targets), remembered on the
+device. Autoplay is opt-in (off by default) from the settings card, and starts only
+the newest voice message from someone else. `renderCurrentThread` rebuilds the whole
+thread on every update, which used to cut off a playing note; the playing note now
+resumes where it was.
+
+**"Holds".** The gateway's `/me/settings` still doesn't exist, so the preferences
+(content language, speech on/off, autoplay) are also kept in localStorage; they
+survive a reload on this device. Server values still win once the endpoint exists.
+
+**Verification:** on my demo stack (port 18300) at 375x812 against the real gateway:
+my own two voice notes played from blob URLs with real durations; speed 1.2x applied
+to every player and was saved; injected incoming messages (the gateway doesn't emit
+renderings yet) showed the translated view, the original + transcript view, the
+no-rendering fallback, the "approximate" and "no audio" notes, and speech-off; autoplay
+started the marked message at 1.2x and kept playing across a re-render (0.44 s -> 0.87
+s on a new element); a bogus media id showed the retry line; language + autoplay held
+across a reload. 5 new tests in `tests/test_state.py` (20 total) pass in the app's
+container.
+
+**Not verified:** a real translated message end to end (needs #87/#88 deployed; I
+used injected messages), a real phone, and the Telugu strings -- I wrote them and they
+need a native reader's eye before the pilot. Blob URLs live for the page's lifetime;
+fine for a session of voice notes, worth a revoke-on-leave later.

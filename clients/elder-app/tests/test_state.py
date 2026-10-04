@@ -33,11 +33,16 @@ round 1 did.
 """
 
 from elder_app.elder_app import (
+    RECEIVER_TEXT_KEYS,
+    TEXTS,
+    TOUCH_HOLD_SHIM_JS,
+    UPLOAD_AND_SEND_VOICE_JS_TEMPLATE,
     State,
     add_person_button,
     bottom_tabs,
     chat_screen,
-    quiet_hours_card,
+    mic_button,
+    settings_card,
 )
 
 
@@ -57,14 +62,17 @@ def _on_mouse_down_handler_name(component) -> str | None:
 
 
 def test_all_five_hold_buttons_keep_their_on_click():
-    # add_person_button() and quiet_hours_card() are each a single button
-    # (well, quiet_hours_card's Save button, the only button in it).
-    # bottom_tabs() and chat_screen() contain more than one -- walk their
-    # children to find the ones that carry the audio-label hold affordance
-    # specifically (on_mouse_down wired to start_audio_label_hold, not
-    # mic_button's own on_mouse_down=start_recording, which legitimately
-    # has no on_click -- it's a press-and-hold record control, not a tap
-    # action), and assert each still has on_click too.
+    # add_person_button() and settings_card() are each a single button
+    # carrying the hold affordance (settings_card grew a language picker
+    # and a TTS toggle in Week 7, but only its original Save button wires
+    # on_mouse_down=start_audio_label_hold -- the new buttons don't touch
+    # this affordance at all). bottom_tabs() and chat_screen() contain
+    # more than one -- walk their children to find the ones that carry
+    # the audio-label hold affordance specifically (on_mouse_down wired
+    # to start_audio_label_hold, not mic_button's own
+    # on_mouse_down=start_recording, which legitimately has no on_click
+    # -- it's a press-and-hold record control, not a tap action), and
+    # assert each still has on_click too.
     def hold_buttons(component):
         found = []
         if _on_mouse_down_handler_name(component) == "start_audio_label_hold":
@@ -75,7 +83,7 @@ def test_all_five_hold_buttons_keep_their_on_click():
 
     candidates = (
         hold_buttons(add_person_button())
-        + hold_buttons(quiet_hours_card())
+        + hold_buttons(settings_card())
         + hold_buttons(bottom_tabs())
         + hold_buttons(chat_screen())
     )
@@ -127,6 +135,78 @@ def test_on_settings_loaded_malformed_json_leaves_inputs_untouched():
     state.on_settings_loaded("not json")
 
     assert state.quiet_hours_start_input == "21:30"
+
+
+# -- Week 7: preferred content language + TTS on/off ------------------------
+
+
+def test_on_settings_loaded_parses_preferred_language_and_tts_on():
+    state = _fresh_state()
+
+    state.on_settings_loaded('{"preferred_language": "hi", "tts_on": false}')
+
+    assert state.preferred_language_input == "hi"
+    assert state.tts_on_input is False
+
+
+def test_on_settings_loaded_without_these_fields_leaves_the_join_time_default():
+    # An older/not-yet-updated /me/settings response (or the endpoint not
+    # existing at all yet) must not silently reset what was picked at
+    # onboarding -- only overwrite when the server actually sent a value.
+    state = _fresh_state()
+    state.preferred_language_input = "te"
+    state.tts_on_input = False
+
+    state.on_settings_loaded('{"quiet_hours_start": null, "quiet_hours_end": null}')
+
+    assert state.preferred_language_input == "te"
+    assert state.tts_on_input is False
+
+
+def test_set_preferred_language_input_updates_and_clears_saved_flag():
+    state = _fresh_state()
+    state.settings_saved = True
+
+    state.set_preferred_language_input("hi")
+
+    assert state.preferred_language_input == "hi"
+    assert state.settings_saved is False
+
+
+def test_set_tts_on_input_updates_and_clears_saved_flag():
+    state = _fresh_state()
+    state.tts_on_input = True
+    state.settings_saved = True
+
+    state.set_tts_on_input(False)
+
+    assert state.tts_on_input is False
+    assert state.settings_saved is False
+
+
+def test_save_settings_resets_saved_and_error_flags_and_returns_an_event():
+    state = _fresh_state()
+    state.settings_saved = True
+    state.settings_error = True
+
+    event = state.save_settings()
+
+    assert state.settings_saved is False
+    assert state.settings_error is False
+    assert event is not None
+
+
+def test_join_circle_includes_a_settings_save_so_the_picked_language_persists():
+    state = _fresh_state()
+    state.display_name_input = "Test Elder"
+    state.preferred_language_input = "hi"
+
+    events = state.join_circle()
+
+    assert events is not None
+    assert len(events) == 3  # save name, connect_chat, save_settings
+    assert state.joined is True
+    assert state.my_display_name == "Test Elder"
 
 
 # -- Week 6: voice capture send/upload state -------------------------------
@@ -183,3 +263,95 @@ def test_discard_recording_resets_both_the_url_and_the_send_status():
 
     assert state.last_recording_data_url == ""
     assert state.voice_send_status == ""
+
+
+def test_receiver_text_exists_in_both_ui_languages():
+    # The chat JS is built once outside Reflex and is handed both languages; a key
+    # missing from one of them would be a KeyError when the connection is set up.
+    for lang in ("en", "te"):
+        for key in RECEIVER_TEXT_KEYS:
+            assert TEXTS[lang].get(key), f"{key} missing or empty in {lang}"
+
+
+def test_on_prefs_loaded_restores_saved_choices():
+    state = _fresh_state()
+
+    state.on_prefs_loaded('{"lang": "hi", "tts": false, "autoplay": true}')
+
+    assert state.preferred_language_input == "hi"
+    assert state.tts_on_input is False
+    assert state.autoplay_input is True
+
+
+def test_on_prefs_loaded_ignores_missing_or_corrupt_data():
+    state = _fresh_state()
+
+    state.on_prefs_loaded("")
+    state.on_prefs_loaded("not json")
+    state.on_prefs_loaded('{"lang": "xx", "tts": "yes", "autoplay": 1}')
+
+    # An unknown language and non-boolean flags must not overwrite the defaults.
+    assert state.preferred_language_input == "en"
+    assert state.tts_on_input is True
+    assert state.autoplay_input is False
+
+
+def test_autoplay_is_off_by_default_and_the_setter_changes_it():
+    state = _fresh_state()
+    assert state.autoplay_input is False
+
+    state.set_autoplay_input(True)
+
+    assert state.autoplay_input is True
+
+
+def test_chat_js_draws_translated_and_original_views():
+    # The chat JS is a browser-side string, not unit-testable headless; this guards the
+    # parts a refactor could silently drop.
+    from elder_app.elder_app import CHAT_CONNECT_JS_TEMPLATE
+
+    assert "buildMessageBody" in CHAT_CONNECT_JS_TEMPLATE
+    assert "Authorization" in CHAT_CONNECT_JS_TEMPLATE.split("function loadAudioUrl")[1][:400]
+    assert "renderings: data.renderings" in CHAT_CONNECT_JS_TEMPLATE
+    assert "renderings: m.renderings" in CHAT_CONNECT_JS_TEMPLATE
+
+
+def _hold_marker(component) -> str | None:
+    return dict(component.custom_attrs or {}).get("data-sat-hold")
+
+
+def _components_with_hold_marker(component) -> list:
+    found = [component] if _hold_marker(component) else []
+    for child in getattr(component, "children", []):
+        found.extend(_components_with_hold_marker(child))
+    return found
+
+
+def test_touch_hold_markers_cover_every_hold_button_and_the_mic():
+    # Reflex has no touch triggers, so TOUCH_HOLD_SHIM_JS finds its targets by the
+    # data-sat-hold attribute. A hold button without it silently stays mouse-only
+    # (it works on a laptop, so nobody notices) -- the exact gap this guards.
+    marked = (
+        _components_with_hold_marker(add_person_button())
+        + _components_with_hold_marker(settings_card())
+        + _components_with_hold_marker(bottom_tabs())
+        + _components_with_hold_marker(chat_screen())
+    )
+    assert [_hold_marker(c) for c in marked].count("label") == 5
+    assert _hold_marker(mic_button().children[0]) == "press"
+
+
+def test_touch_shim_is_installed_on_bootstrap_and_covers_both_modes():
+    assert "touchstart" in TOUCH_HOLD_SHIM_JS and "touchend" in TOUCH_HOLD_SHIM_JS
+    assert "touchcancel" in TOUCH_HOLD_SHIM_JS
+    assert 'satHold === "press"' in TOUCH_HOLD_SHIM_JS
+    events = State().bootstrap()
+    assert len(events) == 2
+
+
+def test_upload_js_reports_progress_and_retries_three_times():
+    # The template goes through Python %-formatting, so a stray literal % in the JS
+    # would raise here (and in the browser it would never load).
+    js = UPLOAD_AND_SEND_VOICE_JS_TEMPLATE % {"gateway_url": '"http://example.test"'}
+    assert "XMLHttpRequest" in js and "xhr.upload.onprogress" in js
+    assert "sat-upload-fill" in js and "attempt < 3" in js
