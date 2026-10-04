@@ -31,7 +31,7 @@ today, `_process_frame` rejects any non-`message.send` frame type
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.db.models import Message
 from app.db.models import User as DbUser
@@ -52,6 +52,15 @@ def _sync_frame(*, target_type, target_id, since_id=None, limit=None):
     if limit is not None:
         data["limit"] = limit
     return {"type": "sync.request", "data": data}
+
+
+def _deliver_all(db_session):
+    """The undo window elapsing. A recipient only ever reads a message that is
+    OUT (sent/delivered); these tests seed or post messages that would still be
+    `pending`, and used to read them as the recipient -- which is exactly the
+    leak tests/test_sync_visibility.py now pins shut."""
+    db_session.execute(text("update messages set status = 'sent' where status = 'pending'"))
+    db_session.commit()
 
 
 def test_sync_request_dm_returns_history_since_cursor_respecting_limit_and_has_more(
@@ -128,6 +137,7 @@ def test_sync_request_circle_returns_history_since_cursor(client, db_session, ws
     ]
     ordered = sorted(messages, key=lambda m: m.id)
     db_session.commit()
+    _deliver_all(db_session)
 
     bob_token = ws_login_as(bob)
 
@@ -237,6 +247,7 @@ def test_sync_request_absent_cursor_returns_full_history_from_beginning(
     ]
     ordered = sorted(messages, key=lambda m: m.id)
     db_session.commit()
+    _deliver_all(db_session)
 
     bob_token = ws_login_as(bob)
 

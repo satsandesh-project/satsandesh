@@ -317,6 +317,44 @@ def get_messages_since(
     return list(session.execute(query).scalars().all())
 
 
+# A message is "out" -- visible to anyone but its author -- only once delivered.
+OUT_STATUSES = ("sent", "delivered")
+
+
+def get_visible_messages_since(
+    session: Session,
+    *,
+    conversation_id: uuid.UUID,
+    viewer_id: uuid.UUID,
+    since_id: uuid.UUID | None = None,
+    limit: int = 50,
+) -> list[Message]:
+    """`get_messages_since`, as seen by `viewer_id`: this is what a READ route
+    must use. The author sees their own messages in every status (their screen
+    shows "Sending...", "Cancelled", "Held"); everyone else sees only the ones
+    that are OUT (`sent`/`delivered`).
+
+    The plain `get_messages_since` returned every message in the conversation
+    whatever its status, so a recipient who synced read a message still inside
+    its undo window, one a moderator had held, one blocked, one the sender had
+    cancelled -- text and audio reference included. That broke the security
+    checklist's "undo really unsends: the message is gone from receivers'
+    clients" and left held/blocked messages protected only by the fan-out, not
+    by the read path.
+
+    The visibility filter is in the query, BEFORE the limit: a hidden row must
+    not leave a short page that looks like the end of history."""
+    query = select(Message).where(
+        Message.conversation_id == conversation_id,
+        Message.deleted_at.is_(None),
+        or_(Message.author_id == viewer_id, Message.status.in_(OUT_STATUSES)),
+    )
+    if since_id is not None:
+        query = query.where(Message.id > since_id)
+    query = query.order_by(Message.id).limit(limit)
+    return list(session.execute(query).scalars().all())
+
+
 def get_message_by_id(session: Session, message_id: uuid.UUID) -> Message | None:
     return session.get(Message, message_id)
 
