@@ -50,7 +50,9 @@ healthy() {  # wait for a service's container to report healthy
     cid=$($DC ps -q "$svc"); st=$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null)
     [ "$st" = healthy ] && return 0; sleep 5
   done
-  echo "$svc never became healthy"; $DC logs --tail 30 "$svc"; return 1
+  echo "$svc never became healthy; container state:"
+  docker inspect -f '  status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{end}} restarts={{.RestartCount}} exit={{.State.ExitCode}}' "$cid" 2>&1
+  $DC logs --tail 30 "$svc"; return 1
 }
 cleanup() { if [ "$KEEP" = 0 ]; then $DC down -v >/dev/null 2>&1; echo "(stack removed)"; else echo "(stack left running: project $P)"; fi; }
 trap cleanup EXIT
@@ -66,19 +68,24 @@ echo "waiting for the ASR model to download and warm up (first start only)..."
 healthy speech 120 || exit 1
 echo "gateway pipeline env:"; $DC exec -T gateway sh -c 'env | grep -E "^(PIPELINE|AI_|UNDO|JOB_LEASE)" | sort'
 
-say "2. a moderator (the stub auth cannot grant a role; the database row can)"
-driver queue >/dev/null            # first request provisions the user row
-psql_q "UPDATE users SET role='moderator' WHERE id='$MOD'" >/dev/null
+say "2. the three users (inserted directly: the stub auth only flushes a new user row, so a request that ends in 403 rolls it back and cannot provision a moderator)"
+BOB=00000000-0000-4000-8000-000000000002
+psql_q "INSERT INTO users (id,name,preferred_language,role) VALUES
+  ('$ALICE','Alice (author)','en','elder'),
+  ('$BOB','Bob (recipient)','hi','elder'),
+  ('$MOD','Moderator','en','moderator')
+  ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, preferred_language = EXCLUDED.preferred_language" >/dev/null
+psql_q "SELECT '  '||name||' role='||role||' language='||preferred_language FROM users ORDER BY name"
 driver queue
 
 say "3. SCENARIO A: real speech, pipeline outlasts the 2s undo window"
-A=$(driver send /e2e/samples/speech.webm speech en | tee /dev/stderr | field message_id)
+OUT=$(driver send /e2e/samples/speech.webm speech en); echo "$OUT"; A=$(echo "$OUT" | field message_id)
 driver watch "$A" 240
 driver mine "$A"
 driver events "$A"
 
 say "4. SCENARIO B: audio with NO speech -> fail closed (held for a person)"
-B=$(driver send /e2e/samples/tone.webm tone en | tee /dev/stderr | field message_id)
+OUT=$(driver send /e2e/samples/tone.webm tone en); echo "$OUT"; B=$(echo "$OUT" | field message_id)
 driver watch "$B" 45
 driver mine "$B"
 driver queue
@@ -89,16 +96,19 @@ driver watch "$B" 20
 driver events "$B"
 
 say "5. SCENARIO C: SIGKILL the gateway mid-pipeline, then restart"
-C=$(driver send /e2e/samples/speech.webm speech-crash en | tee /dev/stderr | field message_id)
+OUT=$(driver send /e2e/samples/speech.webm speech-crash en); echo "$OUT"; C=$(echo "$OUT" | field message_id)
 echo "waiting for the job to be RUNNING..."
 for _ in $(seq 1 80); do
   [ "$(psql_q "SELECT status FROM jobs WHERE payload->>'message_id'='$C' LIMIT 1")" = running ] && break; sleep 0.25
 done
 echo "job status at the moment of the kill: $(psql_q "SELECT status||' (attempts='||attempts||')' FROM jobs WHERE payload->>'message_id'='$C'")"
 echo "message at the moment of the kill:   $(psql_q "SELECT status||' / pipeline_state='||coalesce(pipeline_state,'NULL') FROM messages WHERE id='$C'")"
+GW=$($DC ps -q gateway)
 $DC kill -s SIGKILL gateway >/dev/null
-$DC start gateway >/dev/null
-healthy gateway 40 || exit 1
+sleep 3
+echo "right after the kill: $(docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}} restarts={{.RestartCount}}' "$GW") (compose has restart: unless-stopped)"
+$DC start gateway >/dev/null 2>&1
+healthy gateway 60 || exit 1
 echo "gateway back; the 20s lease must expire before another worker may reclaim the job"
 driver watch "$C" 240
 driver events "$C"
