@@ -10,6 +10,7 @@ empty". Set attributes, or `errors[stage] = ...`, to script a scenario;
 
 import json
 import wave
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -44,6 +45,9 @@ class FakeAi:
         self.write_audio_files = True
         # stage -> (status_code, json body) or an Exception to raise
         self.errors: dict[str, object] = {}
+        # called with the stage name at the moment a request arrives -- lets a test look at the
+        # world (e.g. whether a database transaction is open) while "the service" is busy
+        self.on_call: Callable[[str], None] | None = None
         self._wav_counter = 0
 
     # -- plumbing ---------------------------------------------------------------
@@ -64,6 +68,8 @@ class FakeAi:
         stage = request.url.path.rsplit("/", 1)[-1]
         body = json.loads(request.content)
         self.calls.append((stage, body))
+        if self.on_call is not None:
+            self.on_call(stage)
         scripted = self.errors.get(stage)
         if isinstance(scripted, Exception):
             raise scripted
