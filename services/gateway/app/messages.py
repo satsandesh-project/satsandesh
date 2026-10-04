@@ -42,7 +42,7 @@ from app.db.repository import (
     create_message_with_created_flag,
     find_conversation_id,
     get_message_by_id,
-    get_messages_since,
+    get_visible_messages_since,
     is_circle_member,
     list_member_ids_for_circle,
     resolve_owned_media_object,
@@ -395,8 +395,12 @@ def get_messages(
     since_uuid = _parse_uuid(since_id, field="since_id") if since_id is not None else None
     # Fetch one extra row past the page to learn whether more remain,
     # without a second COUNT query.
-    rows = get_messages_since(
-        db, conversation_id=conversation_id, since_id=since_uuid, limit=limit + 1
+    rows = get_visible_messages_since(
+        db,
+        conversation_id=conversation_id,
+        viewer_id=caller_id,
+        since_id=since_uuid,
+        limit=limit + 1,
     )
     has_more = len(rows) > limit
     page = rows[:limit]
