@@ -17,7 +17,7 @@ import time
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
 
 from app.db.models import Message
@@ -68,6 +68,15 @@ def _wait_for_push_calls(push_calls, expected, *, timeout=2.0, interval=0.02):
 
 def _settle(seconds: float = 0.05) -> None:
     time.sleep(seconds)
+
+
+def _deliver_all(db_session):
+    """The undo window elapsing. A recipient only ever reads a message that is
+    OUT (sent/delivered); these tests seed or post messages that would still be
+    `pending`, and used to read them as the recipient -- which is exactly the
+    leak tests/test_sync_visibility.py now pins shut."""
+    db_session.execute(text("update messages set status = 'sent' where status = 'pending'"))
+    db_session.commit()
 
 
 def test_post_messages_to_circle_creates_message_and_returns_expected_shape(
@@ -315,6 +324,8 @@ def test_get_messages_since_resolves_target_to_conversation_and_returns_history(
         text="hi Alice",
         client_msg_id=uuid.uuid4(),
     )
+
+    _deliver_all(db_session)  # Bob's message to Alice must be out for Alice to read it
 
     login_as(alice)
     response = client.get("/messages", params={"target_type": "user", "target_id": str(bob.id)})

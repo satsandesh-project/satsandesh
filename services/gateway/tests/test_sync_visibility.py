@@ -262,7 +262,7 @@ def test_hidden_messages_do_not_shorten_a_page_or_fake_the_end_of_history(
             "target_type": "user",
             "target_id": str(alice.id),
             "limit": 2,
-            "since": page1["messages"][-1]["id"],
+            "since_id": page1["messages"][-1]["id"],
         },
     )
     assert [m["id"] for m in page2["messages"]] == visible[2:]

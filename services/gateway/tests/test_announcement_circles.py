@@ -11,6 +11,8 @@ tests/test_circle_routes.py and tests/test_message_routes.py.
 
 import uuid
 
+from sqlalchemy import text
+
 from app.db.models import User as DbUser
 from app.db.repository import add_member, create_circle
 
@@ -33,6 +35,15 @@ def _post_message(client, *, circle_id, text="hello"):
             "text": text,
         },
     )
+
+
+def _deliver_all(db_session):
+    """The undo window elapsing. A recipient only ever reads a message that is
+    OUT (sent/delivered); these tests seed or post messages that would still be
+    `pending`, and used to read them as the recipient -- which is exactly the
+    leak tests/test_sync_visibility.py now pins shut."""
+    db_session.execute(text("update messages set status = 'sent' where status = 'pending'"))
+    db_session.commit()
 
 
 def test_post_circles_with_kind_announcement_creates_announcement_circle(
@@ -148,6 +159,7 @@ def test_ordinary_member_can_still_read_an_announcement_circle(client, db_sessio
     add_member(db_session, circle_id=circle.id, user_id=bob.id, role="member")
     login_as(alice)
     _post_message(client, circle_id=circle.id, text="Today's thought...")
+    _deliver_all(db_session)
 
     login_as(bob)
     response = client.get(
