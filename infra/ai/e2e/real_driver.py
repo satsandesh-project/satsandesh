@@ -50,9 +50,7 @@ def emit(**fields) -> None:
 
 
 def cmd_circle() -> None:
-    r = httpx.post(
-        f"{BASE}/circles", json={"name": "real-proof"}, headers=_auth(ALICE), timeout=30
-    )
+    r = httpx.post(f"{BASE}/circles", json={"name": "real-proof"}, headers=_auth(ALICE), timeout=30)
     r.raise_for_status()
     circle_id = r.json()["id"]
     for name, uid in RECIPIENTS.items():
