@@ -59,6 +59,20 @@ def _ai_client() -> AiClient:
     return AiClient.from_settings(get_settings())
 
 
+def _handle_process_message(session: Session, payload: dict) -> None:
+    """The Week 7 orchestrator (app/pipeline.py). Imported lazily: that
+    module imports this one for PermanentJobError."""
+    from app.pipeline import handle_process_message
+
+    handle_process_message(session, payload)
+
+
+def _dead_process_message(session: Session, payload: dict, error: str) -> None:
+    from app.pipeline import handle_pipeline_dead
+
+    handle_pipeline_dead(session, payload, error)
+
+
 def _handle_transcribe_media(session: Session, payload: dict) -> None:
     """Week 6 Step 2: proves a real job can flow through this queue and
     reach the AI service. Deliberately does not persist the transcript
@@ -122,7 +136,21 @@ _HANDLERS: dict[str, JobHandler] = {
     "noop": lambda session, payload: None,
     "sleep": lambda session, payload: time.sleep(payload.get("seconds", 1)),
     "transcribe_media": _handle_transcribe_media,
+    "process_message": _handle_process_message,
 }
+
+# Called once when a job of this type lands in 'dead' (retries exhausted, or a
+# permanent failure), with its payload and the last error. A job that dies
+# silently is fine for a log line; it is not fine for a message that must not
+# be left pending forever (app/pipeline.py::handle_pipeline_dead holds it).
+_DEAD_LETTER_HANDLERS: dict[str, Callable[[Session, dict, str], None]] = {
+    "process_message": _dead_process_message,
+}
+
+# The gateway's event loop, captured by run_worker_loop. Handlers run in a
+# worker thread; anything they need the loop for (delivering a message over
+# WebSockets) is handed to it with asyncio.run_coroutine_threadsafe.
+_MAIN_LOOP: asyncio.AbstractEventLoop | None = None
 
 
 def register_handler(job_type: str, handler: JobHandler) -> None:
@@ -182,6 +210,20 @@ def _heartbeat(job_id: uuid.UUID, this_worker_id: str, lease_seconds: int, stop:
             return
 
 
+def _run_dead_letter_hook(session: Session, job_type: str, payload: dict, error: str) -> None:
+    """After the job's 'dead' status is committed. A hook that fails is logged,
+    never raised: the worker loop must survive it, and the job stays dead."""
+    hook = _DEAD_LETTER_HANDLERS.get(job_type)
+    if hook is None:
+        return
+    try:
+        hook(session, payload, error)
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("dead-letter hook for %s failed (payload=%s)", job_type, payload)
+
+
 def _run_one_claimed_job(*, this_worker_id: str) -> bool:
     """Claim and run at most one job. Returns True if a job was claimed
     (whether the handler then succeeded or failed), False if nothing was
@@ -218,26 +260,25 @@ def _run_one_claimed_job(*, this_worker_id: str) -> bool:
     )
     heartbeat.start()
     work_session = SessionLocal()
+    error_text = ""
     try:
         handler = _HANDLERS.get(job_type)
         if handler is None:
-            outcome = fail_job(
-                work_session,
-                job_id,
-                error=f"no handler registered for job_type={job_type!r}",
-                worker_id=this_worker_id,
-            )
+            error_text = f"no handler registered for job_type={job_type!r}"
+            outcome = fail_job(work_session, job_id, error=error_text, worker_id=this_worker_id)
         else:
             try:
                 handler(work_session, payload)
             except PermanentJobError as exc:
                 work_session.rollback()
+                error_text = str(exc)
                 outcome = fail_job(
-                    work_session, job_id, error=str(exc), worker_id=this_worker_id, permanent=True
+                    work_session, job_id, error=error_text, worker_id=this_worker_id, permanent=True
                 )
             except Exception as exc:  # noqa: BLE001 -- any other handler failure is a retryable job failure, not a worker crash
                 work_session.rollback()
-                outcome = fail_job(work_session, job_id, error=str(exc), worker_id=this_worker_id)
+                error_text = str(exc)
+                outcome = fail_job(work_session, job_id, error=error_text, worker_id=this_worker_id)
             else:
                 outcome = (
                     "done"
@@ -245,6 +286,8 @@ def _run_one_claimed_job(*, this_worker_id: str) -> bool:
                     else "lost"
                 )
         work_session.commit()
+        if outcome == "dead":
+            _run_dead_letter_hook(work_session, job_type, payload, error_text)
         if outcome == "lost":
             # The lease was lost mid-run (heartbeat failing for a whole
             # lease, or the process was suspended) and another worker owns
@@ -263,6 +306,8 @@ async def run_worker_loop(stop_event: asyncio.Event, *, this_worker_id: str) -> 
     other repository function in this codebase uses) -- run through
     asyncio.to_thread so a slow claim or handler never stalls the event
     loop the WS handler and every other route share."""
+    global _MAIN_LOOP
+    _MAIN_LOOP = asyncio.get_running_loop()
     poll_interval = get_settings().JOB_POLL_INTERVAL_SECONDS
     while not stop_event.is_set():
         try:

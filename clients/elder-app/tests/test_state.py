@@ -35,10 +35,15 @@ round 1 did.
 from elder_app.elder_app import (
     CHAT_CONNECT_JS_TEMPLATE,
     CHAT_SEND_JS,
+    RECEIVER_TEXT_KEYS,
+    TEXTS,
+    TOUCH_HOLD_SHIM_JS,
+    UPLOAD_AND_SEND_VOICE_JS_TEMPLATE,
     State,
     add_person_button,
     bottom_tabs,
     chat_screen,
+    mic_button,
     settings_card,
 )
 
@@ -270,3 +275,95 @@ def test_typed_messages_declare_their_language_and_resends_keep_it():
     assert "0x0C00" in CHAT_CONNECT_JS_TEMPLATE and "0x0900" in CHAT_CONNECT_JS_TEMPLATE
     assert "source_lang: sourceLang" in CHAT_SEND_JS
     assert "source_lang: msg.source_lang" in CHAT_CONNECT_JS_TEMPLATE
+
+
+def test_receiver_text_exists_in_both_ui_languages():
+    # The chat JS is built once outside Reflex and is handed both languages; a key
+    # missing from one of them would be a KeyError when the connection is set up.
+    for lang in ("en", "te"):
+        for key in RECEIVER_TEXT_KEYS:
+            assert TEXTS[lang].get(key), f"{key} missing or empty in {lang}"
+
+
+def test_on_prefs_loaded_restores_saved_choices():
+    state = _fresh_state()
+
+    state.on_prefs_loaded('{"lang": "hi", "tts": false, "autoplay": true}')
+
+    assert state.preferred_language_input == "hi"
+    assert state.tts_on_input is False
+    assert state.autoplay_input is True
+
+
+def test_on_prefs_loaded_ignores_missing_or_corrupt_data():
+    state = _fresh_state()
+
+    state.on_prefs_loaded("")
+    state.on_prefs_loaded("not json")
+    state.on_prefs_loaded('{"lang": "xx", "tts": "yes", "autoplay": 1}')
+
+    # An unknown language and non-boolean flags must not overwrite the defaults.
+    assert state.preferred_language_input == "en"
+    assert state.tts_on_input is True
+    assert state.autoplay_input is False
+
+
+def test_autoplay_is_off_by_default_and_the_setter_changes_it():
+    state = _fresh_state()
+    assert state.autoplay_input is False
+
+    state.set_autoplay_input(True)
+
+    assert state.autoplay_input is True
+
+
+def test_chat_js_draws_translated_and_original_views():
+    # The chat JS is a browser-side string, not unit-testable headless; this guards the
+    # parts a refactor could silently drop.
+    from elder_app.elder_app import CHAT_CONNECT_JS_TEMPLATE
+
+    assert "buildMessageBody" in CHAT_CONNECT_JS_TEMPLATE
+    assert "Authorization" in CHAT_CONNECT_JS_TEMPLATE.split("function loadAudioUrl")[1][:400]
+    assert "renderings: data.renderings" in CHAT_CONNECT_JS_TEMPLATE
+    assert "renderings: m.renderings" in CHAT_CONNECT_JS_TEMPLATE
+
+
+def _hold_marker(component) -> str | None:
+    return dict(component.custom_attrs or {}).get("data-sat-hold")
+
+
+def _components_with_hold_marker(component) -> list:
+    found = [component] if _hold_marker(component) else []
+    for child in getattr(component, "children", []):
+        found.extend(_components_with_hold_marker(child))
+    return found
+
+
+def test_touch_hold_markers_cover_every_hold_button_and_the_mic():
+    # Reflex has no touch triggers, so TOUCH_HOLD_SHIM_JS finds its targets by the
+    # data-sat-hold attribute. A hold button without it silently stays mouse-only
+    # (it works on a laptop, so nobody notices) -- the exact gap this guards.
+    marked = (
+        _components_with_hold_marker(add_person_button())
+        + _components_with_hold_marker(settings_card())
+        + _components_with_hold_marker(bottom_tabs())
+        + _components_with_hold_marker(chat_screen())
+    )
+    assert [_hold_marker(c) for c in marked].count("label") == 5
+    assert _hold_marker(mic_button().children[0]) == "press"
+
+
+def test_touch_shim_is_installed_on_bootstrap_and_covers_both_modes():
+    assert "touchstart" in TOUCH_HOLD_SHIM_JS and "touchend" in TOUCH_HOLD_SHIM_JS
+    assert "touchcancel" in TOUCH_HOLD_SHIM_JS
+    assert 'satHold === "press"' in TOUCH_HOLD_SHIM_JS
+    events = State().bootstrap()
+    assert len(events) == 2
+
+
+def test_upload_js_reports_progress_and_retries_three_times():
+    # The template goes through Python %-formatting, so a stray literal % in the JS
+    # would raise here (and in the browser it would never load).
+    js = UPLOAD_AND_SEND_VOICE_JS_TEMPLATE % {"gateway_url": '"http://example.test"'}
+    assert "XMLHttpRequest" in js and "xhr.upload.onprogress" in js
+    assert "sat-upload-fill" in js and "attempt < 3" in js

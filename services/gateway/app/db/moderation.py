@@ -22,7 +22,7 @@ from contracts.chat import moderation as chat_moderation
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import ModerationEvent
+from app.db.models import Message, ModerationEvent, User
 
 
 def record_moderation_event(
@@ -158,3 +158,40 @@ def moderation_event_to_out(event: ModerationEvent) -> chat_moderation.Moderatio
         degraded=event.degraded,
         created_at=event.created_at,
     )
+
+
+def list_moderation_queue(
+    session: Session, *, after_message_id: uuid.UUID | None = None, limit: int = 25
+) -> list[tuple[Message, User, ModerationEvent, int]]:
+    """The review queue: `held`, not-deleted messages that have at least one
+    event, each with its author, its LATEST event (the one that put it here)
+    and how many events it has. Oldest first, by message id (a UUIDv7, so
+    creation order), keyset-paged: `after_message_id` is the last id the
+    reader saw. The queue changes under the reader as moderators work it, so
+    an offset would skip or repeat an item when one is released between pages;
+    "id greater than the last seen" cannot.
+
+    A held message nobody has ruled on has no event to show and is left out:
+    the wire shape's `latest_event` is required."""
+    ranked = select(
+        ModerationEvent.id.label("event_id"),
+        ModerationEvent.message_id.label("message_id"),
+        func.row_number()
+        .over(
+            partition_by=ModerationEvent.message_id,
+            order_by=(ModerationEvent.created_at.desc(), ModerationEvent.id.desc()),
+        )
+        .label("rn"),
+        func.count().over(partition_by=ModerationEvent.message_id).label("n"),
+    ).subquery()
+    stmt = (
+        select(Message, User, ModerationEvent, ranked.c.n)
+        .join(ranked, (ranked.c.message_id == Message.id) & (ranked.c.rn == 1))
+        .join(ModerationEvent, ModerationEvent.id == ranked.c.event_id)
+        .join(User, User.id == Message.author_id)
+        .where(Message.status == "held", Message.deleted_at.is_(None))
+    )
+    if after_message_id is not None:
+        stmt = stmt.where(Message.id > after_message_id)
+    rows = session.execute(stmt.order_by(Message.id).limit(limit)).all()
+    return [(row[0], row[1], row[2], row[3]) for row in rows]

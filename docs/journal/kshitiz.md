@@ -185,3 +185,85 @@ when the server hasn't sent them yet (must not silently reset a
 join-time choice), the two setters clearing the saved flag, and
 `join_circle` actually including the settings-save call so the picked
 language persists past the onboarding screen.
+
+## 2026-10-03 — Weeks 5/6 audit against the dependency map: touch screens and upload progress
+
+Re-read M1's Week 5 and Week 6 deliverables in the Month 2-3 dependency map
+against the code, rather than against the PRs that built them. Two real gaps,
+both invisible on a laptop:
+
+**Hold-to-record and hold-to-hear were mouse-only.** The mic button and the five
+buttons that read their label aloud used `on_mouse_down`/`up`/`leave`. A phone or
+tablet fires `mousedown` only after a tap is released, so on a touch screen the mic
+recorded for zero seconds and no hold was ever seen -- on exactly the devices the
+elders use. Reflex 0.9.9 has no touch or pointer triggers (checked the installed
+package), so `TOUCH_HOLD_SHIM_JS` translates touchstart/touchend into the mouse
+events those buttons already handle, keyed on a `data-sat-hold` attribute
+("press" for the mic, which owns the whole gesture; "label" for the others, which
+keep the browser's normal tap/click). CSS stops text selection and the long-press
+menu from cancelling the hold.
+
+**Voice upload had no progress display** (the Week 6 line says "upload with
+progress and retry"). It now uses `XMLHttpRequest` (fetch cannot report upload
+progress) and a progress bar written straight to the DOM, and makes three
+attempts (1s, 2s pauses) instead of two.
+
+**Verification:** on my own demo stack (port 18300, not the shared 8095) with the
+browser pane at 375x812, synthetic touch events: a 100 ms tap on a label button
+fetched nothing, a 700 ms hold fetched `/audio-labels/circle`, and the guard flag
+and timer were clear afterwards; a 1.6 s touch hold on the mic recorded a 21 KB
+clip; the upload bar went 0% -> 100% with `role=progressbar`; with the first two
+upload attempts forced to fail, the third succeeded and the message sent. 3 new
+tests in `tests/test_state.py` (18 total) pass in the app's own container.
+
+**Not verified:** a real finger on a real phone, and the real microphone -- the
+demo is plain HTTP, where `getUserMedia` is blocked, so recording was tested with
+a stubbed audio stream. Synthetic touch events are not the same as a physical
+touch; the first real-device check is still owed.
+
+## 2026-10-03 — Week 7 part 2: the receiver experience
+
+The dependency map's Week 7 M1 line: text and audio together, original always one
+tap away, 0.8-1.2x speed control, opt-in autoplay, language pick that holds, per-user
+TTS on/off. Part 1 (#68) did the pickers; this is the screen itself. It builds
+against `MessageOut.renderings` / `transcript` (#83, #86), which the gateway will
+fill from #87/#88.
+
+**What a message shows.** If it carries a rendering in the receiver's content
+language: that text, plus its audio when speech is on, plus a button to flip to the
+original (the voice note itself and its transcript). If not (same language, or none
+made): the original, as before. A degraded rendering says so ("No audio for this
+message", "Approximate translation") instead of looking broken. With speech off the
+audio and its note disappear and the text stays -- the useful mode for an elder who
+finds audio hard to follow.
+
+**Playback was broken against the real gateway, independent of any of this.** The
+old `<audio src=GATEWAY/media/id>` cannot send the `Authorization` header that `GET
+/media/{id}` has always required, so every received voice note would have been
+refused. Audio is now fetched with the token and played from a blob URL (cached per
+media id; a failed load shows a tap-to-retry line).
+
+**Speed and autoplay.** 0.8x / 1x / 1.2x buttons (44 px targets), remembered on the
+device. Autoplay is opt-in (off by default) from the settings card, and starts only
+the newest voice message from someone else. `renderCurrentThread` rebuilds the whole
+thread on every update, which used to cut off a playing note; the playing note now
+resumes where it was.
+
+**"Holds".** The gateway's `/me/settings` still doesn't exist, so the preferences
+(content language, speech on/off, autoplay) are also kept in localStorage; they
+survive a reload on this device. Server values still win once the endpoint exists.
+
+**Verification:** on my demo stack (port 18300) at 375x812 against the real gateway:
+my own two voice notes played from blob URLs with real durations; speed 1.2x applied
+to every player and was saved; injected incoming messages (the gateway doesn't emit
+renderings yet) showed the translated view, the original + transcript view, the
+no-rendering fallback, the "approximate" and "no audio" notes, and speech-off; autoplay
+started the marked message at 1.2x and kept playing across a re-render (0.44 s -> 0.87
+s on a new element); a bogus media id showed the retry line; language + autoplay held
+across a reload. 5 new tests in `tests/test_state.py` (20 total) pass in the app's
+container.
+
+**Not verified:** a real translated message end to end (needs #87/#88 deployed; I
+used injected messages), a real phone, and the Telugu strings -- I wrote them and they
+need a native reader's eye before the pilot. Blob URLs live for the page's lifetime;
+fine for a session of voice notes, worth a revoke-on-leave later.

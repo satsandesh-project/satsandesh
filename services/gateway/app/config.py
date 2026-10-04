@@ -149,6 +149,22 @@ class Settings(BaseSettings):
     # to contracts/ai or transcode here is M3's decision (OPEN_QUESTIONS.md #2).
     AI_ACCEPT_WEBM_AS_OGG_OPUS: bool = False
 
+    # Week 7 Phase 5: the pipeline orchestrator (app/pipeline.py,
+    # ORCHESTRATOR_DESIGN.md). OFF by default: with it off nothing about
+    # message creation or delivery changes, on staging or anywhere. Turning it
+    # on needs the AI services reachable (services/ai/mock/ answers all four).
+    PIPELINE_ENABLED: bool = False
+    # What a classifier NUDGE does to delivery. The chat contract leaves the
+    # action -> status mapping open; this assumes a nudge records a notice and
+    # still delivers. Set false to hold nudged messages for a human instead.
+    PIPELINE_NUDGE_DELIVERS: bool = True
+    # Where the GATEWAY sees the render service's output directory (an
+    # absolute path). The render service reports a file:// path on ITS disk;
+    # the gateway reads the file by name from here, so the two containers may
+    # mount the directory at different paths. Unset: rendering audio cannot
+    # be ingested and every rendering is text-only (tts_skipped).
+    AI_RENDER_AUDIO_ROOT: str | None = None
+
     # Whether POST /media enqueues a "transcribe_media" job for each new
     # upload (app/jobs.py). Off by default: the job only calls the AI
     # service and LOGS the result -- nothing stores a transcript until Week
