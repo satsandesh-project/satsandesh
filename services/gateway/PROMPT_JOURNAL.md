@@ -612,3 +612,24 @@ the server for its DB-backed tests (the local Python lacks
 - A confused test of mine (it tried to write a rendering onto an already-held
   message, which is correctly refused, then asserted something meaningless) was
   rewritten rather than left passing.
+
+## Week 7 -- `GET/PATCH /me/settings` (`feat/m2-me-settings`)
+
+- The client already existed, so the first job was reading what it sends (all four fields on
+  every PATCH, times as "HH:MM:SS", explicit null to clear) rather than designing a shape.
+  Its comments named files that do not exist (`contracts/chat/users.py::QuietHoursUpdate`,
+  `app/users.py`) -- written expecting me to build them.
+- Reading the quiet-hours consumer showed the feature would have shipped working and doing
+  nothing: no timezone -> never suppressed, and the client sends no timezone. Recorded (#28)
+  and written down as a test that documents the trap instead of hiding it.
+- A first-time user's row is only flushed by the stub auth, so a PATCH that does not commit
+  loses it. Tested by rolling the session back and checking the row survived -- a test that
+  reads back through the same session would have passed either way.
+- Routing: `handle /me` in the Caddyfile is an exact match, so `/me/settings` would have
+  reached the elder-app. Instead of trusting `caddy validate` ("Valid configuration" only
+  means it parses) I ran the real Caddy against three fake upstreams, before and after. That
+  also showed `/audio-labels/send` had been reaching the elder-app since Week 5 -- M1's
+  hold-to-hear buttons have never worked behind Caddy. Fixed in its own commit.
+  `/moderation*` was checked to still NOT reach the gateway.
+- One surviving mutant ("contract_version is patchable"): equivalent -- setting a stray
+  attribute on the ORM object has no effect anyone can observe -- so no test was invented for it.
