@@ -79,7 +79,7 @@ render-tts = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "moderation/tests", "mt/tests", "speech_indicconformer/tests", "render/tests"]
+testpaths = ["tests", "moderation/tests", "mt/tests", "speech_indicconformer/tests", "render/tests", "eval/tests"]
 markers = [
     "integration: requires real model weights and a CUDA GPU; skipped by default",
 ]

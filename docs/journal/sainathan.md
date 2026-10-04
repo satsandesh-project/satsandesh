@@ -493,3 +493,47 @@ showing `has_exemplars: false` and correct stub classifications. CI
 still means only ruff ran.
 
 **Where it ran:** local.
+
+## 2026-10-04 — Evaluation harness scaffold (Week 8, built in Week 7 · PR pending)
+
+**Asked for:** the fourth of the unblocked M4 items — build the eval
+harness scaffold now rather than waiting for real renderings.
+
+**Produced:** `services/ai/eval/` — `schema.py` (the stored shapes),
+`metrics.py` (pure scoring over a loaded set), 12 tests, README. Added to
+`services/ai`'s `testpaths`. Both eval sets are empty on purpose.
+
+**Corrected:** Broke `pyproject.toml`'s `testpaths` with a string edit that
+dropped a comma (`"render/tests""eval/tests"`), which `tomllib` would have
+rejected at CI time. Caught by parsing the file immediately after editing
+rather than assuming the replace worked.
+
+**Decided differently:**
+- **The headline metric is the false-hold rate, not accuracy.** Accuracy
+  hides the thing that matters: a classifier that holds everything scores
+  20% on five balanced classes and is useless, one that allows everything
+  scores well on a mostly-devotional corpus. The two directional rates say
+  whether the product is usable and whether it is safe.
+- **NUDGE and BLOCK count as false holds, not just HOLD.** From the
+  sender's side "my message did not arrive" is the same harm whichever
+  action caused it. Scoring only HOLD would have flattered the filter.
+- **Rates carry numerator and denominator**, and an empty sample has *no*
+  rate rather than 0% — 0% reads as success.
+- **Provenance cannot be mixed silently.** Synthetic rows were written by
+  the same people who wrote the policy; a baseline that includes them
+  flatters itself. Enforced by a filter argument, not a convention.
+- **Rater disagreement is reported, not majority-resolved** — two bilingual
+  readers disagreeing is a finding about the translation.
+- **`participant_code` is pattern-validated** so a real name is rejected.
+  These files are committed and the repo goes public in Week 12.
+- **Shipped no data.** Adequacy needs real renderings, and the real MT and
+  render services have never run (M2's own note on #99); the ~300-message
+  set must come from consented pilot traffic that does not exist until
+  Week 11. A harness scoring mock output would produce a baseline that
+  measures the mock.
+
+**Verified by:** 12 eval tests; full `services/ai` suite 160 passed (was
+148), the 2 failures being the known ffmpeg-absent-on-Windows ones that
+pass in CI; `tomllib` parse of the edited pyproject; ruff clean repo-wide.
+
+**Where it ran:** local.
