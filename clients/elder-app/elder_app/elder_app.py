@@ -195,6 +195,7 @@ TEXTS = {
         "your_id_label": "Your ID -- share this with family so they can add you",
         "copy_id": "Copy",
         "copied_id": "Copied!",
+        "copy_failed": "Not copied",
         "circle_id_label": "Circle ID -- share this so others can join",
         "add_person": "+ Add someone",
         "add_person_title": "Add someone",
@@ -283,6 +284,7 @@ TEXTS = {
         "your_id_label": "మీ ఐడీ — కుటుంబంతో పంచుకోండి, వారు మిమ్మల్ని చేర్చుకోవచ్చు",
         "copy_id": "కాపీ చేయి",
         "copied_id": "కాపీ అయ్యింది!",
+        "copy_failed": "కాపీ కాలేదు",
         "circle_id_label": "సర్కిల్ ఐడీ — ఇతరులు చేరడానికి దీన్ని పంచుకోండి",
         "add_person": "+ ఎవరినైనా చేర్చు",
         "add_person_title": "ఎవరినైనా చేర్చు",
@@ -424,11 +426,35 @@ ADD_CONTACT_JS_TEMPLATE = """
 })()
 """
 
+# `navigator.clipboard` exists only on a secure page (HTTPS or localhost). On plain HTTP --
+# which is what staging is today -- it is undefined, so the old code threw, was caught, and
+# the Copy button did nothing and said nothing. The fallback is the older path: put the text
+# in an off-screen textarea, select it, and run the browser's copy command, which works on
+# any page when it follows a tap.
 COPY_ID_JS_TEMPLATE = """
 (async () => {
+    const text = %(my_id)s;
     try {
-        await navigator.clipboard.writeText(%(my_id)s);
-        return "ok";
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+            return "ok";
+        }
+    } catch (err) {}
+    try {
+        const box = document.createElement("textarea");
+        box.value = text;
+        box.setAttribute("readonly", "");
+        box.style.position = "fixed";
+        box.style.top = "0";
+        box.style.left = "0";
+        box.style.opacity = "0";
+        document.body.appendChild(box);
+        box.focus();
+        box.select();
+        box.setSelectionRange(0, text.length);
+        const copied = document.execCommand("copy");
+        document.body.removeChild(box);
+        return copied ? "ok" : "error";
     } catch (err) {
         return "error";
     }
@@ -1697,6 +1723,8 @@ class State(rx.State):
     add_error: str = ""
     copied_id: bool = False
     copied_circle_id: bool = False
+    copy_id_failed: bool = False
+    copy_circle_id_failed: bool = False
 
     mic_recording: bool = False
     mic_permission_denied: bool = False
@@ -2041,19 +2069,23 @@ class State(rx.State):
 
     def copy_my_id(self):
         self.copied_id = False
+        self.copy_id_failed = False
         js = COPY_ID_JS_TEMPLATE % {"my_id": json.dumps(self.my_user_id)}
         return rx.call_script(js, callback=State.on_id_copied)
 
     def on_id_copied(self, result: str):
         self.copied_id = result == "ok"
+        self.copy_id_failed = not self.copied_id
 
     def copy_circle_id(self):
         self.copied_circle_id = False
+        self.copy_circle_id_failed = False
         js = COPY_ID_JS_TEMPLATE % {"my_id": json.dumps(self.current_circle_id)}
         return rx.call_script(js, callback=State.on_circle_id_copied)
 
     def on_circle_id_copied(self, result: str):
         self.copied_circle_id = result == "ok"
+        self.copy_circle_id_failed = not self.copied_circle_id
 
     def start_recording(self):
         self.mic_permission_denied = False
@@ -2426,6 +2458,7 @@ def your_id_card() -> rx.Component:
                     "font_size": "0.85rem",
                     "color": COLOR["muted_ink"],
                     "word_break": "break-all",
+                    "user_select": "all",
                 },
             ),
             spacing="1",
@@ -2434,7 +2467,11 @@ def your_id_card() -> rx.Component:
             min_width="0",
         ),
         rx.button(
-            rx.cond(State.copied_id, State.t["copied_id"], State.t["copy_id"]),
+            rx.cond(
+                State.copied_id,
+                State.t["copied_id"],
+                rx.cond(State.copy_id_failed, State.t["copy_failed"], State.t["copy_id"]),
+            ),
             on_click=State.copy_my_id,
             style={
                 "flex_shrink": "0",
@@ -3562,6 +3599,7 @@ def chat_screen() -> rx.Component:
                             "font_size": "0.78rem",
                             "color": COLOR["muted_ink"],
                             "word_break": "break-all",
+                            "user_select": "all",
                         },
                     ),
                     spacing="1",
@@ -3570,7 +3608,15 @@ def chat_screen() -> rx.Component:
                     min_width="0",
                 ),
                 rx.button(
-                    rx.cond(State.copied_circle_id, State.t["copied_id"], State.t["copy_id"]),
+                    rx.cond(
+                        State.copied_circle_id,
+                        State.t["copied_id"],
+                        rx.cond(
+                            State.copy_circle_id_failed,
+                            State.t["copy_failed"],
+                            State.t["copy_id"],
+                        ),
+                    ),
                     on_click=State.copy_circle_id,
                     style={
                         "flex_shrink": "0",
