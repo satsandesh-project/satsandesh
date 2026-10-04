@@ -1,10 +1,12 @@
 {
   "author_id": "user-elder-42",
-  "contract_version": "0.5.0",
+  "contract_version": "0.6.0",
   "created_at": "2026-08-17T09:00:00Z",
   "id": "msg-01H8X5Q7Z1",
   "kind": "text",
   "media_ref": null,
+  "moderation_notice": null,
+  "moderation_notice_language": null,
   "renderings": [
     {
       "audio": {
