@@ -211,6 +211,8 @@ TEXTS = {
         "status_sent": "Sent",
         "status_delivered": "Delivered",
         "status_cancelled": "Cancelled",
+        "status_held": "Waiting for review",
+        "status_blocked": "Not sent",
         "quiet_hours_title": "Quiet hours",
         "quiet_hours_hint": "No message sounds or push alerts between these times.",
         "quiet_hours_start_label": "Starts",
@@ -297,6 +299,8 @@ TEXTS = {
         "status_sent": "పంపబడింది",
         "status_delivered": "అందింది",
         "status_cancelled": "రద్దు చేయబడింది",
+        "status_held": "సమీక్ష కోసం వేచి ఉంది",
+        "status_blocked": "పంపబడలేదు",
         "quiet_hours_title": "నిశ్శబ్ద సమయం",
         "quiet_hours_hint": "ఈ సమయాల మధ్య సందేశ శబ్దాలు లేదా పుష్ నోటిఫికేషన్లు రావు.",
         "quiet_hours_start_label": "మొదలు",
@@ -490,8 +494,21 @@ window.__satsandeshWsInit = true;
     return window.__satConversations[contactId];
   }
 
+  // The message's own status words, in the UI language (this JS is built once, so it is
+  // handed both languages and picks by the current one -- it used to be English only).
+  const STATUS_TEXT = %(status_text)s;
+  function statusWord(key) {
+    const ui = (window.__satPrefs && window.__satPrefs.ui) || "en";
+    return (STATUS_TEXT[ui] || STATUS_TEXT.en)[key];
+  }
+
   function statusLabel(msg) {
-    if (msg.status === "cancelled") return %(status_cancelled)s;
+    if (msg.status === "cancelled") return statusWord("status_cancelled");
+    // Set aside by the pipeline or a moderator. The sender is told only that it did not go
+    // out yet or at all -- the gateway has no wire surface for a reason, and the label must
+    // not invite a tap (only a pending message can be cancelled).
+    if (msg.status === "held") return statusWord("status_held");
+    if (msg.status === "blocked") return statusWord("status_blocked");
     // Set by handleFrame's "error" branch below when the server rejects a
     // message.send -- correlated back to this specific bubble via
     // client_msg_id, since without that the bubble would otherwise sit
@@ -509,9 +526,9 @@ window.__satsandeshWsInit = true;
     ) {
       return msg.delivered_count + "/" + msg.member_count;
     }
-    if (msg.status === "delivered") return %(status_delivered)s;
-    if (msg.status === "sent") return %(status_sent)s;
-    return %(status_pending)s;
+    if (msg.status === "delivered") return statusWord("status_delivered");
+    if (msg.status === "sent") return statusWord("status_sent");
+    return statusWord("status_pending");
   }
 
   // ---- Week 7: the receiver experience ----------------------------------
@@ -802,7 +819,8 @@ window.__satsandeshWsInit = true;
         const status = document.createElement("div");
         status.style.fontSize = "12px";
         status.style.marginTop = "4px";
-        const isCancelledOrFailed = msg.status === "cancelled" || msg.status === "failed";
+        const isCancelledOrFailed =
+          msg.status === "cancelled" || msg.status === "failed" || msg.status === "blocked";
         status.style.color = isCancelledOrFailed ? "#8A3E0F" : "#6E6047";
         status.style.fontStyle = isCancelledOrFailed ? "italic" : "normal";
         status.textContent = statusLabel(msg);
@@ -1389,6 +1407,15 @@ LOAD_PREFS_JS = """
 
 # The words the chat JS needs when it draws a message (it is built once, outside
 # Reflex, so it gets both languages up front and picks by the current UI language).
+STATUS_TEXT_KEYS = (
+    "status_pending",
+    "status_sent",
+    "status_delivered",
+    "status_cancelled",
+    "status_held",
+    "status_blocked",
+)
+
 RECEIVER_TEXT_KEYS = (
     "recv_show_original",
     "recv_show_translation",
@@ -1430,22 +1457,72 @@ LOAD_SETTINGS_JS_TEMPLATE = """
 SAVE_SETTINGS_JS_TEMPLATE = """
 (async () => {
     const toWire = (hhmm) => (hhmm ? hhmm + ":00" : null);
+    // Quiet hours are only enforced for a user who has a timezone (the gateway will not
+    // assume UTC), so a saved window with none would be stored and never applied.
+    let zone = null;
+    try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) {}
+    const body = {
+        quiet_hours_start: toWire(%(start)s),
+        quiet_hours_end: toWire(%(end)s),
+        preferred_language: %(preferred_language)s,
+        tts_on: %(tts_on)s,
+    };
+    if (zone) body.timezone = zone;
+    const send = () => fetch(%(gateway_url)s + "/me/settings", {
+        method: "PATCH",
+        headers: {
+            Authorization: "Bearer " + window.__satToken,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+    });
     try {
-        const resp = await fetch(%(gateway_url)s + "/me/settings", {
-            method: "PATCH",
-            headers: {
-                Authorization: "Bearer " + window.__satToken,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                quiet_hours_start: toWire(%(start)s),
-                quiet_hours_end: toWire(%(end)s),
-                preferred_language: %(preferred_language)s,
-                tts_on: %(tts_on)s,
-            }),
-        });
+        let resp = await send();
+        // A timezone name the gateway does not know is a 422 for the WHOLE request, which
+        // would throw away the quiet hours / language / speech the person just saved too.
+        // Retry once without it: the rest is worth saving even if the zone is not.
+        if (resp.status === 422 && body.timezone) {
+            delete body.timezone;
+            resp = await send();
+        }
         if (!resp.ok) return "error:" + resp.status;
         return "ok";
+    } catch (err) {
+        return "error:network";
+    }
+})()
+"""
+
+# Saves the content language or speech on/off the moment it is changed. They used to reach
+# the server only when the Save button was pressed, and now that the gateway's /me/settings
+# exists its values win on load -- so an elder who picked Hindi and did not press Save would
+# be put back to Telugu on the next visit. Only the field that just changed is sent (never
+# the other one from current state: two quick taps arriving out of order could otherwise store
+# the older value), and never quiet hours (a half-typed time must not be saved). A failure is
+# silent: the choice is already applied and kept in localStorage, and Save still works.
+SAVE_PREFS_JS_TEMPLATE = """
+(async () => {
+    const body = %(fields)s;
+    let zone = null;
+    try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) {}
+    if (zone) body.timezone = zone;
+    const send = () => fetch(%(gateway_url)s + "/me/settings", {
+        method: "PATCH",
+        headers: {
+            Authorization: "Bearer " + window.__satToken,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+    });
+    try {
+        let resp = await send();
+        // An unknown timezone name is a 422 for the whole request and would lose the change
+        // being saved; retry once without it.
+        if (resp.status === 422 && body.timezone) {
+            delete body.timezone;
+            resp = await send();
+        }
+        return resp.ok ? "ok" : "error:" + resp.status;
     } catch (err) {
         return "error:network";
     }
@@ -1770,6 +1847,9 @@ class State(rx.State):
             "undo_window_seconds": UNDO_WINDOW_SECONDS,
             "connecting": json.dumps(TEXTS["en"]["connecting"]),
             "no_messages": json.dumps(TEXTS["en"]["no_messages"]),
+            "status_text": json.dumps(
+                {lang: {key: TEXTS[lang][key] for key in STATUS_TEXT_KEYS} for lang in ("en", "te")}
+            ),
             "status_pending": json.dumps(TEXTS["en"]["status_pending"]),
             "status_sent": json.dumps(TEXTS["en"]["status_sent"]),
             "status_delivered": json.dumps(TEXTS["en"]["status_delivered"]),
@@ -2062,12 +2142,21 @@ class State(rx.State):
     def set_preferred_language_input(self, value: str):
         self.preferred_language_input = value
         self.settings_saved = False
-        return self._sync_prefs()
+        return [self._sync_prefs(), self._save_prefs("preferred_language")]
 
     def set_tts_on_input(self, value: bool):
         self.tts_on_input = value
         self.settings_saved = False
-        return self._sync_prefs()
+        return [self._sync_prefs(), self._save_prefs("tts_on")]
+
+    def _save_prefs(self, field: str):
+        """Save ONE changed setting (`preferred_language` or `tts_on`) to the gateway now."""
+        fields = {"preferred_language": self.preferred_language_input, "tts_on": self.tts_on_input}
+        js = SAVE_PREFS_JS_TEMPLATE % {
+            "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
+            "fields": json.dumps({field: fields[field]}),
+        }
+        return rx.call_script(js)
 
     def set_autoplay_input(self, value: bool):
         self.autoplay_input = value
