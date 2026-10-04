@@ -102,7 +102,6 @@ def _view(token: str, circle_id: str) -> list[dict]:
 def cmd_run(path: str, label: str, source_lang: str, circle_id: str, timeout_s: float) -> None:
     with open(path, "rb") as f:
         data = f.read()
-    t0 = time.time()
     up = httpx.post(
         f"{BASE}/media",
         params={"format": "webm_opus", "duration_ms": 5000},
@@ -128,7 +127,13 @@ def cmd_run(path: str, label: str, source_lang: str, circle_id: str, timeout_s: 
     resp.raise_for_status()
     ack = resp.json()
     sent_at = time.time()
-    emit(event="sent", label=label, source_lang=source_lang, message_id=ack["id"], status=ack["status"])
+    emit(
+        event="sent",
+        label=label,
+        source_lang=source_lang,
+        message_id=ack["id"],
+        status=ack["status"],
+    )
 
     pending = dict(RECIPIENTS)
     seen_not_visible = {n: 0 for n in RECIPIENTS}
