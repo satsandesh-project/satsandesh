@@ -24,9 +24,10 @@ import asyncio
 import hashlib
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import NoReturn
+from typing import NoReturn, TypeVar
 from urllib.parse import unquote, urlparse
 
 from contracts.ai.language import LanguageCode
@@ -59,6 +60,9 @@ from app.jobs import PermanentJobError
 from app.media_storage import get_media_storage
 
 logger = logging.getLogger(__name__)
+
+_Request = TypeVar("_Request")
+_Response = TypeVar("_Response")
 
 JOB_TYPE = "process_message"
 
@@ -205,6 +209,22 @@ def _source_language(message: Message, author: User) -> str | None:
     return None
 
 
+def _ai(session: Session, call: Callable[[_Request], _Response], request: _Request) -> _Response:
+    """Make one AI call with NO database transaction open.
+
+    Postgres kills this app's connections after 30 s "idle in transaction"
+    (app/db/base.py). Every read here autobegins a transaction, so a call made
+    with one open sits idle in it for as long as the service takes -- and the
+    real ASR took 37 s on a Telugu note, after which the next write failed with
+    "server closed the connection unexpectedly", on every retry, until the job
+    died. Committing first ends the transaction (a no-op if there is none;
+    stage results are written and committed as they happen, so nothing is lost
+    by it). The next read just starts a new one.
+    """
+    session.commit()
+    return call(request)
+
+
 def _fail_or_retry(exc: AiCallError) -> NoReturn:
     """Retryable -> let the worker back off; anything else cannot be fixed by
     retrying the identical request."""
@@ -251,8 +271,10 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
                 declared = _primary_subtag(message.source_lang)
                 hint = LanguageCode(declared) if declared in SUPPORTED_LANGUAGES else None
                 try:
-                    transcribed = client.transcribe(
-                        TranscribeRequest(audio=audio, language_hint=hint)
+                    transcribed = _ai(
+                        session,
+                        client.transcribe,
+                        TranscribeRequest(audio=audio, language_hint=hint),
                     )
                 except AiCallError as exc:
                     _fail_or_retry(exc)
@@ -286,8 +308,10 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
                     "cannot translate: no supported language for the message or its author"
                 )
             try:
-                pivoted = client.pivot(
-                    PivotRequest(text=source_text, source_language=LanguageCode(source_language))
+                pivoted = _ai(
+                    session,
+                    client.pivot,
+                    PivotRequest(text=source_text, source_language=LanguageCode(source_language)),
                 )
             except AiCallError as exc:
                 _fail_or_retry(exc)
@@ -304,12 +328,14 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
 
         # -- 3. moderate --------------------------------------------------------------------------
         try:
-            decision = client.moderate(ModerationRequest(text=message.pivot_text_en))
+            decision = _ai(
+                session, client.moderate, ModerationRequest(text=message.pivot_text_en)
+            )
         except AiCallError as exc:
             _fail_or_retry(exc)
         notice = None
         if decision.action is not ModerationAction.ALLOW and decision.nudge_text:
-            notice = _translate_notice(client, decision, author)
+            notice = _translate_notice(session, client, decision, author)
         event = record_classifier_decision(
             session, message_id=message_id, decision=decision, notice_text=notice
         )
@@ -366,11 +392,13 @@ def _render_missing(
     if not missing:
         return
     try:
-        rendered = client.render(
+        rendered = _ai(
+            session,
+            client.render,
             RenderRequest(
                 pivot_text=message.pivot_text_en,
                 target_languages=[LanguageCode(language) for language in missing],
-            )
+            ),
         )
     except AiCallError as exc:
         _fail_or_retry(exc)
@@ -464,7 +492,9 @@ def _ingest_rendering_audio(
     return row.id
 
 
-def _translate_notice(client: AiClient, decision: ModerationDecision, author: User) -> str | None:
+def _translate_notice(
+    session: Session, client: AiClient, decision: ModerationDecision, author: User
+) -> str | None:
     """The classifier's notice is an English master (the mock's is Telugu).
     Returns it in the sender's language, or None -- recorded honestly as 'no
     notice produced' -- rather than the untranslated text passed off as what
@@ -475,8 +505,10 @@ def _translate_notice(client: AiClient, decision: ModerationDecision, author: Us
     if decision.nudge_language is not None and decision.nudge_language.value == target:
         return decision.nudge_text
     try:
-        rendered = client.render(
-            RenderRequest(pivot_text=decision.nudge_text, target_languages=[LanguageCode(target)])
+        rendered = _ai(
+            session,
+            client.render,
+            RenderRequest(pivot_text=decision.nudge_text, target_languages=[LanguageCode(target)]),
         )
     except AiCallError as exc:
         logger.warning("could not translate the moderation notice: %s", exc)
