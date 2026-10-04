@@ -19,6 +19,7 @@ from app.onboarding import router as onboarding_router
 from app.push import router as push_router
 from app.recovery import recover_pending_fan_outs
 from app.retention import run_retention_sweep_loop
+from app.users import router as users_router
 from app.ws import router as ws_router
 
 # Called at import time, not inside a request handler: a missing DATABASE_URL
@@ -94,6 +95,7 @@ app.include_router(push_router)
 app.include_router(audio_labels_router)
 app.include_router(media_router)
 app.include_router(moderation_router)
+app.include_router(users_router)
 
 
 @app.get("/health")

@@ -34,6 +34,7 @@ from contracts.chat.errors import ErrorCode, ErrorPayload
 from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
 from contracts.chat.renderings import LANGUAGE_PATTERN, Rendering, RenderingDegradedReason
+from contracts.chat.users import UserSettingsOut, UserSettingsUpdate
 
 app = FastAPI(title="SatSandesh Chat — Mock Gateway", version="0.1.0")
 
@@ -145,6 +146,13 @@ def _make_renderings(msg: MessageIn, status: MessageStatus) -> list[Rendering]:
             Rendering(language=language, text=text, audio=audio, degraded_reason=reason)
         )
     return renderings
+
+
+# Week 7: GET/PATCH /me/settings, in memory per X-Mock-User-Id. Same
+# omitted-vs-null rule as the real route: a field the PATCH omits is left alone,
+# an explicit null clears it. (No language/timezone allow-list here -- the mock
+# has no pipeline and no IANA database to answer to.)
+_settings: dict[str, UserSettingsOut] = {}
 
 
 async def _sleep_for_latency(x_mock_latency_ms: str | None) -> None:
@@ -308,6 +316,32 @@ async def fetch_media(media_id: str) -> Response:
         raise HTTPException(status_code=404, detail="media not found")
     body, media_format = stored
     return Response(content=body, media_type=_MEDIA_CONTENT_TYPE[media_format])
+
+
+@app.get("/me/settings", response_model=UserSettingsOut)
+async def get_my_settings(
+    x_mock_user_id: str = Header(default="mock-user-1"),
+    x_mock_latency_ms: str | None = Header(default=None),
+) -> UserSettingsOut:
+    await _sleep_for_latency(x_mock_latency_ms)
+    return _settings.get(x_mock_user_id) or UserSettingsOut(preferred_language="te", tts_on=True)
+
+
+@app.patch("/me/settings", response_model=UserSettingsOut)
+async def patch_my_settings(
+    update: UserSettingsUpdate,
+    x_mock_user_id: str = Header(default="mock-user-1"),
+    x_mock_latency_ms: str | None = Header(default=None),
+) -> UserSettingsOut:
+    await _sleep_for_latency(x_mock_latency_ms)
+    current = _settings.get(x_mock_user_id) or UserSettingsOut(preferred_language="te", tts_on=True)
+    changes = {
+        field: getattr(update, field)
+        for field in update.model_fields_set
+        if field != "contract_version"
+    }
+    _settings[x_mock_user_id] = current.model_copy(update=changes)
+    return _settings[x_mock_user_id]
 
 
 @app.websocket("/ws")

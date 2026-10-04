@@ -3,7 +3,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
 
-CONTRACTS_VERSION = "0.4.0"
+CONTRACTS_VERSION = "0.5.0"
 """
 Schema-shape version for everything in contracts/chat/. Mirrors
 contracts/ai/common.CONTRACTS_VERSION in purpose — bump when any field is
@@ -25,6 +25,9 @@ and DECISIONS.md #16.
 
 0.3.0 -> 0.4.0 (Week 7): MessageOut gained `transcript` / `transcript_language`
 (additive, default null) — see DECISIONS.md #17.
+
+0.4.0 -> 0.5.0 (Week 7): new payloads for `GET/PATCH /me/settings`
+(contracts/chat/users.py). No existing payload changed.
 """
 
 

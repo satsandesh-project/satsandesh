@@ -1,0 +1,8 @@
+{
+  "contract_version": "0.5.0",
+  "preferred_language": "hi",
+  "quiet_hours_end": "07:00:00",
+  "quiet_hours_start": "22:00:00",
+  "timezone": null,
+  "tts_on": false
+}
