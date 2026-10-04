@@ -15,6 +15,7 @@ from contracts.chat.envelope import SyncBatch, SyncRequest
 from contracts.chat.errors import ErrorPayload
 from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
+from contracts.chat.users import UserSettingsOut, UserSettingsUpdate
 from pydantic import BaseModel
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "chat"
@@ -31,6 +32,8 @@ MODELS_BY_FIXTURE: dict[str, type[BaseModel]] = {
     "sync_batch.json": SyncBatch,
     "error_payload.json": ErrorPayload,
     "media_upload_out.json": MediaUploadOut,
+    "user_settings_out.json": UserSettingsOut,
+    "user_settings_update.json": UserSettingsUpdate,
 }
 
 

@@ -359,3 +359,24 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     a status flip. Options: a release re-enqueues the missing stages (writes are guarded
     to `pending`, so this needs a deliberate "reopen" path), or accept original-only for
     that case. Not decided.
+
+28. **Quiet hours are saved but never enforced until the client sends a timezone.**
+    `GET/PATCH /me/settings` now exists (`app/users.py`) and the elder app's existing
+    PATCH (start, end, language, tts) works against it unchanged. But `is_quiet_hours`
+    returns False for a user with no `timezone` (it will not assume UTC), and the client
+    sends none -- so a window an elder carefully sets has no effect on push. The fix is one
+    line on the client (M1): send `Intl.DateTimeFormat().resolvedOptions().timeZone` with the
+    first PATCH. Not done here (`clients/elder-app/` is M1's). A server-side fallback (guess a
+    zone from the request) was rejected: a wrong guess suppresses or sends a push at the
+    wrong hour with no error anywhere.
+
+29. **What still blocks switching the pipeline on for real users** (after this change,
+    `/me/settings` no longer does): real JWT verification (the moderator routes and held-audio
+    access rest on a stub identity, #23); M1's `timezone` on `/me/settings` (#28; #92, which
+    sends `source_lang` so typed messages are not all treated as Telugu, has since merged);
+    M4's answers (#24) and a notice surface
+    for a held sender (#18); and M3's ASR choice, `webm_opus` handling and the
+    hallucinated-transcript problem (#2, #11, #26). Also: Caddy now routes `/me/settings` and
+    `/audio-labels/*` to the gateway, but still not `/onboarding*` or `/push*` (the elder app
+    does not call them -- the first client to implement push or QR onboarding needs those
+    routes), and deliberately not `/moderation*`.

@@ -101,8 +101,9 @@ def test_a_transcript_survives_a_round_trip_and_a_sync_batch() -> None:
     assert again.messages[0].transcript_language == "te"
 
 
-def test_the_contract_version_was_bumped_for_the_new_fields() -> None:
-    assert CONTRACTS_VERSION == "0.4.0"
+def test_the_contract_version_is_stamped_on_messages() -> None:
+    # The literal is pinned once, in test_contracts_chat_users.py (the latest bump).
+    assert _voice().contract_version == CONTRACTS_VERSION
 
 
 # --- the mock --------------------------------------------------------------------------

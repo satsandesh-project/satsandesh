@@ -23,6 +23,18 @@
 	handle /me {
 		reverse_proxy gateway:8000
 	}
+	# GET/PATCH /me/settings (Week 7, services/gateway/app/users.py). `/me` above
+	# is an EXACT match, so without this a request for /me/settings fell through
+	# to the catch-all and got the elder-app's own 404 page instead of the gateway.
+	handle /me/settings {
+		reverse_proxy gateway:8000
+	}
+	# GET /audio-labels/{label} (Week 4, app/audio_labels.py). The elder app calls
+	# it for every hold-to-hear button and it was never routed here, so on any
+	# Caddy deployment those buttons reached the elder-app's 404 page.
+	handle /audio-labels/* {
+		reverse_proxy gateway:8000
+	}
 	handle /ws {
 		reverse_proxy gateway:8000
 	}

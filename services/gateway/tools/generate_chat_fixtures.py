@@ -24,6 +24,7 @@ from contracts.chat.errors import ErrorCode, ErrorPayload
 from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
 from contracts.chat.renderings import Rendering, RenderingDegradedReason
+from contracts.chat.users import UserSettingsOut, UserSettingsUpdate
 from pydantic import BaseModel
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "chat"
@@ -166,6 +167,27 @@ def main() -> None:
             code=ErrorCode.NOT_FOUND,
             message="circle 'circle-does-not-exist' does not exist",
             detail={"circle_id": "circle-does-not-exist"},
+        ),
+    )
+
+    _write(
+        "user_settings_out.json",
+        UserSettingsOut(
+            preferred_language="hi",
+            tts_on=False,
+            quiet_hours_start="22:00:00",
+            quiet_hours_end="07:00:00",
+            timezone="Asia/Kolkata",
+        ),
+    )
+    # The body the elder app sends: all four fields, times as "HH:MM:SS".
+    _write(
+        "user_settings_update.json",
+        UserSettingsUpdate(
+            preferred_language="hi",
+            tts_on=False,
+            quiet_hours_start="22:00:00",
+            quiet_hours_end="07:00:00",
         ),
     )
 

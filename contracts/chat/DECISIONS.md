@@ -486,3 +486,32 @@ that is M4's shape to change.
 
 **Reversal cost:** Low (default null; a consumer that never read it is
 unaffected).
+
+## 18. `GET/PATCH /me/settings`; `CONTRACTS_VERSION` bumped to `0.5.0`
+
+The elder app has called these since Week 5 and failed soft because the gateway had no
+such route. `contracts/chat/users.py` is the shape it already sends and reads, so the client
+needs no change. No existing payload changed; the bump is for the new ones.
+
+**Omitted vs null.** PATCH keeps the two apart (`model_fields_set`): omitted = leave alone,
+explicit null = clear. The client depends on it -- an emptied quiet-hours `<input type=time>`
+must clear the stored time, not leave the old one. Two fields cannot be cleared
+(`preferred_language`, `tts_on`: NOT NULL in the database), so an explicit null for either is
+refused as a client bug rather than quietly ignored.
+
+**What the contract does not validate, and why.** Whether a language is one the pipeline can
+render needs `contracts/ai/` (this package must not import it, #5); whether a timezone is a
+real IANA name needs the tz database, which lives with the gateway. Both are checked in the
+route and answer 422 -- a well-formed `ta` would otherwise be stored and silently skipped by
+the orchestrator, and a bogus zone would raise inside a push instead of here.
+
+**`tts_on` is a strict bool.** The client sends JSON `true`/`false`; a lax bool would turn
+the string `"false"` into `False` and `"yes"` into `True` and hide a client bug.
+
+**Quiet hours need a timezone to do anything.** `app/push.py::is_quiet_hours` returns False
+for a user with no timezone (it cannot compute local time and refuses to assume UTC). The
+client does not send one yet, so today a saved window is stored and never enforced. `timezone`
+is therefore part of this contract (optional, settable, clearable) even though no client sends
+it -- see the gateway's OPEN_QUESTIONS #28.
+
+**Reversal cost:** low (new routes and models; a client that never calls them is unaffected).

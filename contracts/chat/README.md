@@ -8,7 +8,7 @@ mirrors their conventions (golden fixtures, mock latency headers,
 `CONTRACTS_VERSION`, `DECISIONS.md`/`OPEN_QUESTIONS.md`) so the two contract
 folders read as siblings, not as two different projects.
 
-Contract shape version: `CONTRACTS_VERSION = "0.4.0"`
+Contract shape version: `CONTRACTS_VERSION = "0.5.0"`
 (`contracts/chat/common.py`). Every request/response/frame-data payload
 carries `contract_version` so you can tell which shape you're looking at as
 this evolves week to week. Independent of `contracts/ai/`'s version counter
@@ -158,7 +158,7 @@ merge logic doesn't need two code paths for the two transports.
 Request (`MessageIn`):
 ```json
 {
-  "contract_version": "0.4.0",
+  "contract_version": "0.5.0",
   "client_msg_id": "8f14e45f-ceea-467e-adde-3fb5d3a5fa1c",
   "target_type": "circle",
   "target_id": "circle-satsang-evening",
@@ -177,7 +177,7 @@ package doesn't import `contracts/ai/`.
 Response (`AckOut`):
 ```json
 {
-  "contract_version": "0.4.0",
+  "contract_version": "0.5.0",
   "client_msg_id": "8f14e45f-ceea-467e-adde-3fb5d3a5fa1c",
   "id": "msg-01H8X5Q7Z1",
   "status": "pending"
@@ -192,12 +192,12 @@ full history. `limit` defaults to 50, capped at 200.
 Response (`SyncBatch`):
 ```json
 {
-  "contract_version": "0.4.0",
+  "contract_version": "0.5.0",
   "target_type": "circle",
   "target_id": "circle-satsang-evening",
   "messages": [
     {
-      "contract_version": "0.4.0",
+      "contract_version": "0.5.0",
       "id": "msg-01H8X5Q7Z1",
       "author_id": "user-elder-42",
       "target_type": "circle",
@@ -228,12 +228,12 @@ rendered the message — see "Renderings" below.
 
 `POST /circles` request (`CircleCreate`):
 ```json
-{ "contract_version": "0.4.0", "name": "Evening Satsang" }
+{ "contract_version": "0.5.0", "name": "Evening Satsang" }
 ```
 Response (`Circle`):
 ```json
 {
-  "contract_version": "0.4.0",
+  "contract_version": "0.5.0",
   "id": "circle-satsang-evening",
   "name": "Evening Satsang",
   "created_by": "user-moderator-1",
@@ -247,7 +247,7 @@ it can't be spoofed by a client.
 
 Request (`MembershipCreate`):
 ```json
-{ "contract_version": "0.4.0", "user_id": "user-elder-42", "role": "member" }
+{ "contract_version": "0.5.0", "user_id": "user-elder-42", "role": "member" }
 ```
 `role` defaults to `member` if omitted. `circle_id` on the response comes
 from the URL path, not the body.
@@ -255,7 +255,7 @@ from the URL path, not the body.
 Response (`Membership`):
 ```json
 {
-  "contract_version": "0.4.0",
+  "contract_version": "0.5.0",
   "circle_id": "circle-satsang-evening",
   "user_id": "user-elder-42",
   "role": "member",
@@ -283,7 +283,7 @@ client's own recorder already knows.
 Response (`MediaUploadOut`):
 ```json
 {
-  "contract_version": "0.4.0",
+  "contract_version": "0.5.0",
   "uri": "media:7c1e6e2a-9b0e-4c4a-8f2e-4a2e6b1c9d3a",
   "format": "webm_opus",
   "duration_ms": 4200
@@ -370,6 +370,42 @@ language reads the matching rendering instead (`DECISIONS.md` #17).
 
 The real gateway does not emit renderings yet — that is the Week 7
 orchestrator's job; this contract is what it will fill in.
+
+## User settings (Week 7)
+
+`GET /me/settings` and `PATCH /me/settings` -- the signed-in user's own settings
+(`contracts/chat/users.py`). The elder app has called these since Week 5; the shapes
+are what it already sends and reads.
+
+Response (`UserSettingsOut`, also returned by a successful PATCH):
+```json
+{
+  "contract_version": "0.5.0",
+  "preferred_language": "hi",
+  "tts_on": false,
+  "quiet_hours_start": "22:00:00",
+  "quiet_hours_end": "07:00:00",
+  "timezone": "Asia/Kolkata"
+}
+```
+`PATCH` body (`UserSettingsUpdate`): every field optional. A field you **omit** is left
+alone; a field you set to **`null`** is cleared (that is how an emptied quiet-hours input
+clears the saved time). `preferred_language` and `tts_on` cannot be cleared -- an explicit
+`null` is a 422.
+
+- `preferred_language` is a bare lowercase subtag (`en`, `hi`, `te`) and must be one the
+  pipeline can render, else 422. It is what a *receiver* wants incoming messages rendered
+  **into** -- not what they speak, and not the app's own UI language.
+- `tts_on` must be a real JSON boolean.
+- `timezone` must be an IANA name (`Asia/Kolkata`), else 422.
+- **Quiet hours are only enforced for a user who has a `timezone`.** With none, push cannot
+  work out the person's local time and never suppresses, so a window saved without one has no
+  effect. A client should send the browser's zone with the first PATCH
+  (`Intl.DateTimeFormat().resolvedOptions().timeZone`). With a zone but no
+  `quiet_hours_start`/`_end`, push uses 20:00-07:00.
+- A token that is not a user id (the stub's fixed fallback identity) has no settings: 404.
+
+The chat mock serves the same two routes, in memory per `X-Mock-User-Id`.
 
 ## WebSocket envelope
 
