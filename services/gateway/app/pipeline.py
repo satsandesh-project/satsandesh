@@ -328,9 +328,7 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
 
         # -- 3. moderate --------------------------------------------------------------------------
         try:
-            decision = _ai(
-                session, client.moderate, ModerationRequest(text=message.pivot_text_en)
-            )
+            decision = _ai(session, client.moderate, ModerationRequest(text=message.pivot_text_en))
         except AiCallError as exc:
             _fail_or_retry(exc)
         notice = None
