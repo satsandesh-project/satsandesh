@@ -633,3 +633,27 @@ the server for its DB-backed tests (the local Python lacks
 - My new paging test failed on the fixed code and for a moment looked like a bug
   in the fix; it was the wrong query-parameter name (`since` vs the route's
   `since_id`), which in turn exposed the README/gateway mismatch (OPEN_QUESTIONS #25).
+
+## Week 7 Phase 7 -- the AI services in compose, and a proof (`feat/m2-week7-compose-ai`)
+
+- **My first proof run was worthless and I nearly reported it.** It used a 2 s undo
+  window, and the CPU pipeline finished inside it, so "the recipient saw nothing until
+  the pipeline finished" was true for a reason that had nothing to do with the delivery
+  gate. Caught by looking at the timings (visible after ~1 s) instead of the "pass".
+  Re-run with `UNDO_WINDOW_SECONDS=0`, which makes delivery fire before the pipeline
+  can have finished: now the result can only be the gate.
+- **My tooling destroyed its own evidence.** `tee /dev/stderr` re-opens the log file
+  (stderr was redirected into it) with truncation, wiping the output of the first two
+  scenarios and leaving NUL bytes. Noticed because a `grep` said "Binary file matches".
+  The scenarios were re-run, not reconstructed from memory.
+- The same log exposed a setup bug (every moderation call was 403): the stub auth only
+  flushes a new user row, and a request that ends in 403 rolls it back, so "provision
+  by first request, then UPDATE the role" updated zero rows. Users are now inserted
+  directly.
+- **Two things I expected to work did not, and both are real findings, not test bugs:**
+  the real ASR transcribed a sine tone as "Beep" and digital silence as "You" (so the
+  "no speech -> hold" path never fires; OPEN_QUESTIONS #26), and a released
+  pipeline-failure hold carries no renderings (#27). I rewrote the scenario around
+  what the system actually does instead of re-tuning the input until it "held".
+- Found along the way, fixed separately (#93): the sync read path leaked messages that
+  were not out.

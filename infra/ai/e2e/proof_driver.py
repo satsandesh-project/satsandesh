@@ -143,32 +143,40 @@ def cmd_mine(message_id: str) -> None:
 
 def cmd_queue() -> None:
     r = httpx.get(f"{BASE}/moderation/queue", headers=_auth(MOD), timeout=30)
-    emit(event="queue", http=r.status_code, items=[
-        {
-            "message_id": i["message_id"],
-            "event_count": i["event_count"],
-            "latest_actor": i["latest_event"]["actor_kind"],
-            "latest_action": i["latest_event"]["action"],
-            "rationale": i["latest_event"]["rationale"],
-            "has_audio": i["original_media_ref"] is not None,
-        }
-        for i in (r.json().get("items", []) if r.status_code == 200 else [])
-    ])
+    emit(
+        event="queue",
+        http=r.status_code,
+        items=[
+            {
+                "message_id": i["message_id"],
+                "event_count": i["event_count"],
+                "latest_actor": i["latest_event"]["actor_kind"],
+                "latest_action": i["latest_event"]["action"],
+                "rationale": i["latest_event"]["rationale"],
+                "has_audio": i["original_media_ref"] is not None,
+            }
+            for i in (r.json().get("items", []) if r.status_code == 200 else [])
+        ],
+    )
 
 
 def cmd_events(message_id: str) -> None:
     r = httpx.get(f"{BASE}/moderation/messages/{message_id}/events", headers=_auth(MOD), timeout=30)
-    emit(event="events", http=r.status_code, trail=[
-        {
-            "actor": e["actor_kind"],
-            "action": e["action"],
-            "label": e["label"],
-            "degraded": e["degraded"],
-            "policy": e["policy_version"],
-            "model": e["model_version"],
-        }
-        for e in (r.json().get("events", []) if r.status_code == 200 else [])
-    ])
+    emit(
+        event="events",
+        http=r.status_code,
+        trail=[
+            {
+                "actor": e["actor_kind"],
+                "action": e["action"],
+                "label": e["label"],
+                "degraded": e["degraded"],
+                "policy": e["policy_version"],
+                "model": e["model_version"],
+            }
+            for e in (r.json().get("events", []) if r.status_code == 200 else [])
+        ],
+    )
 
 
 def cmd_release(message_id: str) -> None:

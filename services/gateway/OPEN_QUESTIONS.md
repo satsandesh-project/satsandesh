@@ -342,3 +342,20 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     a message's *author* still reads their own held/blocked text, which is
     intended (their screen needs it) but means "held" is hidden from
     recipients, not from the sender.
+
+26. **The real ASR hallucinates words from non-speech, so "no speech -> hold" never
+    fires.** Found by the end-to-end proof (`infra/ai/README.md`): faster-whisper `small`
+    transcribed a 2 s sine tone as **"Beep"** and 3 s of digital silence as **"You"**. The
+    orchestrator's rule (an empty transcript is held for a person, never delivered
+    unclassified) is correct but is never triggered by this ASR; a silent or noisy note is
+    delivered with a junk transcript, and moderation rules on a meaningless pivot. The
+    place to fix it is `services/ai/speech/` (M3: VAD / no-speech filtering in the engine),
+    not the gateway; recorded here because the gateway's safety story leans on it.
+
+27. **Releasing a pipeline-failure hold does not re-run the pipeline.** In the proof, a
+    message whose pipeline died at the moderation stage (service down) was held with a
+    SYSTEM event; once a moderator released it, the recipient received it with its
+    transcript but **no renderings**, because the render stage never ran and a release is
+    a status flip. Options: a release re-enqueues the missing stages (writes are guarded
+    to `pending`, so this needs a deliberate "reopen" path), or accept original-only for
+    that case. Not decided.
