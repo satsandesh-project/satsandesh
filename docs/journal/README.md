@@ -3,7 +3,7 @@
 **Owner of the convention:** M4 Sainathan (Stewardship, quality & pilot)
 **Status:** v1, 2026-09-22 — Month-1 Week-1 deliverable ("prompt-journal
 template"), delivered late. Consolidates three conventions that had drifted
-apart: the one-row table in `CLAUDE/CLAUDE.md`, the
+apart: the one-row table in `CLAUDE.md`, the
 `docs/journal/<your-name>.md` rule in `docs/CONVENTIONS.md`, and the
 free-form entries M2 and the gateway sessions were actually writing.
 
@@ -37,7 +37,7 @@ than moved, so nobody's history gets rewritten by someone else's PR.
   lists this under "Before every PR".
 - Any architecture or policy decision Claude Code was involved in, merged or
   not — a rejected suggestion is often the most useful entry.
-- Any session that ended blocked or at a usage limit (`CLAUDE/CLAUDE.md`,
+- Any session that ended blocked or at a usage limit (`CLAUDE.md`,
   "Working with a shared Claude Pro account"): record where you stopped so
   the next person, or you tomorrow, can pick it up.
 - Not for: formatting-only fixes, typo commits, `ruff` nudges.

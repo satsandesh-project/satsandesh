@@ -2,7 +2,7 @@
 
 **Owner:** M4 Sainathan (Stewardship, quality & pilot)
 **Status:** v1 — Month-1 Week-1 deliverable, delivered late (Week 5). Supersedes the
-five-bullet "Security checklist" section in `CLAUDE/CLAUDE.md`, which now points here.
+five-bullet "Security checklist" section in `CLAUDE.md`, which now points here.
 
 This document is used in two ways:
 
@@ -54,7 +54,7 @@ it was checked against the repository on 2026-09-22.
 - [ ] **No real elder or pilot data in prompts, fixtures or tests.** Fixtures
       under `*/tests/fixtures/` use invented names and text. Nothing from
       interviews or the pilot is pasted into a Claude Code prompt (shared
-      account — see `CLAUDE/CLAUDE.md`).
+      account — see `CLAUDE.md`).
 - [ ] **Explained line by line.** The author can explain every line in review —
       the proposal's "AI-generated code hides security flaws" mitigation is
       *nothing merges unread*, and that is a security control, not etiquette.
@@ -317,7 +317,7 @@ pass was not run, not that nothing was found.
 
 ## Changelog
 
-- **2026-09-22** — v1. Promoted from the five bullets in `CLAUDE/CLAUDE.md`
+- **2026-09-22** — v1. Promoted from the five bullets in `CLAUDE.md`
   into a per-PR gate (Part A) plus per-lane Week-12 passes (Part B), with
   the gaps visible in the repository on this date recorded inline so the
   Week-12 passes start from facts, not from a blank list. (M4)

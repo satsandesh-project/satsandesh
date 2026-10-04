@@ -44,7 +44,7 @@ Clone the repository and install the git hooks and dependencies:
 
 ```bash
 git clone <repo-url>
-cd satsandesh-main
+cd satsandesh
 
 pre-commit install
 pip install -e .
@@ -122,7 +122,7 @@ this with care, as it deletes all local database contents.
 ## 6. Project Structure
 
 ```
-satsandesh-main/
+satsandesh/
 ├── CLAUDE.md              # AI-assisted development conventions
 ├── README.md              # Project overview
 ├── docs/

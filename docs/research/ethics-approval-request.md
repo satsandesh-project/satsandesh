@@ -132,7 +132,7 @@ ability.
   the SRS as patterns ("5 of 7 hesitated at…"), never as quotes tied to a
   person.
 - The team works on a shared AI coding assistant account; the team's
-  written rule (`CLAUDE/CLAUDE.md`) is that no elder or pilot data is ever
+  written rule (`CLAUDE.md`) is that no elder or pilot data is ever
   pasted into a prompt.
 - Backups are encrypted; the app is self-hosted on the organisation's
   infrastructure; no third-party analytics or advertising technology.

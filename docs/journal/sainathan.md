@@ -493,3 +493,40 @@ showing `has_exemplars: false` and correct stub classifications. CI
 still means only ruff ran.
 
 **Where it ran:** local.
+
+## 2026-10-04 — CLAUDE.md to the repo root; stale onboarding paths (Week 7 · hygiene)
+
+**Asked for:** work through the four unblocked M4 items in order; this is
+the second.
+
+**Produced:** `git mv CLAUDE/CLAUDE.md CLAUDE.md` (a real rename, so the
+history follows), `cd satsandesh-main` → `cd satsandesh` and the matching
+tree diagram in `DEV_ONBOARDING.md`, and live pointers repointed in
+`docs/journal/README.md`, `docs/security-checklist.md` and
+`docs/research/ethics-approval-request.md`.
+
+The move is the point, not tidiness: Claude Code auto-loads a `CLAUDE.md`
+at the repository root. Sitting in `CLAUDE/` it was never read at session
+start, so a file written to give four people consistent behaviour had been
+doing nothing for six weeks. Recorded as the correction in the 2026-08-24
+entry above, and as action 10 in the Month-1 retro.
+
+**Corrected:** I bulk-replaced every `CLAUDE/CLAUDE.md` reference across
+all tracked markdown, which silently rewrote two *dated records* — this
+journal's 2026-08-24 entry, whose correction reads "Placed at
+`CLAUDE/CLAUDE.md`, not the repo root", and the retro's row naming the
+same problem. Rewriting those makes the entries nonsensical: the old path
+is the whole point of the sentence. Reverted both before committing; only
+live pointers were changed. A find-and-replace across a repo that contains
+its own history needs to know which files are history.
+
+**Decided differently:** Did not tick off action 10 in
+`docs/retro/month-1.md`. A retro is a dated snapshot of what was true when
+it was written; the PR is the record that the action happened.
+
+**Verified by:** `git status` shows `R CLAUDE/CLAUDE.md -> CLAUDE.md`, so
+it is a rename and not a delete-plus-add. No non-markdown file referenced
+the old path (checked `.yml`, `.toml`, `.py`, `CODEOWNERS`). No
+`CLAUDE/CLAUDE.md` reference remains outside the two historical records.
+
+**Where it ran:** local.
