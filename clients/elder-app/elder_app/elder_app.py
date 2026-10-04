@@ -449,6 +449,27 @@ window.__satsandeshWsInit = true;
   %(uuid_v4_fallback)s
   window.__satUuidV4 = satUuidV4;
 
+  // Which language a typed message is in, from the characters themselves. The
+  // gateway's pipeline translates from `source_lang`, and without it falls back
+  // to the author's STORED language (Telugu for everyone today), so a Hindi
+  // message would be translated as if it were Telugu. Telugu and Devanagari are
+  // unambiguous by script; Latin letters mean English. Whichever script has the
+  // most letters wins, and a tie (or no letters at all) declares nothing rather
+  // than guessing. Only values the pipeline supports are ever returned.
+  window.__satDetectLang = function (text) {
+    let te = 0, hi = 0, en = 0;
+    for (const ch of String(text || "")) {
+      const c = ch.codePointAt(0);
+      if (c >= 0x0C00 && c <= 0x0C7F) te++;
+      else if (c >= 0x0900 && c <= 0x097F) hi++;
+      else if ((c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A)) en++;
+    }
+    const best = Math.max(te, hi, en);
+    if (best === 0) return null;
+    const winners = [["te", te], ["hi", hi], ["en", en]].filter((x) => x[1] === best);
+    return winners.length === 1 ? winners[0][0] : null;
+  };
+
   window.__satConversations = window.__satConversations || {};
   window.__satCurrentContactId = window.__satCurrentContactId || "";
   window.__satPendingTimers = window.__satPendingTimers || {};
@@ -898,7 +919,9 @@ window.__satsandeshWsInit = true;
           const payload =
             msg.kind === "voice"
               ? { kind: "voice", media_ref: msg.media_ref }
-              : { kind: "text", text: msg.text };
+              : msg.source_lang
+                ? { kind: "text", text: msg.text, source_lang: msg.source_lang }
+                : { kind: "text", text: msg.text };
           sendMessageFrame(contactId, payload, msg.client_msg_id, msg.target_type);
         }
       }
@@ -1078,6 +1101,8 @@ CHAT_SEND_JS = """
         return "";
     }
     const clientMsgId = window.__satUuidV4();
+    // Declared only when the characters make it clear; see __satDetectLang.
+    const sourceLang = window.__satDetectLang ? window.__satDetectLang(text) : null;
     if (!window.__satConversations[contactId]) window.__satConversations[contactId] = [];
     window.__satConversations[contactId].push({
         client_msg_id: clientMsgId,
@@ -1086,10 +1111,14 @@ CHAT_SEND_JS = """
         target_type: targetType,
         kind: "text",
         text: text,
+        source_lang: sourceLang,
         status: "pending",
     });
     if (window.__satRenderCurrentThread) window.__satRenderCurrentThread();
-    window.__satSendMessage(contactId, { kind: "text", text: text }, clientMsgId, targetType);
+    const payload = sourceLang
+        ? { kind: "text", text: text, source_lang: sourceLang }
+        : { kind: "text", text: text };
+    window.__satSendMessage(contactId, payload, clientMsgId, targetType);
     input.value = "";
     return "sent";
 })()
