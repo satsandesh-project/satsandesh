@@ -95,9 +95,8 @@ and the moderation service (stub backend). **Mock:** MT and render.
 
 ### Limits — what this does NOT show
 
-- **MT and render are mocked**, so nothing here says anything about translation or
-  synthesized speech. `render`'s own README says its MT half has never been run against
-  the real model.
+- **MT and render are mocked in this run**, so nothing here says anything about
+  translation or synthesized speech; the next section is the run with the real ones.
 - **Moderation is the keyword stub**, which its README says is not fit for the pilot; the
   real classifier (llama.cpp + a ~2 GB Qwen GGUF) was not run.
 - **The recordings are synthesized** (a robotic voice, WebM muxed by ffmpeg) — not a
@@ -111,19 +110,71 @@ and the moderation service (stub backend). **Mock:** MT and render.
   three services above; it has **not** been run alongside the rest of the default stack
   (Caddy, the elder app).
 
+## The real MT and render proof (`run_proof_real.sh`)
+
+Run 2026-10-04 on the same server (CPU only). **Real:** the gateway, the ASR
+(faster-whisper `small`), MT (`indictrans2-indic-en-dist-200M`), render
+(`indictrans2-en-indic-dist-200M` + Piper `hi_IN-rohan` / `te_IN-maya`). **Stub:** moderation.
+`AI_ACCEPT_WEBM_AS_OGG_OPUS=true` (the stopgap), `UNDO_WINDOW_SECONDS=0`. The "spoken" notes are
+**Piper voices** (the render service synthesizes a Hindi and a Telugu sentence, ffmpeg muxes
+them to WebM/Opus): not a person, not Chrome's `MediaRecorder`. A circle with three readers:
+Telugu, English, Hindi. The rendering audio is fetched through the gateway **as each reader**
+and measured, because `audio != null` does not mean it plays.
+
+| Note | What happened |
+|---|---|
+| **Hindi** (spoken: *"There is a bhajan at the temple at seven this evening. Everyone is welcome."* in Hindi) | Visible to all three readers **~6 s after the send**, `sent` / `pipeline=complete`, job `done` on attempt 1. Transcript (hi) had small errors (*"साथ बजे"* for *"सात बजे"*, *"सागत"* for *"स्वागत"*) but the English pivot kept the meaning: *"There is a bhajan in the temple this evening, everyone is welcome."* Renderings: **en** (text only, see below) and **te** (Telugu text + audio: `200 audio/wav`, 5.0 s, RMS 4519 — not silence). The reader of the source language (Hindi) got no `hi` rendering and reads the original. |
+| **Telugu** (same sentence in Telugu) | Completed the same way (~6.6 s), renderings **en** and **hi** (Hindi audio `200 audio/wav`, 4.5 s, RMS 6499), no `te` for the Telugu reader. **But the content was wrong, with no signal to anyone:** the transcript came back in **Devanagari script** (*"इस आईन्त्रम येडू गंटलकू …"*) labelled `te`; the pivot was *"All are welcome to bajana hoon on this day and seven o'clock in the morning."*; the Hindi rendering says the same wrong thing. The classifier allowed it (the text is harmless), so it was delivered. |
+
+"A note becomes N renderings" is shown with real models: each note became the renderings
+for the languages its recipients read, minus its own.
+
+### Findings
+
+1. **The first run of the Telugu note failed, and it was a bug of mine** (fixed in #101). The
+   handler held a database transaction open during the ASR call; the gateway's connections are
+   killed after 30 s idle-in-transaction; the same recording took **37.2 s** in isolation. Every
+   attempt died on the transcript write, the job went `dead`, and the message was **held**
+   (fail-closed worked: nothing was delivered). **The rerun's ASR was fast, so it did not hit
+   the slow path again**: the fix is shown by a unit test and six mutations, not by a repeat of
+   the real >30 s call. Why one recording took 37 s once and ~6 s another time is **not
+   investigated**.
+2. **The real ASR is unreliable on Telugu** (and mediocre on Hindi) with this model on
+   synthetic speech: wrong script, wrong words, and a **latency that varies several-fold**. A
+   wrong transcript flows through MT and render and reaches readers as confident text.
+   `services/ai/speech/` (M3); `speech_indicconformer` exists as an alternative (#80) but cannot
+   auto-detect a language. Synthetic Piper speech is not an elder's voice, so real recordings
+   may be better or worse; **this says the risk is real, not how large it is.**
+3. **English readers get text only**: render has no English voice (its README says so), so the
+   `en` rendering is always `text_only`.
+4. **Every reader receives every rendering of a message** (`MessageOut.renderings` is
+   per-message); the client picks the one for its language.
+
+### What this does NOT show
+- One run per note, one CPU server, no concurrency or load.
+- Synthesized speech, not a person; and the stopgap that treats `webm_opus` as `ogg_opus` was
+  **on** (OPEN_QUESTIONS #11), so the real browser path is only as good as that stopgap.
+- Moderation is still the keyword stub.
+- Translation quality was judged by me reading the Hindi and English output; the **Telugu
+  text needs a native reader**.
+
 ## Still not decided (M3's / yours)
 
 Which ASR is the real one (`speech` vs `speech_indicconformer` — the latter is **not**
 in this file; it cannot auto-detect a language, and an undeclared voice note would be
 rejected and held), how `webm_opus` reaches the AI services, and whether a shared volume
 is the permanent way they read audio (`OPEN_QUESTIONS.md` #2, #11). Real JWT auth, which
-must land before the moderator routes are reachable by anyone real, and `GET/PATCH
-/me/settings`, without which the pipeline renders only Telugu for everyone, are both
-prerequisites for switching the pipeline on for real users.
+must land before the moderator routes are reachable by anyone real, is a prerequisite for
+switching the pipeline on for real users (`GET/PATCH /me/settings`, the other one, is
+merged).
 
 ## Re-running the proof
 
 ```bash
 cp ~/veerendra/.env .env        # POSTGRES_* and GATEWAY_* only; never commit it
-infra/ai/e2e/run_proof.sh       # ~10 min first run (model download), then ~5 min
+infra/ai/e2e/run_proof.sh       # mock MT/render: ~10 min first run (model download), then ~5 min
+
+# the real MT and render: .env must also have HF_TOKEN, from an account that has accepted
+# the gate on BOTH ai4bharat/indictrans2-*-dist-200M repos. First run downloads the models.
+infra/ai/e2e/run_proof_real.sh
 ```
