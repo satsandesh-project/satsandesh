@@ -2,7 +2,9 @@
 # Makes two test recordings, in a throwaway container (espeak-ng + ffmpeg):
 #   speech.webm -- synthesized English speech, as WebM/Opus (the container a
 #                  browser's MediaRecorder produces)
-#   tone.webm   -- a 2 s sine tone: audio with NO speech in it
+#   tone.webm   -- a 2 s sine tone (NOT silence: the real ASR transcribes it as
+#                  the word "Beep" -- see infra/ai/README.md)
+#   silence.webm -- 3 s of digital silence
 # usage: make_samples.sh <output dir>
 #
 # These are generated, not recorded by a person or by Chrome: the speech is a
@@ -17,6 +19,7 @@ docker run --rm -v "$OUT":/out python:3.11-slim sh -c '
   espeak-ng -v en -s 135 "Hello everyone. When is the satsang today? Please bring some flowers." -w /out/speech.wav
   ffmpeg -nostdin -loglevel error -y -i /out/speech.wav -c:a libopus -f webm /out/speech.webm
   ffmpeg -nostdin -loglevel error -y -f lavfi -i "sine=frequency=440:duration=2" -c:a libopus -f webm /out/tone.webm
+  ffmpeg -nostdin -loglevel error -y -f lavfi -i "anullsrc=r=16000:cl=mono" -t 3 -c:a libopus -f webm /out/silence.webm
   rm -f /out/speech.wav
   ls -l /out
 '

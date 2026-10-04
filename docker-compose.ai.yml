@@ -37,6 +37,7 @@ services:
       AI_ACCEPT_WEBM_AS_OGG_OPUS: ${AI_ACCEPT_WEBM_AS_OGG_OPUS:-false}
       UNDO_WINDOW_SECONDS: ${UNDO_WINDOW_SECONDS:-30}
       JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
+      JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-5}
     volumes:
       - render_output:/render-output:ro
     # Deliberately NO depends_on for the AI services: models take minutes to

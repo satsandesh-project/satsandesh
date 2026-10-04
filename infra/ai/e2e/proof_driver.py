@@ -13,7 +13,7 @@ Subcommands (each prints one JSON object per line, so run_proof.sh can read
 them and a human can too):
 
     send  <samples/file.webm> <label> [source_lang]
-    watch <message_id> [timeout_s]        poll BOB's sync until it appears
+    watch <message_id> [timeout_s] [sent_at]   poll BOB's sync until it appears
     queue                                 the moderator queue
     events <message_id>                   the moderation trail
     release <message_id>
@@ -92,7 +92,7 @@ def _bobs_view() -> list[dict]:
     return r.json()["messages"]
 
 
-def cmd_watch(message_id: str, timeout_s: float) -> None:
+def cmd_watch(message_id: str, timeout_s: float, sent_at: float | None = None) -> None:
     """Poll BOB's sync until the message shows up, recording what he sees."""
     start = time.time()
     polls_before = 0
@@ -102,7 +102,8 @@ def cmd_watch(message_id: str, timeout_s: float) -> None:
             m = mine[0]
             emit(
                 event="visible_to_recipient",
-                after_s=round(time.time() - start, 2),
+                after_watch_started_s=round(time.time() - start, 2),
+                after_send_s=round(time.time() - sent_at, 2) if sent_at else None,
                 polls_where_it_was_not_visible=polls_before,
                 status=m["status"],
                 transcript=m.get("transcript"),
@@ -185,7 +186,11 @@ def main(argv: list[str]) -> None:
     if cmd == "send":
         cmd_send(args[0], args[1], args[2] if len(args) > 2 else None)
     elif cmd == "watch":
-        cmd_watch(args[0], float(args[1]) if len(args) > 1 else 240.0)
+        cmd_watch(
+            args[0],
+            float(args[1]) if len(args) > 1 else 240.0,
+            float(args[2]) if len(args) > 2 else None,
+        )
     elif cmd == "mine":
         cmd_mine(args[0])
     elif cmd == "queue":
