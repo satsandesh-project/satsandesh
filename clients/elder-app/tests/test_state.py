@@ -36,6 +36,9 @@ from elder_app.elder_app import (
     CHAT_CONNECT_JS_TEMPLATE,
     CHAT_SEND_JS,
     RECEIVER_TEXT_KEYS,
+    SAVE_PREFS_JS_TEMPLATE,
+    SAVE_SETTINGS_JS_TEMPLATE,
+    STATUS_TEXT_KEYS,
     TEXTS,
     TOUCH_HOLD_SHIM_JS,
     UPLOAD_AND_SEND_VOICE_JS_TEMPLATE,
@@ -367,3 +370,53 @@ def test_upload_js_reports_progress_and_retries_three_times():
     js = UPLOAD_AND_SEND_VOICE_JS_TEMPLATE % {"gateway_url": '"http://example.test"'}
     assert "XMLHttpRequest" in js and "xhr.upload.onprogress" in js
     assert "sat-upload-fill" in js and "attempt < 3" in js
+
+
+def test_status_words_exist_in_both_languages_and_cover_held_and_blocked():
+    # The chat JS draws a message's status from these (both languages, picked by the UI
+    # language). A held or blocked message used to fall through to "Sending... (tap to
+    # cancel)", with a tap that the gateway refuses.
+    assert "status_held" in STATUS_TEXT_KEYS and "status_blocked" in STATUS_TEXT_KEYS
+    for lang in ("en", "te"):
+        for key in STATUS_TEXT_KEYS:
+            assert TEXTS[lang].get(key), f"{key} missing or empty in {lang}"
+
+
+def test_chat_js_labels_held_and_blocked_in_the_ui_language():
+    assert 'statusWord("status_held")' in CHAT_CONNECT_JS_TEMPLATE
+    assert 'statusWord("status_blocked")' in CHAT_CONNECT_JS_TEMPLATE
+    assert "STATUS_TEXT[ui]" in CHAT_CONNECT_JS_TEMPLATE
+
+
+def test_changing_language_or_speech_saves_straight_away():
+    # The gateway's value wins on load, so a pick that only ever reached localStorage
+    # would be undone on the next visit. Each setter must sync the JS AND save.
+    state = _fresh_state()
+
+    language_events = state.set_preferred_language_input("hi")
+    speech_events = state.set_tts_on_input(False)
+
+    assert state.preferred_language_input == "hi" and state.tts_on_input is False
+    assert len(language_events) == 2
+    assert len(speech_events) == 2
+
+
+def test_settings_writes_carry_the_timezone_and_format_cleanly():
+    # Quiet hours are only enforced for a user with a timezone. Both templates go through
+    # Python %-formatting, so a stray literal % would raise here.
+    save = SAVE_SETTINGS_JS_TEMPLATE % {
+        "gateway_url": '"http://example.test"',
+        "start": '"21:30"',
+        "end": '"06:00"',
+        "preferred_language": '"hi"',
+        "tts_on": "true",
+    }
+    prefs = SAVE_PREFS_JS_TEMPLATE % {
+        "gateway_url": '"http://example.test"',
+        "preferred_language": '"hi"',
+        "tts_on": "true",
+    }
+    for js in (save, prefs):
+        assert "resolvedOptions().timeZone" in js and "body.timezone = zone" in js
+    # the quick save must not carry a half-typed quiet-hours time
+    assert "quiet_hours" not in prefs
