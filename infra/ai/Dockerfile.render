@@ -1,0 +1,24 @@
+# Render service (services/ai/render): English -> target text (IndicTrans2
+# en-indic) -> speech (Piper). Repo root as build context. NEEDS HF_TOKEN, and
+# the en-indic model is a SEPARATE gate from the mt one (services/ai/render/
+# README.md). Its README also says the MT half has never been run against the
+# real model by its author -- so neither build nor run of this image proves
+# translation quality. UNVERIFIED on the shared server (no HF token there).
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY services/ai/pyproject.toml /tmp/ai/pyproject.toml
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu "/tmp/ai[render]"
+
+COPY contracts/ai ./contracts/ai
+COPY services/ai/__init__.py ./services/ai/__init__.py
+COPY services/ai/render ./services/ai/render
+
+# Piper voices download on first start into RENDER_VOICE_DIR; rendered .wav
+# files are written to RENDER_OUTPUT_DIR, a volume the GATEWAY mounts read-only
+# (AI_RENDER_AUDIO_ROOT) -- the service reports a path on its own disk, so the
+# directory must be shared.
+ENV PYTHONPATH=/app HF_HOME=/models/hf RENDER_PORT=8005 \
+    RENDER_VOICE_DIR=/models/voices RENDER_OUTPUT_DIR=/render-output
+EXPOSE 8005
+CMD ["uvicorn", "services.ai.render.app:app", "--host", "0.0.0.0", "--port", "8005"]
