@@ -223,12 +223,50 @@ def test_a_voice_note_is_transcribed_first_and_the_transcript_stored(db_session,
     assert fake.requests("pivot")[0]["source_language"] == "te"
 
 
-def test_the_asr_is_given_the_authors_language_as_a_hint(db_session, fake, outbox):
+def test_an_undeclared_voice_note_gets_no_language_hint_so_the_asr_detects_it(
+    db_session, fake, outbox
+):
+    """The author's STORED language is what they want to RECEIVE (and is Telugu
+    for every user today), not what they speak. Passing it as the hint would
+    force a Hindi or English note through a Telugu transcription. With nothing
+    declared, the ASR is left to detect the language."""
     message_id = _dm(db_session, author_lang="hi", kind="voice", source_lang=None)
 
     _run(db_session, message_id)
 
+    assert fake.requests("transcribe")[0]["language_hint"] is None
+
+
+def test_a_declared_voice_language_is_passed_as_the_hint(db_session, fake, outbox):
+    message_id = _dm(db_session, author_lang="te", kind="voice", source_lang="hi")
+
+    _run(db_session, message_id)
+
     assert fake.requests("transcribe")[0]["language_hint"] == "hi"
+
+
+def test_an_unsupported_declared_voice_language_is_ignored_not_fatal(db_session, fake, outbox):
+    """For a voice note the transcript's own detected language is what the rest
+    of the pipeline uses, so a declaration the pipeline can't use is simply not
+    a hint -- it is not a reason to fail the note."""
+    message_id = _dm(db_session, kind="voice", source_lang="ta")
+
+    _run(db_session, message_id)
+
+    assert fake.requests("transcribe")[0]["language_hint"] is None
+    assert _msg(db_session, message_id).pipeline_state == "complete"
+
+
+def test_a_typed_message_with_no_declared_language_still_falls_back_to_the_authors(
+    db_session, fake, outbox
+):
+    # Unchanged: for TEXT there is no second chance to detect it. An old client
+    # that does not send source_lang gets the documented (weak) fallback.
+    message_id = _dm(db_session, author_lang="hi", source_lang=None)
+
+    _run(db_session, message_id)
+
+    assert fake.requests("pivot")[0]["source_language"] == "hi"
 
 
 # --- delivery gate (decision 1 and 2) ----------------------------------------------------------
