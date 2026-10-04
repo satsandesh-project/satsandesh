@@ -1468,15 +1468,23 @@ SAVE_SETTINGS_JS_TEMPLATE = """
         tts_on: %(tts_on)s,
     };
     if (zone) body.timezone = zone;
+    const send = () => fetch(%(gateway_url)s + "/me/settings", {
+        method: "PATCH",
+        headers: {
+            Authorization: "Bearer " + window.__satToken,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+    });
     try {
-        const resp = await fetch(%(gateway_url)s + "/me/settings", {
-            method: "PATCH",
-            headers: {
-                Authorization: "Bearer " + window.__satToken,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(body),
-        });
+        let resp = await send();
+        // A timezone name the gateway does not know is a 422 for the WHOLE request, which
+        // would throw away the quiet hours / language / speech the person just saved too.
+        // Retry once without it: the rest is worth saving even if the zone is not.
+        if (resp.status === 422 && body.timezone) {
+            delete body.timezone;
+            resp = await send();
+        }
         if (!resp.ok) return "error:" + resp.status;
         return "ok";
     } catch (err) {
@@ -1485,27 +1493,35 @@ SAVE_SETTINGS_JS_TEMPLATE = """
 })()
 """
 
-# Saves just the content language and speech on/off, the moment either is changed. They
-# used to reach the server only when the Save button was pressed, and now that the
-# gateway's /me/settings exists its values win on load -- so an elder who picked Hindi and
-# did not press Save would be put back to Telugu on the next visit. Quiet hours are not
-# sent here (a half-typed time must not be saved). A failure is silent: the choice is
-# already applied and kept in localStorage, and Save still works.
+# Saves the content language or speech on/off the moment it is changed. They used to reach
+# the server only when the Save button was pressed, and now that the gateway's /me/settings
+# exists its values win on load -- so an elder who picked Hindi and did not press Save would
+# be put back to Telugu on the next visit. Only the field that just changed is sent (never
+# the other one from current state: two quick taps arriving out of order could otherwise store
+# the older value), and never quiet hours (a half-typed time must not be saved). A failure is
+# silent: the choice is already applied and kept in localStorage, and Save still works.
 SAVE_PREFS_JS_TEMPLATE = """
 (async () => {
+    const body = %(fields)s;
     let zone = null;
     try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) {}
-    const body = { preferred_language: %(preferred_language)s, tts_on: %(tts_on)s };
     if (zone) body.timezone = zone;
+    const send = () => fetch(%(gateway_url)s + "/me/settings", {
+        method: "PATCH",
+        headers: {
+            Authorization: "Bearer " + window.__satToken,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+    });
     try {
-        const resp = await fetch(%(gateway_url)s + "/me/settings", {
-            method: "PATCH",
-            headers: {
-                Authorization: "Bearer " + window.__satToken,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(body),
-        });
+        let resp = await send();
+        // An unknown timezone name is a 422 for the whole request and would lose the change
+        // being saved; retry once without it.
+        if (resp.status === 422 && body.timezone) {
+            delete body.timezone;
+            resp = await send();
+        }
         return resp.ok ? "ok" : "error:" + resp.status;
     } catch (err) {
         return "error:network";
@@ -2126,19 +2142,19 @@ class State(rx.State):
     def set_preferred_language_input(self, value: str):
         self.preferred_language_input = value
         self.settings_saved = False
-        return [self._sync_prefs(), self._save_prefs()]
+        return [self._sync_prefs(), self._save_prefs("preferred_language")]
 
     def set_tts_on_input(self, value: bool):
         self.tts_on_input = value
         self.settings_saved = False
-        return [self._sync_prefs(), self._save_prefs()]
+        return [self._sync_prefs(), self._save_prefs("tts_on")]
 
-    def _save_prefs(self):
-        """Save the content language and speech on/off to the gateway right away."""
+    def _save_prefs(self, field: str):
+        """Save ONE changed setting (`preferred_language` or `tts_on`) to the gateway now."""
+        fields = {"preferred_language": self.preferred_language_input, "tts_on": self.tts_on_input}
         js = SAVE_PREFS_JS_TEMPLATE % {
             "gateway_url": json.dumps(GATEWAY_PUBLIC_URL),
-            "preferred_language": json.dumps(self.preferred_language_input),
-            "tts_on": json.dumps(self.tts_on_input),
+            "fields": json.dumps({field: fields[field]}),
         }
         return rx.call_script(js)
 

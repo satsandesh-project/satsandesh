@@ -413,10 +413,28 @@ def test_settings_writes_carry_the_timezone_and_format_cleanly():
     }
     prefs = SAVE_PREFS_JS_TEMPLATE % {
         "gateway_url": '"http://example.test"',
-        "preferred_language": '"hi"',
-        "tts_on": "true",
+        "fields": '{"preferred_language": "hi"}',
     }
     for js in (save, prefs):
         assert "resolvedOptions().timeZone" in js and "body.timezone = zone" in js
     # the quick save must not carry a half-typed quiet-hours time
     assert "quiet_hours" not in prefs
+
+
+def test_a_rejected_timezone_does_not_lose_the_save():
+    # An unknown timezone name is a 422 for the WHOLE request; without a retry the language or
+    # speech change the elder just made would be lost with it. Both saves retry once without it.
+    for template in (SAVE_SETTINGS_JS_TEMPLATE, SAVE_PREFS_JS_TEMPLATE):
+        assert "resp.status === 422 && body.timezone" in template
+        assert "delete body.timezone" in template
+
+
+def test_a_quick_save_sends_only_the_field_that_changed():
+    # Sending both fields from current state let two quick taps arriving out of order store the
+    # older value of the other one. Each setter must name just its own field.
+    import inspect
+
+    language_source = inspect.getsource(State.set_preferred_language_input.fn)
+    speech_source = inspect.getsource(State.set_tts_on_input.fn)
+    assert '_save_prefs("preferred_language")' in language_source
+    assert '_save_prefs("tts_on")' in speech_source
