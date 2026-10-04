@@ -38,8 +38,8 @@ from contracts.chat.errors import ErrorCode, ErrorPayload
 from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
 from contracts.chat.moderation import (
-    ModerationActorKind,
     ModerationAction,
+    ModerationActorKind,
     ModerationEvent,
     ModerationEventsOut,
     ModerationLabel,
@@ -532,9 +532,7 @@ def _decide(
         )
     trail = _events.get(message_id)
     if not trail:
-        raise HTTPException(
-            status_code=409, detail="Message has no moderation history to review"
-        )
+        raise HTTPException(status_code=409, detail="Message has no moderation history to review")
     latest = trail[-1]
     if body.expected_event_id is not None and body.expected_event_id != latest.id:
         raise HTTPException(

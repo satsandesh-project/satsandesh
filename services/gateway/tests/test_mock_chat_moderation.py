@@ -102,7 +102,9 @@ def test_every_route_refuses_a_caller_who_is_not_a_moderator(client, method, pat
     body = {"json": {}} if method == "post" else {}
     for headers in ({}, {"X-Mock-Role": "elder"}):
         assert getattr(client, method)(path, headers=headers, **body).status_code == 403
-    assert getattr(client, method)(path, headers={"X-Mock-Role": "admin"}, **body).status_code != 403
+    assert (
+        getattr(client, method)(path, headers={"X-Mock-Role": "admin"}, **body).status_code != 403
+    )
 
 
 def test_release_delivers_the_message_leaves_the_queue_and_appends_an_event(client) -> None:
@@ -146,8 +148,14 @@ def test_block_blocks_the_message_and_appends_an_event(client) -> None:
 def test_a_release_may_reverse_a_block_but_a_block_needs_a_held_message(client) -> None:
     blocked_id = _send(client, "this should be a block")
 
-    assert client.post(f"/moderation/messages/{blocked_id}/block", headers=MOD, json={}).status_code == 409
-    assert client.post(f"/moderation/messages/{blocked_id}/release", headers=MOD, json={}).status_code == 200
+    assert (
+        client.post(f"/moderation/messages/{blocked_id}/block", headers=MOD, json={}).status_code
+        == 409
+    )
+    assert (
+        client.post(f"/moderation/messages/{blocked_id}/release", headers=MOD, json={}).status_code
+        == 200
+    )
     trail = client.get(f"/moderation/messages/{blocked_id}/events", headers=MOD).json()["events"]
     assert [e["actor_kind"] for e in trail] == ["classifier", "moderator"]
 
@@ -166,10 +174,17 @@ def test_a_stale_expected_event_id_is_a_conflict_and_changes_nothing(client) -> 
     assert len(_queue(client).items) == 1
 
 
-def test_deciding_a_message_that_is_not_waiting_is_a_conflict_and_an_unknown_one_a_404(client) -> None:
+def test_deciding_a_message_that_is_not_waiting_is_a_conflict_and_an_unknown_one_a_404(
+    client,
+) -> None:
     delivered_id = _send(client, "hello")
 
-    assert client.post(f"/moderation/messages/{delivered_id}/release", headers=MOD, json={}).status_code == 409
+    assert (
+        client.post(
+            f"/moderation/messages/{delivered_id}/release", headers=MOD, json={}
+        ).status_code
+        == 409
+    )
     for action in ("release", "block"):
         unknown = client.post(f"/moderation/messages/{uuid.uuid4()}/{action}", headers=MOD, json={})
         assert unknown.status_code == 404
