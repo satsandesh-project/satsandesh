@@ -1,0 +1,22 @@
+# Moderation classifier (services/ai/moderation). Repo root as build context.
+#
+# Default backend is the keyword STUB (MOD_BACKEND=stub): it needs no model
+# weights and is not fit for the pilot (services/ai/moderation/README.md says
+# so). The real backend (llama.cpp + a ~2 GB Qwen GGUF) is deliberately not
+# baked in: llama-cpp-python compiles native code, and the weights are placed
+# by hand, never committed. See infra/ai/README.md.
+FROM python:3.11-slim
+
+WORKDIR /app
+RUN pip install --no-cache-dir "fastapi>=0.110" "uvicorn>=0.29" "pydantic>=2.6"
+
+COPY contracts/ai ./contracts/ai
+COPY services/ai/__init__.py ./services/ai/__init__.py
+COPY services/ai/moderation ./services/ai/moderation
+# The policy document IS the prompt's source of truth (settings.py default
+# path: <repo root>/docs/policy-taxonomy.md).
+COPY docs/policy-taxonomy.md ./docs/policy-taxonomy.md
+
+ENV PYTHONPATH=/app MOD_PORT=8003
+EXPOSE 8003
+CMD ["uvicorn", "services.ai.moderation.app:app", "--host", "0.0.0.0", "--port", "8003"]

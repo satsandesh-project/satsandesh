@@ -613,6 +613,51 @@ the server for its DB-backed tests (the local Python lacks
   message, which is correctly refused, then asserted something meaningless) was
   rewritten rather than left passing.
 
+## Week 7 follow-up -- the read path leaked unpublished messages (`fix/m2-sync-hides-unpublished-messages`)
+
+- Found while designing the end-to-end proof for Phase 7: I planned to poll the
+  recipient's sync and assert "nothing appears until the pipeline finishes",
+  and stopped to check what `get_messages_since` actually filters. Nothing.
+  Confirmed with failing tests before touching code (19 failing, 10 passing).
+- **What I had claimed and how it was wrong.** Phases 4-6 said a held or
+  pending message was "hidden until out". That was true of renderings and the
+  transcript (and of the fan-out), and false of the message itself: its text
+  and audio reference were readable by the recipient through a plain sync.
+  My tests read the held message as the AUTHOR, which is the one view that was
+  always allowed. A test that only exercises the permitted viewer proves nothing
+  about the forbidden one.
+- Six existing tests (other members') only passed because of the leak: they
+  posted a message and read it back as the recipient inside the undo window.
+  Each now delivers it first and keeps its intent; recorded in the PR so a
+  reviewer can see them as part of the fix rather than as noise.
+- My new paging test failed on the fixed code and for a moment looked like a bug
+  in the fix; it was the wrong query-parameter name (`since` vs the route's
+  `since_id`), which in turn exposed the README/gateway mismatch (OPEN_QUESTIONS #25).
+
+## Week 7 Phase 7 -- the AI services in compose, and a proof (`feat/m2-week7-compose-ai`)
+
+- **My first proof run was worthless and I nearly reported it.** It used a 2 s undo
+  window, and the CPU pipeline finished inside it, so "the recipient saw nothing until
+  the pipeline finished" was true for a reason that had nothing to do with the delivery
+  gate. Caught by looking at the timings (visible after ~1 s) instead of the "pass".
+  Re-run with `UNDO_WINDOW_SECONDS=0`, which makes delivery fire before the pipeline
+  can have finished: now the result can only be the gate.
+- **My tooling destroyed its own evidence.** `tee /dev/stderr` re-opens the log file
+  (stderr was redirected into it) with truncation, wiping the output of the first two
+  scenarios and leaving NUL bytes. Noticed because a `grep` said "Binary file matches".
+  The scenarios were re-run, not reconstructed from memory.
+- The same log exposed a setup bug (every moderation call was 403): the stub auth only
+  flushes a new user row, and a request that ends in 403 rolls it back, so "provision
+  by first request, then UPDATE the role" updated zero rows. Users are now inserted
+  directly.
+- **Two things I expected to work did not, and both are real findings, not test bugs:**
+  the real ASR transcribed a sine tone as "Beep" and digital silence as "You" (so the
+  "no speech -> hold" path never fires; OPEN_QUESTIONS #26), and a released
+  pipeline-failure hold carries no renderings (#27). I rewrote the scenario around
+  what the system actually does instead of re-tuning the input until it "held".
+- Found along the way, fixed separately (#93): the sync read path leaked messages that
+  were not out.
+
 ## Week 7 -- `GET/PATCH /me/settings` (`feat/m2-me-settings`)
 
 - The client already existed, so the first job was reading what it sends (all four fields on

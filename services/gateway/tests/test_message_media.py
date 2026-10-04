@@ -14,6 +14,8 @@ write-side validation (always accepted today).
 
 import uuid
 
+from sqlalchemy import text
+
 from app.db.models import MediaObject, Message
 from app.db.models import User as DbUser
 from app.db.repository import create_media_object, create_message
@@ -38,6 +40,15 @@ def _upload_real_media(db_session, *, author_id, format="wav_pcm16", duration_ms
     )
     db_session.commit()
     return media
+
+
+def _deliver_all(db_session):
+    """The undo window elapsing. A recipient only ever reads a message that is
+    OUT (sent/delivered); these tests seed or post messages that would still be
+    `pending`, and used to read them as the recipient -- which is exactly the
+    leak tests/test_sync_visibility.py now pins shut."""
+    db_session.execute(text("update messages set status = 'sent' where status = 'pending'"))
+    db_session.commit()
 
 
 def test_voice_message_with_a_real_owned_artifact_succeeds(client, db_session, login_as):
@@ -230,6 +241,7 @@ def test_message_out_media_ref_comes_back_populated_and_correct_for_a_voice_mess
         },
     )
     assert post.status_code == 200
+    _deliver_all(db_session)
 
     login_as(bob)
     fetched = client.get("/messages", params={"target_type": "user", "target_id": str(alice.id)})
@@ -258,6 +270,7 @@ def test_text_message_media_ref_is_null_on_readback(client, db_session, login_as
             "text": "hello",
         },
     )
+    _deliver_all(db_session)
 
     login_as(bob)
     fetched = client.get("/messages", params={"target_type": "user", "target_id": str(alice.id)})

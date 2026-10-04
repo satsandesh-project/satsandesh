@@ -1,0 +1,15 @@
+# services/ai/mock -- one server answering all four /v1/* paths with canned,
+# contract-valid responses. For wiring checks and CI-style runs when the real
+# MT/render models are not available (they are gated on a Hugging Face token).
+FROM python:3.11-slim
+
+WORKDIR /app
+RUN pip install --no-cache-dir "fastapi>=0.110" "uvicorn>=0.29" "pydantic>=2.6"
+
+COPY contracts/ai ./contracts/ai
+COPY services/ai/__init__.py ./services/ai/__init__.py
+COPY services/ai/mock ./services/ai/mock
+
+ENV PYTHONPATH=/app
+EXPOSE 8001
+CMD ["uvicorn", "services.ai.mock.app:app", "--host", "0.0.0.0", "--port", "8001"]

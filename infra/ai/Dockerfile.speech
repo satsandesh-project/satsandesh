@@ -1,0 +1,30 @@
+# Real ASR service (services/ai/speech, faster-whisper). Build from the REPO
+# ROOT as context (see docker-compose.ai.yml) -- it imports contracts.ai.*,
+# which lives outside services/ai/.
+#
+# ffmpeg is required: ogg_opus / mp3 (and a WebM/Opus note) are decoded by the
+# `ffmpeg` binary, and python:*-slim does not ship it. Dependencies come from
+# services/ai/pyproject.toml so versions are single-sourced; note that file
+# uses lower bounds (">="), not pins -- an image built next month may resolve
+# newer wheels (infra/ai/README.md, "Limits").
+FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY services/ai/pyproject.toml /tmp/ai/pyproject.toml
+RUN pip install --no-cache-dir /tmp/ai
+
+COPY contracts/ai ./contracts/ai
+COPY services/ai/__init__.py ./services/ai/__init__.py
+COPY services/ai/speech ./services/ai/speech
+# The service warms up on this file at startup (services/ai/speech/app.py).
+COPY services/ai/tests/fixtures/tone_2s.wav ./services/ai/tests/fixtures/tone_2s.wav
+
+# Model weights are downloaded on first start into HF_HOME -- mount a volume
+# there or every container re-creation re-downloads them.
+ENV PYTHONPATH=/app HF_HOME=/models/hf ASR_PORT=8002
+EXPOSE 8002
+CMD ["uvicorn", "services.ai.speech.app:app", "--host", "0.0.0.0", "--port", "8002"]

@@ -324,6 +324,42 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     has no mock to build against; adding them is a small `contracts/chat/`
     change not made here. (e) `notice_sent` is always `false` (see #18).
 
+25. **Found Week 7 (after Phases 4-6 merged): the read path leaked every
+    message that was not out.** `get_messages_since` returned every
+    non-deleted message in the conversation whatever its status and whoever
+    asked, so a recipient who synced (HTTP or WebSocket) read -- text and
+    `media_ref` included -- a message still inside its undo window, one a
+    moderator had held or blocked, one the sender had cancelled. Moderation
+    and undo were protected only by the fan-out, not by the read path. Fixed
+    by `get_visible_messages_since` (the author sees their own in every
+    status; everyone else only `sent`/`delivered`; filtered before the page
+    limit). **My own Phase 4-6 write-ups overstated what they protected**:
+    "hidden until out" covered renderings and the transcript, not the
+    original text, and no test read a held message as its recipient. Still
+    true and still open: (a) the contract README documents the HTTP sync
+    cursor as `?since=` while the gateway route's parameter is `since_id` (a
+    client using the documented name silently gets the first page again); (b)
+    a message's *author* still reads their own held/blocked text, which is
+    intended (their screen needs it) but means "held" is hidden from
+    recipients, not from the sender.
+
+26. **The real ASR hallucinates words from non-speech, so "no speech -> hold" never
+    fires.** Found by the end-to-end proof (`infra/ai/README.md`): faster-whisper `small`
+    transcribed a 2 s sine tone as **"Beep"** and 3 s of digital silence as **"You"**. The
+    orchestrator's rule (an empty transcript is held for a person, never delivered
+    unclassified) is correct but is never triggered by this ASR; a silent or noisy note is
+    delivered with a junk transcript, and moderation rules on a meaningless pivot. The
+    place to fix it is `services/ai/speech/` (M3: VAD / no-speech filtering in the engine),
+    not the gateway; recorded here because the gateway's safety story leans on it.
+
+27. **Releasing a pipeline-failure hold does not re-run the pipeline.** In the proof, a
+    message whose pipeline died at the moderation stage (service down) was held with a
+    SYSTEM event; once a moderator released it, the recipient received it with its
+    transcript but **no renderings**, because the render stage never ran and a release is
+    a status flip. Options: a release re-enqueues the missing stages (writes are guarded
+    to `pending`, so this needs a deliberate "reopen" path), or accept original-only for
+    that case. Not decided.
+
 28. **Quiet hours are saved but never enforced until the client sends a timezone.**
     `GET/PATCH /me/settings` now exists (`app/users.py`) and the elder app's existing
     PATCH (start, end, language, tts) works against it unchanged. But `is_quiet_hours`
@@ -336,8 +372,9 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
 
 29. **What still blocks switching the pipeline on for real users** (after this change,
     `/me/settings` no longer does): real JWT verification (the moderator routes and held-audio
-    access rest on a stub identity, #23); M1's #92, which makes the client send `source_lang`
-    so typed messages are not all treated as Telugu; M4's answers (#24) and a notice surface
+    access rest on a stub identity, #23); M1's `timezone` on `/me/settings` (#28; #92, which
+    sends `source_lang` so typed messages are not all treated as Telugu, has since merged);
+    M4's answers (#24) and a notice surface
     for a held sender (#18); and M3's ASR choice, `webm_opus` handling and the
     hallucinated-transcript problem (#2, #11, #26). Also: Caddy now routes `/me/settings` and
     `/audio-labels/*` to the gateway, but still not `/onboarding*` or `/push*` (the elder app

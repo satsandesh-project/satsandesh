@@ -23,7 +23,7 @@ from app.db.repository import (
     create_message_with_created_flag,
     find_conversation_id,
     get_message_by_id,
-    get_messages_since,
+    get_visible_messages_since,
     is_circle_member,
     list_member_ids_for_circle,
     record_circle_delivery,
@@ -430,8 +430,8 @@ async def _handle_sync_request(
     side, built exactly per the shipped contract — per-conversation,
     resolving `(target_type, target_id)` -> `conversation_id` the same way
     `app/messages.py::get_messages` already does (`find_conversation_id`/
-    `is_circle_member`), then calling the existing `get_messages_since`
-    unchanged. No new repository function, no contract change — this is a
+    `is_circle_member`), then calling `get_visible_messages_since` (the
+    viewer-aware read; a message that is not out is the author's alone). No new repository function, no contract change — this is a
     read path, so no `db.commit()` and no interaction with Phase 5's
     fan-out/broadcast machinery at all.
     """
@@ -489,8 +489,12 @@ async def _handle_sync_request(
     # Fetch one extra row past the page to learn whether more remain,
     # without a second COUNT query — same trick as
     # app/messages.py::get_messages.
-    rows = get_messages_since(
-        db, conversation_id=conversation_id, since_id=since_uuid, limit=req.limit + 1
+    rows = get_visible_messages_since(
+        db,
+        conversation_id=conversation_id,
+        viewer_id=caller_id,
+        since_id=since_uuid,
+        limit=req.limit + 1,
     )
     has_more = len(rows) > req.limit
     page = rows[: req.limit]
