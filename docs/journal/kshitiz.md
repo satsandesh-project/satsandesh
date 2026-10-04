@@ -309,3 +309,30 @@ total) pass in the app's container.
 **Not verified:** the labels against a *real* held message (the pipeline is off and needs the
 real services); the Telugu words, which need a native reader before the pilot (same as the
 rest). `Asia/Calcutta` is the old IANA alias the browser reports; the gateway accepted it.
+
+## 2026-10-04 — "Copy" copied nothing, because staging is plain HTTP
+
+Reported from using staging: the Copy buttons next to "Your ID" and a circle's ID did nothing
+and said nothing. Cause: the buttons used `navigator.clipboard.writeText`, and the browser only
+provides `navigator.clipboard` on a secure page (HTTPS or localhost). On plain HTTP it is
+`undefined`, so the call threw, a `catch` swallowed it, and the button looked like it had been
+ignored. It is the same family of problem as the microphone: staging is HTTP, and the browser
+withholds the powerful APIs.
+
+Why I missed it: every test I have run is on `localhost` or a page where I stubbed the
+platform, and the unit tests assert strings in the JS, not behaviour on the real origin. The
+bug was invisible to everything except actually using the shared staging URL.
+
+Fix: use the clipboard API when it exists, else put the text in an off-screen textarea and run
+the browser's copy command (works on any page when it follows a tap). When both fail the button
+now says "Not copied" instead of staying silent, and the ID text selects with one tap
+(`user-select: all`) so a long-press copy works whatever happens.
+
+**Verification:** on my demo (plain HTTP, `isSecureContext` false, `navigator.clipboard`
+undefined) a real click showed "Copied!" and the browser's `copy` event carried exactly the
+ID on screen; no leftover textarea. A *script-dispatched* click showed "Not copied" -- browsers
+only allow the copy command after a real tap -- which is the honest failure path and also why
+my first attempt looked like the fix had failed. 2 new tests (32 total).
+
+**Not verified:** a real phone (the copy command and long-press behave differently per OS);
+the circle-ID button was not clicked separately, but it runs the same script and handler.

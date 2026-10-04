@@ -35,6 +35,7 @@ round 1 did.
 from elder_app.elder_app import (
     CHAT_CONNECT_JS_TEMPLATE,
     CHAT_SEND_JS,
+    COPY_ID_JS_TEMPLATE,
     RECEIVER_TEXT_KEYS,
     SAVE_PREFS_JS_TEMPLATE,
     SAVE_SETTINGS_JS_TEMPLATE,
@@ -438,3 +439,26 @@ def test_a_quick_save_sends_only_the_field_that_changed():
     speech_source = inspect.getsource(State.set_tts_on_input.fn)
     assert '_save_prefs("preferred_language")' in language_source
     assert '_save_prefs("tts_on")' in speech_source
+
+
+def test_copy_falls_back_when_the_clipboard_api_is_missing():
+    # navigator.clipboard exists only on HTTPS or localhost. On plain HTTP (staging today) the old
+    # code threw, was caught, and the Copy button silently did nothing. The fallback must stay.
+    js = COPY_ID_JS_TEMPLATE % {"my_id": '"abc"'}
+    assert "navigator.clipboard && window.isSecureContext" in js
+    assert 'document.execCommand("copy")' in js
+
+
+def test_a_failed_copy_is_visible_not_silent():
+    state = _fresh_state()
+    state.on_id_copied("error")
+    state.on_circle_id_copied("error")
+    assert state.copied_id is False and state.copy_id_failed is True
+    assert state.copied_circle_id is False and state.copy_circle_id_failed is True
+
+    state.on_id_copied("ok")
+    state.on_circle_id_copied("ok")
+    assert state.copied_id is True and state.copy_id_failed is False
+    assert state.copied_circle_id is True and state.copy_circle_id_failed is False
+    for lang in ("en", "te"):
+        assert TEXTS[lang].get("copy_failed")
