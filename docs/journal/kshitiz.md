@@ -267,3 +267,45 @@ container.
 used injected messages), a real phone, and the Telugu strings -- I wrote them and they
 need a native reader's eye before the pilot. Blob URLs live for the page's lifetime;
 fine for a session of voice notes, worth a revoke-on-leave later.
+
+## 2026-10-04 — Settings that hold, a timezone, and honest status labels
+
+Veerendra's review of #96 (`/me/settings`) and #91 turned up three client gaps. All were
+mine, none were visible until the gateway side existed.
+
+**Save on change.** The content language and speech on/off reached the gateway only when the
+Save button was pressed. That was harmless while the endpoint did not exist (localStorage held
+the choice). Now the gateway's value wins on load, so an elder who picked Hindi and did not
+press Save would have been put back to Telugu on the next visit -- and the pipeline renders
+into the stored language, so no Hindi rendering either. Picking either now saves it
+immediately. Language, speech and timezone only: a half-typed quiet-hours time must never be
+saved by a tap on a language button. A failed save is silent; the choice is already applied
+and kept locally, and Save still works.
+
+**Timezone.** `is_quiet_hours` returns False for a user with no timezone (it refuses to assume
+UTC), and the app sent none, so an elder's carefully saved quiet-hours window would have been
+stored and never enforced. Every settings write now carries
+`Intl.DateTimeFormat().resolvedOptions().timeZone`.
+
+**Held / blocked labels.** A message the pipeline or a moderator set aside fell through
+`statusLabel()` to "Sending... (tap to cancel)", with a tap the gateway answers 409. They now
+read "Waiting for review" and "Not sent" (neither invites a tap; only `pending` can be
+cancelled). There is no wire surface to tell the sender *why* yet; the labels say only what is
+true. While there: the status words were English only even in the Telugu UI; they now follow
+the UI language.
+
+**Not mine, noticed on the way:** `/audio-labels/*` was never routed through Caddy, so the
+hold-to-hear buttons got the elder app's 404 page on staging since Week 5. My own check only
+confirmed the request *fired*, never what came back -- a test that asserts the call and not
+the answer. #96 adds the route; I checked the response afterwards (200, audio/wav).
+
+**Verification:** on my demo stack (port 18300) with #96's branch merged in locally: picking
+Hindi with no Save press stored `hi` and `Asia/Calcutta` for that user in Postgres; switching
+speech off stored `tts_on=false`; clearing localStorage and reloading brought Hindi and
+speech-off back from the gateway. Injected held / blocked / pending / sent messages showed the
+right labels in English and Telugu, and the held bubble is not clickable. 4 new tests (28
+total) pass in the app's container.
+
+**Not verified:** the labels against a *real* held message (the pipeline is off and needs the
+real services); the Telugu words, which need a native reader before the pilot (same as the
+rest). `Asia/Calcutta` is the old IANA alias the browser reports; the gateway accepted it.
