@@ -493,3 +493,42 @@ showing `has_exemplars: false` and correct stub classifications. CI
 still means only ruff ran.
 
 **Where it ran:** local.
+
+## 2026-10-04 — CI security scans (Week 7 · checklist Part C)
+
+**Asked for:** the four unblocked M4 items in order; this is the third.
+
+**Produced:** a `security-scans` job in `.github/workflows/ci.yml` —
+`gitleaks` (blocking, `fetch-depth: 0` so it scans history rather than just
+the working tree) and `pip-audit` (report-only) over the four requirements
+files that describe something we actually run. The three existing jobs are
+untouched.
+
+**Corrected:** Nothing in the implementation, but the first run disproved
+an assumption I had been carrying — that Part C's scans would come back
+clean on a project this young. They do not: `urllib3==2.7.0` has three
+advisories with a fix in 2.8.0, and `ecdsa==0.19.2` has one with **no fix
+version**, both pinned directly in `services/gateway/requirements.txt`. If
+I had made the audit blocking, every open PR would have gone red today for
+something none of their authors changed.
+
+**Decided differently:**
+- **The two scans have different consequences on purpose.** A secret
+  blocks, because a pasted token is not fixed by deleting it later — it is
+  in the history, and this repository goes public in Week 12. A dependency
+  CVE reports, because one can appear overnight through nobody's change,
+  and a red build on an unrelated PR is how people learn to ignore red
+  builds.
+- **Left `bandit` (Part C item 3) out.** It is noisy on a codebase that has
+  never run it, and landing that mid-Week-7 would bury the two scans that
+  matter. Its own PR after integration day.
+- **Excluded `backbone/spike-*` from the audit.** They are the retired
+  Matrix/custom-lite spike record kept as evidence (ADR 0002), not
+  deployed; a CVE there is not a finding about this product.
+
+**Verified by:** the workflow parses (`yaml.safe_load`, all four jobs and
+their steps listed); `pip-audit` run locally against the same four files
+before committing, so the job's output is known rather than hoped for —
+5 findings in 2 packages, both direct pins.
+
+**Where it ran:** local.

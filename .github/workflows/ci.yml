@@ -147,6 +147,56 @@ jobs:
         working-directory: services/ai
         run: python -m pytest
 
+  security-scans:
+    # docs/security-checklist.md Part C. Two scans, deliberately with
+    # different consequences:
+    #
+    #   secret-scan   BLOCKS. A pasted token in a commit is not fixed by
+    #                 deleting it later -- it is in the history, and this
+    #                 repository goes public under Apache-2.0 in Week 12.
+    #                 Rewriting history after the fact is far more
+    #                 expensive than failing a PR now.
+    #
+    #   dependency    REPORTS, does not block (|| true). A new CVE in a
+    #   audit         transitive dependency can appear overnight, through
+    #                 nobody's change; turning that into a red build on an
+    #                 unrelated PR teaches people to ignore red builds.
+    #                 Read it, act in a deliberate PR. Revisit before the
+    #                 Week-12 release, where the standard should be higher.
+    #
+    # bandit (Part C item 3) is deliberately not here yet: it is noisy on a
+    # codebase that has never run it, and landing it mid-Week-7 would bury
+    # the two scans above in warnings. Its own PR, after integration day.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks scans history, not just the working tree, so it needs
+          # the whole thing -- the default shallow clone would miss exactly
+          # the old commit a secret is most likely hiding in.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Secret scan (blocking)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Dependency audit (report-only)
+        # Every requirements file that describes something we actually run.
+        # backbone/spike-* are deliberately excluded: they are the retired
+        # Matrix/custom-lite spike record (ADR 0002), kept as evidence and
+        # not deployed, so a CVE there is not a finding about this product.
+        run: |
+          pip-audit             -r services/gateway/requirements.txt             -r services/ai/render/requirements.txt             -r ai-services/requirements.txt             -r clients/elder-app/requirements.txt             || true
+
   # Branch protection currently requires `lint-and-test` only. gateway-tests
   # and ai-tests need adding to the required status checks by the repo admin
   # (satsandesh-project) -- otherwise a red run here does not block a merge.
