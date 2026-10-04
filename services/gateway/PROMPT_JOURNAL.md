@@ -612,3 +612,24 @@ the server for its DB-backed tests (the local Python lacks
 - A confused test of mine (it tried to write a rendering onto an already-held
   message, which is correctly refused, then asserted something meaningless) was
   rewritten rather than left passing.
+
+## Week 7 follow-up -- the read path leaked unpublished messages (`fix/m2-sync-hides-unpublished-messages`)
+
+- Found while designing the end-to-end proof for Phase 7: I planned to poll the
+  recipient's sync and assert "nothing appears until the pipeline finishes",
+  and stopped to check what `get_messages_since` actually filters. Nothing.
+  Confirmed with failing tests before touching code (19 failing, 10 passing).
+- **What I had claimed and how it was wrong.** Phases 4-6 said a held or
+  pending message was "hidden until out". That was true of renderings and the
+  transcript (and of the fan-out), and false of the message itself: its text
+  and audio reference were readable by the recipient through a plain sync.
+  My tests read the held message as the AUTHOR, which is the one view that was
+  always allowed. A test that only exercises the permitted viewer proves nothing
+  about the forbidden one.
+- Six existing tests (other members') only passed because of the leak: they
+  posted a message and read it back as the recipient inside the undo window.
+  Each now delivers it first and keeps its intent; recorded in the PR so a
+  reviewer can see them as part of the fix rather than as noise.
+- My new paging test failed on the fixed code and for a moment looked like a bug
+  in the fix; it was the wrong query-parameter name (`since` vs the route's
+  `since_id`), which in turn exposed the README/gateway mismatch (OPEN_QUESTIONS #25).

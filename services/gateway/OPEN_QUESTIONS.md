@@ -323,3 +323,22 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     #86). (d) `contracts/chat/mock/` has no moderation routes, so the console
     has no mock to build against; adding them is a small `contracts/chat/`
     change not made here. (e) `notice_sent` is always `false` (see #18).
+
+25. **Found Week 7 (after Phases 4-6 merged): the read path leaked every
+    message that was not out.** `get_messages_since` returned every
+    non-deleted message in the conversation whatever its status and whoever
+    asked, so a recipient who synced (HTTP or WebSocket) read -- text and
+    `media_ref` included -- a message still inside its undo window, one a
+    moderator had held or blocked, one the sender had cancelled. Moderation
+    and undo were protected only by the fan-out, not by the read path. Fixed
+    by `get_visible_messages_since` (the author sees their own in every
+    status; everyone else only `sent`/`delivered`; filtered before the page
+    limit). **My own Phase 4-6 write-ups overstated what they protected**:
+    "hidden until out" covered renderings and the transcript, not the
+    original text, and no test read a held message as its recipient. Still
+    true and still open: (a) the contract README documents the HTTP sync
+    cursor as `?since=` while the gateway route's parameter is `since_id` (a
+    client using the documented name silently gets the first page again); (b)
+    a message's *author* still reads their own held/blocked text, which is
+    intended (their screen needs it) but means "held" is hidden from
+    recipients, not from the sender.
