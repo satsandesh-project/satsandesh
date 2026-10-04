@@ -83,7 +83,13 @@ def _handle_transcribe_media(session: Session, payload: dict) -> None:
     Week 7 Phase 2: the call now goes through app/ai_client.py, which decides
     retry-vs-give-up for every way an AI service can fail, and the audio
     reference through app/ai_audio.py, which hands the real ASR a path it can
-    actually open (it does not understand `media:<id>`)."""
+    actually open (it does not understand `media:<id>`).
+
+    KNOWN, left alone: the read below leaves a transaction open across the
+    ASR call, the flaw app/pipeline.py's `_ai` fixes for the orchestrator (the
+    gateway kills a connection after 30 s idle-in-transaction). This handler
+    is off by default (`TRANSCRIBE_ON_UPLOAD_ENABLED`), only logs, and is superseded by
+    the orchestrator, so it was not widened into this fix."""
     media_id = uuid.UUID(payload["media_id"])
     media = get_media_object(session, media_id)
     if media is None:

@@ -223,6 +223,28 @@ def test_a_voice_note_is_transcribed_first_and_the_transcript_stored(db_session,
     assert fake.requests("pivot")[0]["source_language"] == "te"
 
 
+def test_no_database_transaction_is_held_open_while_an_ai_service_is_called(
+    db_session, fake, outbox
+):
+    # The gateway's connections are killed by Postgres after 30 s "idle in transaction"
+    # (app/db/base.py). Found by running the real services: a Telugu voice note took the real
+    # ASR 37 s, the handler was sitting in the transaction its first read had opened, and every
+    # attempt died on the transcript write ("server closed the connection unexpectedly") until
+    # the job was dead and the note held. So no AI call may happen inside an open transaction.
+    # One voice note with a HOLD verdict and a notice reaches all five call sites: transcribe,
+    # pivot, moderate, the notice translation, and the renderings.
+    fake.action = ModerationAction.HOLD
+    fake.nudge_text = "Held for review."
+    in_transaction: list[tuple[str, bool]] = []
+    fake.on_call = lambda stage: in_transaction.append((stage, db_session.in_transaction()))
+    message_id = _dm(db_session, kind="voice", source_lang=None)
+
+    _run(db_session, message_id)
+
+    assert fake.stages() == ["transcribe", "pivot", "moderate", "render", "render"]
+    assert [stage for stage, open_ in in_transaction if open_] == []
+
+
 def test_an_undeclared_voice_note_gets_no_language_hint_so_the_asr_detects_it(
     db_session, fake, outbox
 ):
