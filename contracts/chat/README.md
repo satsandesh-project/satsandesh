@@ -421,7 +421,7 @@ console (`clients/admin-console/`) can be built against it:
 |---|---|
 | `GET /moderation/queue?cursor=&limit=` | `held` messages that have an event, oldest first, keyset-paged; each with the original, the pivot, and the latest event. |
 | `GET /moderation/messages/{id}/events` | The full trail, oldest first. 404 for an unknown message. |
-| `POST /moderation/messages/{id}/release` | Appends a moderator `ALLOW` event; the message becomes `delivered`. Works on `held` or `blocked`. |
+| `POST /moderation/messages/{id}/release` | Appends a moderator `ALLOW` event; the message becomes `sent` (as on the real gateway; delivery to readers follows). Works on `held` or `blocked`. |
 | `POST /moderation/messages/{id}/block` | Appends a moderator `BLOCK` event; the message becomes `blocked`. Only on `held`. |
 
 Send `X-Mock-Role: moderator`. A 409 means the message is not in a state that action

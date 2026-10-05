@@ -547,7 +547,7 @@ def _decide(
     if label != latest.label:
         rationale += f" Label corrected from {latest.label.value} to {label.value}."
     message.status = (
-        MessageStatus.DELIVERED if action is ModerationAction.ALLOW else MessageStatus.BLOCKED
+        MessageStatus.SENT if action is ModerationAction.ALLOW else MessageStatus.BLOCKED
     )
     event = _append_event(
         message,
