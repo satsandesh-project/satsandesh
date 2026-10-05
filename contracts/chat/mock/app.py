@@ -7,6 +7,8 @@ only — state resets on restart. Same shape as services/ai/mock/app.py.
 """
 
 import asyncio
+import base64
+import binascii
 import io
 import itertools
 import math
@@ -18,9 +20,11 @@ import wave
 from datetime import datetime, timezone
 
 from fastapi import (
+    Depends,
     FastAPI,
     Header,
     HTTPException,
+    Query,
     Request,
     Response,
     WebSocket,
@@ -33,6 +37,17 @@ from contracts.chat.envelope import FrameType, RawFrame, SyncBatch, SyncRequest
 from contracts.chat.errors import ErrorCode, ErrorPayload
 from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
+from contracts.chat.moderation import (
+    ModerationAction,
+    ModerationActorKind,
+    ModerationEvent,
+    ModerationEventsOut,
+    ModerationLabel,
+    ModerationQueueItem,
+    ModerationQueueOut,
+    ModerationReviewIn,
+    ModerationReviewOut,
+)
 from contracts.chat.renderings import LANGUAGE_PATTERN, Rendering, RenderingDegradedReason
 from contracts.chat.users import UserSettingsOut, UserSettingsUpdate
 
@@ -154,6 +169,61 @@ def _make_renderings(msg: MessageIn, status: MessageStatus) -> list[Rendering]:
 # has no pipeline and no IANA database to answer to.)
 _settings: dict[str, UserSettingsOut] = {}
 
+# Week 7: the moderator console's routes (contracts/chat/moderation.py, issue #65), so the
+# console can be built against this mock until it runs on the real gateway. The same rules
+# as services/gateway/app/moderation.py: only `held` messages are queued, a release may
+# reverse a block but a block needs a held message, a stale `expected_event_id` is a 409, and
+# every decision APPENDS an event. What a mock cannot honestly do, it does not pretend to:
+#   - identity: there is no role table, so a caller is a moderator when it sends
+#     `X-Mock-Role: moderator` (or `admin`); anything else is a 403.
+#   - the classifier: a text message containing "hold" or "block" is held/blocked (the
+#     existing keyword trick) and gets one classifier event saying so. Voice notes stay
+#     PENDING and are never queued.
+#   - no push: a release flips the status but sends no `message.new` over the WebSocket.
+#   - `notice_sent` is always False, as on the real gateway (OPEN_QUESTIONS #18).
+_events: dict[str, list[ModerationEvent]] = {}  # message id -> its trail, oldest first
+_MOCK_POLICY_VERSION = "policy@mock"
+
+
+def _as_uuid(value: str) -> uuid.UUID:
+    """The moderation contract's ids are UUIDs; this mock's identities need not be (its
+    default user is "mock-user-1"). A non-UUID maps to a STABLE UUID, so the same author
+    is the same author across calls."""
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        return uuid.uuid5(uuid.NAMESPACE_URL, f"mock:{value}")
+
+
+def _append_event(
+    message: MessageOut,
+    *,
+    actor_kind: ModerationActorKind,
+    actor_id: uuid.UUID | None,
+    label: ModerationLabel,
+    action: ModerationAction,
+    rationale: str,
+    note: str | None = None,
+    confidence: float | None = None,
+    model_version: str | None = None,
+) -> ModerationEvent:
+    event = ModerationEvent(
+        id=uuid.uuid4(),
+        message_id=_as_uuid(message.id),
+        actor_kind=actor_kind,
+        actor_id=actor_id,
+        label=label,
+        action=action,
+        confidence=confidence,
+        rationale=rationale,
+        note=note,
+        policy_version=_MOCK_POLICY_VERSION,
+        model_version=model_version,
+        created_at=datetime.now(timezone.utc),
+    )
+    _events.setdefault(message.id, []).append(event)
+    return event
+
 
 async def _sleep_for_latency(x_mock_latency_ms: str | None) -> None:
     """Per-request `X-Mock-Latency-Ms` header overrides the MOCK_LATENCY_MS
@@ -200,6 +270,18 @@ def _store_message(msg: MessageIn, author_id: str, deliver_voice: bool = False) 
     key = (msg.target_type.value, msg.target_id)
     _messages.setdefault(key, []).append(record)
     _message_seq[record.id] = next(_seq_counter)
+    if status in (MessageStatus.HELD, MessageStatus.BLOCKED):
+        blocked = status is MessageStatus.BLOCKED
+        _append_event(
+            record,
+            actor_kind=ModerationActorKind.CLASSIFIER,
+            actor_id=None,
+            label=ModerationLabel.E_HARMFUL if blocked else ModerationLabel.D_DISPUTATIONAL,
+            action=ModerationAction.BLOCK if blocked else ModerationAction.HOLD,
+            rationale=f"Mock classifier: the text contained {'block' if blocked else 'hold'!r}.",
+            confidence=0.9,
+            model_version="mock-classifier",
+        )
     return record
 
 
@@ -342,6 +424,159 @@ async def patch_my_settings(
     }
     _settings[x_mock_user_id] = current.model_copy(update=changes)
     return _settings[x_mock_user_id]
+
+
+def _require_moderator(
+    x_mock_role: str | None = Header(default=None),
+    x_mock_user_id: str = Header(default="mock-user-1"),
+) -> uuid.UUID:
+    if (x_mock_role or "").lower() not in ("moderator", "admin"):
+        raise HTTPException(status_code=403, detail="Insufficient role")
+    return _as_uuid(x_mock_user_id)
+
+
+def _find_message(message_id: str) -> MessageOut | None:
+    try:
+        uuid.UUID(message_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="message_id must be a UUID") from None
+    for history in _messages.values():
+        for message in history:
+            if message.id == message_id:
+                return message
+    return None
+
+
+def _encode_cursor(message_id: str) -> str:
+    return base64.urlsafe_b64encode(message_id.encode()).decode().rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> str:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        return str(uuid.UUID(base64.urlsafe_b64decode(padded.encode()).decode()))
+    except (ValueError, binascii.Error, UnicodeDecodeError):
+        raise HTTPException(status_code=422, detail="cursor is not a valid cursor") from None
+
+
+def _queue_item(message: MessageOut) -> ModerationQueueItem:
+    trail = _events[message.id]
+    return ModerationQueueItem(
+        message_id=_as_uuid(message.id),
+        author_id=_as_uuid(message.author_id),
+        author_display_name=message.author_id,
+        target_type=message.target_type.value,
+        target_id=_as_uuid(message.target_id),
+        original_text=message.text,
+        original_media_ref=message.media_ref,
+        # The mock has no translator: an obviously fake pivot, so the side-by-side view has
+        # two different texts to lay out.
+        pivot_text_en=f"[en] {message.text}" if message.text else None,
+        latest_event=trail[-1],
+        event_count=len(trail),
+        created_at=message.created_at,
+    )
+
+
+@app.get("/moderation/queue", response_model=ModerationQueueOut)
+async def moderation_queue(
+    cursor: str | None = None,
+    limit: int = Query(default=25, ge=1, le=100),
+    _moderator: uuid.UUID = Depends(_require_moderator),
+) -> ModerationQueueOut:
+    after = _message_seq.get(_decode_cursor(cursor), 0) if cursor is not None else 0
+    waiting = sorted(
+        (
+            m
+            for history in _messages.values()
+            for m in history
+            if m.status is MessageStatus.HELD and _events.get(m.id)
+        ),
+        key=lambda m: _message_seq[m.id],
+    )
+    rows = [m for m in waiting if _message_seq[m.id] > after][: limit + 1]
+    page = rows[:limit]
+    return ModerationQueueOut(
+        items=[_queue_item(m) for m in page],
+        next_cursor=_encode_cursor(page[-1].id) if len(rows) > limit else None,
+    )
+
+
+@app.get("/moderation/messages/{message_id}/events", response_model=ModerationEventsOut)
+async def moderation_events(
+    message_id: str, _moderator: uuid.UUID = Depends(_require_moderator)
+) -> ModerationEventsOut:
+    if _find_message(message_id) is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return ModerationEventsOut(
+        message_id=uuid.UUID(message_id), events=list(_events.get(message_id, []))
+    )
+
+
+def _decide(
+    message_id: str, body: ModerationReviewIn, moderator_id: uuid.UUID, action: ModerationAction
+) -> ModerationReviewOut:
+    message = _find_message(message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    # A release may reverse an earlier block; a block applies only to a message still waiting.
+    allowed = (
+        (MessageStatus.HELD, MessageStatus.BLOCKED)
+        if action is ModerationAction.ALLOW
+        else (MessageStatus.HELD,)
+    )
+    if message.status not in allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Message is {message.status.value!r}; it cannot be {action.value.lower()}ed",
+        )
+    trail = _events.get(message_id)
+    if not trail:
+        raise HTTPException(status_code=409, detail="Message has no moderation history to review")
+    latest = trail[-1]
+    if body.expected_event_id is not None and body.expected_event_id != latest.id:
+        raise HTTPException(
+            status_code=409, detail="The message was decided by someone else since you opened it"
+        )
+    label = body.label or latest.label
+    rationale = (
+        "Released by a moderator."
+        if action is ModerationAction.ALLOW
+        else "Blocked by a moderator."
+    )
+    if label != latest.label:
+        rationale += f" Label corrected from {latest.label.value} to {label.value}."
+    message.status = (
+        MessageStatus.DELIVERED if action is ModerationAction.ALLOW else MessageStatus.BLOCKED
+    )
+    event = _append_event(
+        message,
+        actor_kind=ModerationActorKind.MODERATOR,
+        actor_id=moderator_id,
+        label=label,
+        action=action,
+        rationale=rationale,
+        note=body.note,
+    )
+    return ModerationReviewOut(event=event, message_status=message.status.value, notice_sent=False)
+
+
+@app.post("/moderation/messages/{message_id}/release", response_model=ModerationReviewOut)
+async def moderation_release(
+    message_id: str,
+    body: ModerationReviewIn,
+    moderator_id: uuid.UUID = Depends(_require_moderator),
+) -> ModerationReviewOut:
+    return _decide(message_id, body, moderator_id, ModerationAction.ALLOW)
+
+
+@app.post("/moderation/messages/{message_id}/block", response_model=ModerationReviewOut)
+async def moderation_block(
+    message_id: str,
+    body: ModerationReviewIn,
+    moderator_id: uuid.UUID = Depends(_require_moderator),
+) -> ModerationReviewOut:
+    return _decide(message_id, body, moderator_id, ModerationAction.BLOCK)
 
 
 @app.websocket("/ws")
