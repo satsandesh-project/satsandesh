@@ -248,6 +248,19 @@ memory. Regenerate after a deliberate contract change:
 PYTHONPATH=../.. ./.venv/Scripts/python.exe tools/generate_fixtures.py
 ```
 
+## ASR comparison tool
+
+`tools/asr_compare.py` runs a directory of mono WAVs through faster-whisper small and
+medium and IndicConformer (CTC and RNNT), one engine at a time, and writes a CSV and a
+Markdown table (wall-clock, real-time factor, transcript, detected script, cold/warm,
+an empty "my verdict" column). It has no ground truth and claims no accuracy. Output
+goes to `tools/asr_compare_out/` (gitignored). Needs `HF_TOKEN` for the IndicConformer rows.
+
+```powershell
+cd services/ai
+$env:PYTHONPATH = "..\.."; $env:HF_TOKEN = "hf_..."
+.\.venv\Scripts\python.exe tools/asr_compare.py C:\path\to\wavs --lang te
+```
 ## Development
 
 ```bash
