@@ -689,5 +689,8 @@ the server for its DB-backed tests (the local Python lacks
   therefore wrong: it was done except for a stage I had not mentioned.
 - Recorded as OPEN_QUESTIONS #30 and asked of M3 on #98 rather than invented: the contract and
   service are M3's, and I have no evidence denoising helps.
-- Also still unproven: the real MT and render services have never run (no `HF_TOKEN`), so
-  "a note becomes N renderings" has only been shown against the mock.
+- When this was written the real MT and render services had never run (no `HF_TOKEN`), so
+  "a note becomes N renderings" had only been shown against the mock. **Since then they
+  have run, end to end (#102, 2026-10-04):** MT and render work and a note became the
+  right renderings for its readers. The weak link turned out to be the real ASR on Telugu
+  (wrong script, wrong meaning, erratic latency), which is M3's and is recorded on #98.
