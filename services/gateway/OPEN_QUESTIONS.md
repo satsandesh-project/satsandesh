@@ -380,3 +380,15 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     `/audio-labels/*` to the gateway, but still not `/onboarding*` or `/push*` (the elder app
     does not call them -- the first client to implement push or QR onboarding needs those
     routes), and deliberately not `/moderation*`.
+
+30. **The Week 7 task names a "denoise" stage that does not exist.** The plan
+    (`docs/retro/month-1.md`, "Week 7 -- third layer") gives M2 "denoise -> transcribe ->
+    pivot -> moderate -> render per receiver". The orchestrator (`app/pipeline.py`) runs
+    transcribe -> pivot -> moderate -> render. There is no denoise contract in `contracts/ai/`
+    and no denoise service or engine in `services/ai/`, so there was nothing to call -- and I
+    did not record that when I built the orchestrator, which is how it went unnoticed until a
+    completeness check against the plan. Whether it belongs inside the speech service (no
+    gateway change), as its own stage with a contract (I would add an optional stage that
+    degrades to the original audio), or not in Month 2 is M3's call: asked on #98. Not
+    measured: whether denoising would help real noisy recordings at all. Related, and possibly
+    the same fix: the ASR hallucinating words from silence and tones (#26).

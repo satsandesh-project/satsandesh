@@ -678,3 +678,19 @@ the server for its DB-backed tests (the local Python lacks
   `/moderation*` was checked to still NOT reach the gateway.
 - One surviving mutant ("contract_version is patchable"): equivalent -- setting a stray
   attribute on the ORM object has no effect anyone can observe -- so no test was invented for it.
+
+## Week 7 -- a completeness check found a stage I had silently skipped
+
+- Asked "is M2's Week 7 done?", I answered from my own phase list instead of the plan's
+  task line. Checking it against `docs/retro/month-1.md` showed the task is "denoise ->
+  transcribe -> pivot -> moderate -> render", and I had built everything but denoise. No
+  contract or service for it exists, so the omission was understandable -- but I never wrote
+  it down, and my earlier statement that the code in my lane was done after the merges was
+  therefore wrong: it was done except for a stage I had not mentioned.
+- Recorded as OPEN_QUESTIONS #30 and asked of M3 on #98 rather than invented: the contract and
+  service are M3's, and I have no evidence denoising helps.
+- When this was written the real MT and render services had never run (no `HF_TOKEN`), so
+  "a note becomes N renderings" had only been shown against the mock. **Since then they
+  have run, end to end (#102, 2026-10-04):** MT and render work and a note became the
+  right renderings for its readers. The weak link turned out to be the real ASR on Telugu
+  (wrong script, wrong meaning, erratic latency), which is M3's and is recorded on #98.
