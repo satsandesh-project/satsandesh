@@ -246,12 +246,12 @@ already known on 2026-09-22 so nobody rediscovers them from scratch.
 
 - [ ] Every console route requires `require_role("moderator", "admin")`; an
       elder token gets 403 on all of them, with a test proving it.
-- [ ] `moderation_events` is append-only. Satisfied as of 2026-10-04 by a DB
-      **trigger** refusing UPDATE/DELETE/TRUNCATE (M2, issue #65) rather than
-      the role privilege this item originally specified — accepted as the
-      stronger form, since a trigger holds even if the role is later widened.
-      Verify the trigger still exists; the privilege restriction remains worth
-      adding as defence in depth (`services/gateway/OPEN_QUESTIONS.md` #13). Release, block and
+- [ ] `moderation_events` is append-only. **Partly met** as of 2026-10-04: a DB trigger
+      refuses UPDATE/DELETE/TRUNCATE (M2, issue #65). That stops application bugs and
+      accidental statements and is tested, but it is not the role-privilege restriction this
+      item specifies: the app connects as the database owner, who can drop the trigger, and a
+      GRANT/REVOKE would not bind it. The fix is a separate low-privilege app role
+      (`db/init/`, compose env): `services/gateway/OPEN_QUESTIONS.md` #13. Release, block and
       appeal outcomes are new rows, not edits.
 - [ ] A moderator sees the original and the translation, and the audit log
       records *which* moderator acted, when, on which message, and the reason
