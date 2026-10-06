@@ -274,6 +274,21 @@ def test_the_scan_lists_only_the_orphan(db_session):
         .where(Message.id == finished)
         .values(status="sent", pipeline_state="complete")
     )
+    # One message per filter in the scan, each with no live job so that ONLY that filter keeps it
+    # out: the hold re-checks status, state and deletion, which would otherwise hide a missing one.
+    cancelled, *_ = _dm(db_session)
+    _delete_job(db_session, cancelled)
+    db_session.execute(update(Message).where(Message.id == cancelled).values(status="cancelled"))
+    complete, *_ = _dm(db_session)
+    _delete_job(db_session, complete)
+    db_session.execute(
+        update(Message).where(Message.id == complete).values(pipeline_state="complete")
+    )
+    deleted, *_ = _dm(db_session)
+    _delete_job(db_session, deleted)
+    db_session.execute(
+        update(Message).where(Message.id == deleted).values(deleted_at=datetime.now(UTC))
+    )
     db_session.commit()
 
     assert find_stuck_message_ids(db_session, grace_seconds=GRACE) == [orphan]
