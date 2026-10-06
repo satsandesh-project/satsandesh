@@ -5,8 +5,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app.db.base import get_db
 from app.config import get_settings
+from app.db.base import get_db
 from app.db.models import User as DbUser
 from app.db.repository import get_or_create_user
 from app.models import User

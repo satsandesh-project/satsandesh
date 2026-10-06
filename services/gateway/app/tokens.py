@@ -73,7 +73,7 @@ def verify_token(token: str) -> uuid.UUID:
             options=_REQUIRED,
         )
         return uuid.UUID(claims["sub"])
-    except Exception as exc:  # noqa: BLE001 -- anything wrong with a token is "invalid", never a 500
+    except Exception as exc:  # anything wrong with a token is "invalid", never a 500
         raise InvalidToken(type(exc).__name__) from exc
 
 
