@@ -36,6 +36,7 @@ from app.auth import get_current_user
 from app.config import get_settings
 from app.db.base import SessionLocal, get_db
 from app.db.models import Message
+from app.db.moderation import notices_for_author
 from app.db.renderings import VISIBLE_STATUSES, renderings_for_wire
 from app.db.repository import (
     can_post_to_circle,
@@ -69,7 +70,11 @@ def _parse_uuid(value: str, *, field: str) -> uuid.UUID:
         raise HTTPException(status_code=422, detail=f"{field} must be a valid UUID") from None
 
 
-def message_to_out(message: Message, renderings: list[Rendering] | None = None) -> MessageOut:
+def message_to_out(
+    message: Message,
+    renderings: list[Rendering] | None = None,
+    notice: tuple[str, str | None] | None = None,
+) -> MessageOut:
     """Maps a stored Message row to its wire shape. Each row's own real
     target, not any caller's frame of reference — for a DM, that flips
     depending on which direction a given message went (docs/SCHEMA_DRAFT.md
@@ -120,6 +125,8 @@ def message_to_out(message: Message, renderings: list[Rendering] | None = None) 
         renderings=(renderings or []) if out else [],
         transcript=message.transcript if out else None,
         transcript_language=message.transcript_language if out else None,
+        moderation_notice=notice[0] if notice else None,
+        moderation_notice_language=notice[1] if notice else None,
         created_at=message.created_at,
         status=message.status,
     )
@@ -406,7 +413,10 @@ def get_messages(
     page = rows[:limit]
 
     by_message = renderings_for_wire(db, page)
-    messages = [message_to_out(row, by_message.get(str(row.id))) for row in page]
+    notices = notices_for_author(db, page, caller_id)
+    messages = [
+        message_to_out(row, by_message.get(str(row.id)), notices.get(str(row.id))) for row in page
+    ]
     return SyncBatch(
         target_type=target_type, target_id=target_id, messages=messages, has_more=has_more
     )

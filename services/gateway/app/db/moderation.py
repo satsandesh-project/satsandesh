@@ -199,3 +199,37 @@ def list_moderation_queue(
         stmt = stmt.where(Message.id > after_message_id)
     rows = session.execute(stmt.order_by(Message.id).limit(limit)).all()
     return [(row[0], row[1], row[2], row[3]) for row in rows]
+
+
+def notices_for_author(
+    session: Session, messages: list[Message], viewer_id: uuid.UUID
+) -> dict[str, tuple[str, str | None]]:
+    """The sender's notice for each of `messages`, as `{message id: (text, language)}`, and ONLY for
+    those `viewer_id` wrote: the author-only rule lives here, so a caller cannot forget it and a
+    recipient who can read a nudged DM never receives the notice (OPEN_QUESTIONS #18, #25).
+
+    The notice is the one on the message's LATEST event. If a moderator ruled after the classifier
+    (a release, a block) there is no notice on that event and none is shown: the classifier's older
+    text would describe a state the message has left. One query for the whole page."""
+    ids = [m.id for m in messages if m.author_id == viewer_id]
+    if not ids:
+        return {}
+    latest = (
+        select(
+            ModerationEvent.message_id,
+            ModerationEvent.notice_text,
+            ModerationEvent.notice_language,
+        )
+        .where(ModerationEvent.message_id.in_(ids))
+        .distinct(ModerationEvent.message_id)
+        .order_by(
+            ModerationEvent.message_id,
+            ModerationEvent.created_at.desc(),
+            ModerationEvent.id.desc(),
+        )
+    )
+    return {
+        str(message_id): (text, language)
+        for message_id, text, language in session.execute(latest)
+        if text
+    }
