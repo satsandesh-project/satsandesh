@@ -166,7 +166,12 @@ average 2.5 to 7.5 before each depth). **No CPU or memory limit was set, and tha
 from inside every container**: `cpu.max` (cgroup v1 `quota=-1`), `Cpus_allowed_list=0-15`,
 `NanoCpus=0`. So every number below is *unconstrained on a shared host*, not "a 4-core pilot
 box". Real gateway, ASR, MT and render; moderation is the keyword stub;
-`AI_ACCEPT_WEBM_AS_OGG_OPUS=true` (#2 is untouched); `JOB_LEASE_SECONDS=60`. The notes are the
+`AI_ACCEPT_WEBM_AS_OGG_OPUS=true` (#2 is untouched); `JOB_LEASE_SECONDS=60`;
+**`UNDO_WINDOW_SECONDS=0`** (set by `run_proof_real.sh`). **That last one matters for how to read every
+number here:** the times are **pipeline time**, not what an elder waits. With the default 30 s undo
+window a message is delivered at `max(30 s, pipeline time)`, so a note whose pipeline takes 6 s is
+*visible after 30 s*, and these tables, which show 6 s, would understate the wait by 24 s (this
+section did not say so when it was first written; corrected 2026-10-06). The notes are the
 same **5-second** Piper clips as above, **not 30 seconds**. 18 depth runs in four invocations, 85
 notes (55 Telugu, 30 Hindi), one author, three readers (te, en, hi). Wall time is POST
 `/messages` until the **last** reader could see the note. Raw files: `/tmp/aireal-load/` on the
