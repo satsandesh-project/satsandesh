@@ -170,6 +170,11 @@ merged).
 
 ## Re-running the proof
 
+Both proof scripts run the gateway in `AUTH_MODE=jwt` and mint a signed token for each user
+(`python -m app.tokens`, inside the gateway container) instead of sending a bare UUID; set
+`AUTH_MODE=legacy` to run them the old way. The users are still inserted with SQL: a signed
+token for a user with no row is a 401, and nothing provisions one any more.
+
 ```bash
 cp ~/veerendra/.env .env        # POSTGRES_* and GATEWAY_* only; never commit it
 infra/ai/e2e/run_proof.sh       # mock MT/render: ~10 min first run (model download), then ~5 min
