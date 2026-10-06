@@ -520,9 +520,13 @@ def _translate_notice(
 # --- finishing -----------------------------------------------------------------------------
 
 
-def _holds(action: str) -> bool:
+def _holds(action: str, target_type: str) -> bool:
+    """Whether a verdict keeps the message from being delivered. NUDGE is target-aware (M4's
+    answer on #17, contracts/chat ModerationAction): "not delivered to a circle", while in a 1:1
+    it delivers unless the organisation's knob (PIPELINE_NUDGE_DELIVERS) says otherwise. There is
+    no "nudged" status, so a NUDGE that is not delivered is `held`."""
     if action == ModerationAction.NUDGE.value:
-        return not get_settings().PIPELINE_NUDGE_DELIVERS
+        return target_type == "circle" or not get_settings().PIPELINE_NUDGE_DELIVERS
     return action in (ModerationAction.HOLD.value, ModerationAction.BLOCK.value)
 
 
@@ -533,7 +537,7 @@ def _finish(session: Session, message: Message, action: str, *, state: str) -> N
     pending is always followed by this delivery."""
     message_id = message.id
     new_status = None
-    if _holds(action):
+    if _holds(action, message.target_type):
         target = "blocked" if action == ModerationAction.BLOCK.value else "held"
         # False when an earlier (crashed) attempt already applied it.
         if set_message_status(session, message_id, new_status=target, expected="pending"):
@@ -549,7 +553,7 @@ def _finish(session: Session, message: Message, action: str, *, state: str) -> N
     if new_status is not None:
         _notify_author(message_id, new_status)
         return
-    if _holds(action) or message.status != "pending":
+    if _holds(action, message.target_type) or message.status != "pending":
         return
     expires = message.undo_expires_at
     if expires is None or expires <= datetime.now(UTC):
