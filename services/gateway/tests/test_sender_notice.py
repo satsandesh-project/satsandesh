@@ -205,3 +205,41 @@ def test_websocket_sync_shows_the_author_and_not_the_recipient(client, db_sessio
     )
     assert as_recipient["moderation_notice"] is None
     assert as_recipient["moderation_notice_language"] is None
+
+
+# --- the live half: the message.status frame -----------------------------------------------------
+
+
+def test_the_status_frame_to_the_sender_carries_the_notice(db_session):
+    from app.pipeline import build_status_frame
+
+    alice, bob = _user(db_session, "Alice"), _user(db_session, "Bob")
+    message_id = _dm(db_session, alice, bob, status="held")
+
+    recipient_id, frame = build_status_frame(db_session, message_id, "held")
+
+    assert recipient_id == alice.id, "addressed to the author's devices and nobody else's"
+    assert frame["type"] == "message.status"
+    assert frame["data"]["status"] == "held"
+    assert frame["data"]["notice_text"] == NOTICE and frame["data"]["notice_language"] == "te"
+    for secret in SECRET_WORDS:
+        assert secret not in str(frame), f"the frame must not carry {secret!r}"
+
+
+def test_a_status_frame_owing_no_notice_carries_none(db_session):
+    # A pipeline failure holds the message with a SYSTEM event that has no notice: the frame says
+    # `held` and nothing else. The wording for that case is M4's call, not invented here.
+    from app.pipeline import build_status_frame
+
+    alice, bob = _user(db_session, "Alice"), _user(db_session, "Bob")
+    message_id = _dm(db_session, alice, bob, status="held", notice=None)
+
+    _recipient, frame = build_status_frame(db_session, message_id, "held")
+
+    assert frame["data"]["notice_text"] is None and frame["data"]["notice_language"] is None
+
+
+def test_there_is_no_frame_for_a_message_that_no_longer_exists(db_session):
+    from app.pipeline import build_status_frame
+
+    assert build_status_frame(db_session, uuid.uuid4(), "held") is None
