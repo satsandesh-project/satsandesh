@@ -256,7 +256,9 @@ def test_the_recipient_cannot_read_a_stuck_message_before_or_after_it_is_held(db
 def test_neither_the_log_nor_the_event_carries_what_the_message_says(db_session, outbox, caplog):
     message_id, *_ = _dm(db_session, text=SECRET_TEXT)
     db_session.execute(
-        update(Message).where(Message.id == message_id).values(transcript=SECRET_TRANSCRIPT)
+        update(Message)
+        .where(Message.id == message_id)
+        .values(transcript=SECRET_TRANSCRIPT, transcript_language="te")  # the two go together
     )
     db_session.commit()
     _delete_job(db_session, message_id)
