@@ -256,6 +256,42 @@ def test_one_stuck_message_among_healthy_ones_is_the_only_one_held(db_session, o
     assert _msg(db_session, healthy).status == "pending"
 
 
+# --- the race between the scan and the hold ---------------------------------------------------
+# The scan and the hold are separate transactions; a message can change in between. The hold
+# re-checks under a row lock. Simulated by making the scan report a message that is no longer
+# (or never was) stuck.
+
+
+def test_a_message_that_finished_after_the_scan_is_not_held(db_session, outbox, monkeypatch):
+    import app.pipeline_watchdog as watchdog
+
+    message_id, *_ = _dm(db_session)
+    _delete_job(db_session, message_id)
+    db_session.execute(
+        update(Message)
+        .where(Message.id == message_id)
+        .values(status="cancelled")  # the sender undid it after the scan
+    )
+    db_session.commit()
+    monkeypatch.setattr(watchdog, "find_stuck_message_ids", lambda *a, **k: [message_id])
+
+    assert hold_stuck_messages(grace_seconds=GRACE) == []
+    assert _msg(db_session, message_id).status == "cancelled"
+    assert list_moderation_events(db_session, message_id) == []
+    assert outbox == []
+
+
+def test_a_message_that_got_a_live_job_after_the_scan_is_not_held(db_session, outbox, monkeypatch):
+    import app.pipeline_watchdog as watchdog
+
+    message_id, *_ = _dm(db_session)  # still has its queued job
+    monkeypatch.setattr(watchdog, "find_stuck_message_ids", lambda *a, **k: [message_id])
+
+    assert hold_stuck_messages(grace_seconds=GRACE) == []
+    assert _msg(db_session, message_id).status == "pending"
+    assert list_moderation_events(db_session, message_id) == []
+
+
 # --- where the signal goes, and who can read it ---------------------------------------------
 
 
