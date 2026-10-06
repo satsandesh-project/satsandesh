@@ -1,0 +1,97 @@
+{
+  "contract_version": "0.2.0",
+  "items": [
+    {
+      "message_id": "ff69d52b-7244-4889-b5ea-7c90a07e86c0",
+      "author_id": "0f276def-a0f1-4e1d-ad06-6bcbc8dfbb2c",
+      "author_display_name": "Ramesh",
+      "target_type": "circle",
+      "target_id": "166938ee-a7e1-4897-8bdc-c6c0d3e4d734",
+      "original_text": "భజనలు ఇప్పుడు జరుగుతున్న విధానం పూర్తిగా తప్పు.",
+      "original_language": "te",
+      "original_media_ref": null,
+      "pivot_text_en": "The way the bhajans are conducted now is completely wrong.",
+      "latest_event": {
+        "id": "5f7e056d-06e5-4054-9130-b0cc48ce67fc",
+        "message_id": "ff69d52b-7244-4889-b5ea-7c90a07e86c0",
+        "actor_kind": "classifier",
+        "actor_id": null,
+        "label": "D_DISPUTATIONAL",
+        "action": "HOLD",
+        "confidence": 0.81,
+        "rationale": "Criticism of how the circle is run; reads as a dispute.",
+        "note": null,
+        "notice_text": "Your message is waiting for a volunteer to read it.",
+        "policy_version": "policy@2026-09-22",
+        "model_version": "llama.cpp:qwen2.5-3b-instruct-q4_k_m.gguf",
+        "degraded": false,
+        "created_at": "2026-10-01T15:18:56.521972Z"
+      },
+      "event_count": 1,
+      "created_at": "2026-10-01T15:16:56.521972Z"
+    },
+    {
+      "message_id": "d7c216fc-3633-4afe-888a-0e8e326ab0de",
+      "author_id": "5edb9c14-e737-48dd-8aba-722ab62895cd",
+      "author_display_name": "Kamala",
+      "target_type": "circle",
+      "target_id": "4b324b80-e093-4be1-b086-4ce68877815a",
+      "original_text": null,
+      "original_language": "te",
+      "original_media_ref": {
+        "uri": "media:9f1c2b7e",
+        "format": "webm_opus",
+        "duration_ms": 18400
+      },
+      "pivot_text_en": "I want to kill my ego completely. Swami, help me destroy this pride.",
+      "latest_event": {
+        "id": "e21ebed8-bdd6-4c51-bf48-ce07d82586ee",
+        "message_id": "d7c216fc-3633-4afe-888a-0e8e326ab0de",
+        "actor_kind": "classifier",
+        "actor_id": null,
+        "label": "E_HARMFUL",
+        "action": "HOLD",
+        "confidence": 0.78,
+        "rationale": "Violent phrasing; may be devotional idiom. Below the block threshold.",
+        "note": null,
+        "notice_text": "Your message is waiting for a volunteer to read it.",
+        "policy_version": "policy@2026-09-22",
+        "model_version": "llama.cpp:qwen2.5-3b-instruct-q4_k_m.gguf",
+        "degraded": false,
+        "created_at": "2026-10-01T14:59:56.521972Z"
+      },
+      "event_count": 2,
+      "created_at": "2026-10-01T14:57:56.521972Z"
+    },
+    {
+      "message_id": "cca3247e-3243-4c04-8b7d-7d5d436ed505",
+      "author_id": "b430a330-af7b-4a70-8111-6b5e1f3fdb38",
+      "author_display_name": "Lakshmi",
+      "target_type": "user",
+      "target_id": "57885f01-0e21-4ba8-94d5-9f03aa0873ef",
+      "original_text": "Please pray for my husband, he is in hospital.",
+      "original_language": "en",
+      "original_media_ref": null,
+      "pivot_text_en": null,
+      "latest_event": {
+        "id": "c200fcea-fd7d-41fd-9acf-62530f84592a",
+        "message_id": "cca3247e-3243-4c04-8b7d-7d5d436ed505",
+        "actor_kind": "classifier",
+        "actor_id": null,
+        "label": "D_DISPUTATIONAL",
+        "action": "HOLD",
+        "confidence": 0.0,
+        "rationale": "Classifier produced no usable verdict; held for human review. timeout after 20s",
+        "note": null,
+        "notice_text": "Your message is waiting for a volunteer to read it.",
+        "policy_version": "policy@2026-09-22",
+        "model_version": "llama.cpp:qwen2.5-3b-instruct-q4_k_m.gguf",
+        "degraded": true,
+        "created_at": "2026-10-01T15:26:56.521972Z"
+      },
+      "event_count": 1,
+      "created_at": "2026-10-01T15:25:56.521972Z"
+    }
+  ],
+  "next_cursor": null
+}

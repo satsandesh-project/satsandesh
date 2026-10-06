@@ -1,0 +1,6 @@
+reflex==0.9.9
+httpx>=0.27
+# Not pulled in by Reflex 0.9: admin_console/source.py imports
+# contracts.chat.moderation, which is pydantic models. Without this a clean
+# `pip install -r requirements.txt` then `reflex run` is an ImportError.
+pydantic>=2
