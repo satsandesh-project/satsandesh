@@ -605,6 +605,44 @@ def test_a_nudge_can_be_configured_to_hold_instead(db_session, fake, outbox, mon
     assert outbox["delivery"] == []
 
 
+def _circle_message(db_session, *, due=True):
+    author = _user(db_session, "Author", "te")
+    circle = create_circle(db_session, name="Satsang", created_by=author.id)
+    add_member(db_session, circle_id=circle.id, user_id=author.id, role="admin")
+    add_member(db_session, circle_id=circle.id, user_id=_user(db_session, "Other", "hi").id)
+    return _message(db_session, author, target_circle=circle, due=due)
+
+
+def test_a_nudge_to_a_circle_is_not_delivered_even_though_a_dm_nudge_is(db_session, fake, outbox):
+    # M4's answer on #17 (contracts/chat ModerationAction): NUDGE is "not delivered to a circle";
+    # in a 1:1 it is the organisation's knob and delivers until they decide otherwise.
+    fake.action = ModerationAction.NUDGE
+    fake.label = ModerationLabel.C_PERSONAL
+    fake.nudge_text = "Please be gentle."
+    message_id = _circle_message(db_session)
+
+    _run(db_session, message_id)
+
+    assert _msg(db_session, message_id).status == "held"
+    assert outbox["delivery"] == []
+    assert outbox["status"] == [(message_id, "held")], "the sender's devices are told"
+    (event,) = list_moderation_events(db_session, message_id)
+    assert event.action == "NUDGE", "recorded as the classifier's NUDGE, not rewritten to HOLD"
+
+
+def test_the_nudge_setting_only_governs_dms_a_circle_nudge_never_delivers(
+    db_session, fake, outbox, monkeypatch
+):
+    monkeypatch.setattr(get_settings(), "PIPELINE_NUDGE_DELIVERS", True)
+    fake.action = ModerationAction.NUDGE
+    fake.nudge_text = "Please be gentle."
+    message_id = _circle_message(db_session)
+
+    _run(db_session, message_id)
+
+    assert _msg(db_session, message_id).status == "held"
+
+
 # --- the sender's notice (decision 8) ----------------------------------------------------------------------
 
 
