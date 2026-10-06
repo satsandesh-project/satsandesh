@@ -1,3 +1,4 @@
+1 file reformatted
 """Client half of test_tls_internal.sh: runs INSIDE the test network.
 
 usage: tls_check.py <host-or-ip> <root.crt>
@@ -63,9 +64,17 @@ def get(path):
 
 try:
     got = {p: get(p) for p in ("/me/settings", "/messages", "/moderation/queue", "/")}
-    check("/me/settings reaches the gateway", got["/me/settings"].startswith("GATEWAY"), got["/me/settings"])
+    check(
+        "/me/settings reaches the gateway",
+        got["/me/settings"].startswith("GATEWAY"),
+        got["/me/settings"],
+    )
     check("/messages reaches the gateway", got["/messages"].startswith("GATEWAY"), got["/messages"])
-    check("/moderation is still NOT routed to the gateway", got["/moderation/queue"].startswith("ELDER-APP"), got["/moderation/queue"])
+    check(
+        "/moderation is still NOT routed to the gateway",
+        got["/moderation/queue"].startswith("ELDER-APP"),
+        got["/moderation/queue"],
+    )
     check("everything else reaches the elder-app", got["/"].startswith("ELDER-APP"), got["/"])
 except Exception as e:  # noqa: BLE001
     check("routing checks ran", False, repr(e))
