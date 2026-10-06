@@ -63,6 +63,10 @@ services:
       # own "Docker gotcha" note, written in advance of this exact step.
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       JWT_SECRET: ${GATEWAY_JWT_SECRET}
+      # How a bearer token becomes a user: `legacy` (default; a UUID is that user, the old stub)
+      # or `jwt` (only a signed token is accepted). Do NOT set `jwt` on a deployment whose
+      # elder app cannot yet obtain a signed token (services/gateway/OPEN_QUESTIONS.md #32).
+      AUTH_MODE: ${AUTH_MODE:-legacy}
       VAPID_PRIVATE_KEY: ${GATEWAY_VAPID_PRIVATE_KEY}
       VAPID_PUBLIC_KEY: ${GATEWAY_VAPID_PUBLIC_KEY}
       VAPID_SUBJECT: ${GATEWAY_VAPID_SUBJECT:-mailto:dev@example.com}

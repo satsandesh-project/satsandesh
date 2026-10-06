@@ -312,6 +312,13 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     moderator account exists on a deployment real people can reach. Not in
     scope for this phase; recorded because it is the biggest risk the
     console adds.
+    **UPDATE (Week 8, step 1 of 2):** signed tokens now exist (`app/tokens.py`, HS256,
+    `sub`/`iss`/`iat`/`exp` all required, algorithm pinned) and `AUTH_MODE=jwt` accepts only
+    them; a token that looks like a JWT is verified strictly in EVERY mode, and the role is
+    read from `users.role` on each request. **The risk above is NOT closed:** the default is
+    still `AUTH_MODE=legacy` (a UUID is that user), because the elder app cannot obtain a
+    signed token yet (#32), and no deployment runs `jwt`. It closes for a deployment when
+    that deployment runs `jwt`. Until then `/moderation*` stays unrouted by Caddy.
 
 24. **Console scope decisions worth confirming with M4.** (a) The queue shows
     only `held` messages; `blocked` ones are not browsable (appeals are
@@ -378,8 +385,10 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     wrong hour with no error anywhere.
 
 29. **What still blocks switching the pipeline on for real users** (after this change,
-    `/me/settings` no longer does): real JWT verification (the moderator routes and held-audio
-    access rest on a stub identity, #23); M1's `timezone` on `/me/settings` (#28; #92, which
+    `/me/settings` no longer does): real JWT verification **turned on** (the code exists since
+    Week 8 and is verified, `AUTH_MODE=jwt`, but it is off by default and no deployment runs it:
+    the moderator routes and held-audio access still rest on a stub identity until one does,
+    #23, and switching it on needs the elder app to obtain a signed token first, #32); M1's `timezone` on `/me/settings` (#28; #92, which
     sends `source_lang` so typed messages are not all treated as Telugu, has since merged);
     M4's answers (#24) and a notice surface
     for a held sender (#18); and M3's ASR choice, `webm_opus` handling and the
@@ -420,3 +429,27 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     **At his request the orchestrator is NOT pointed at a per-language ASR split yet** (it
     would need to choose the transcribe URL by declared language; not built). The size of
     the risk is unmeasured: the test speech was synthetic and one sentence.
+
+32. **The elder app has no way to obtain a signed token, so `AUTH_MODE=jwt` cannot be
+    switched on for staging yet.** The app mints its own random UUID in the browser
+    (`crypto.randomUUID()`, `window.__satToken`) and sends it as the Bearer token; nothing
+    server-side ever issued it. The only issuer is onboarding's `/activate` (a family member
+    invites; the elder scans a QR), which now also returns a signed `access_token` -- but
+    the elder app does not call onboarding, and Caddy does not route `/onboarding*`. The 36
+    users on staging hold client-made UUIDs, so a cutover also strands them. Options, a
+    decision for M1 (client) and M4/the supervisor (is open self-registration acceptable?):
+    (a) the elder app uses the QR onboarding flow; (b) a self-registration endpoint that
+    creates a user and returns a token -- simple, but then anyone can mint accounts, which is
+    exactly as open as the stub is today; (c) keep the UUID for existing users and require
+    signed tokens only for moderators/admins (a role-based `AUTH_MODE`). Not built: no
+    endpoint was added without that decision. A moderator today gets a token from an
+    operator: `python -m app.tokens <user-uuid>`.
+
+33. **What a signed token still does not do.** No revocation (a stolen token works until it
+    expires, 30 days by default, `AUTH_TOKEN_TTL_SECONDS`), no refresh, no secret rotation.
+    `JWT_SECRET` signs both session tokens and onboarding invites (the formats cannot be
+    confused, but a weak secret weakens both; CI uses a 21-character placeholder and nothing
+    enforces a minimum length). The WebSocket takes the token in the URL query (`?token=`,
+    because browsers cannot set headers on a handshake), so it can appear in proxy and access
+    logs; a short-lived ticket exchanged over HTTP first would avoid that. An unknown `sub`
+    is a 401 and is not provisioned, which is the intended change from the stub.

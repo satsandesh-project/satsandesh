@@ -36,6 +36,9 @@ export POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-55433}"
 export AI_PIVOT_URL=http://ai-mock:8001 AI_RENDER_URL=http://ai-mock:8001
 export UNDO_WINDOW_SECONDS=0 JOB_LEASE_SECONDS=20 JOB_MAX_ATTEMPTS=3 AI_ACCEPT_WEBM_AS_OGG_OPUS=true
 export PIPELINE_ENABLED=true
+# The proof runs under the REAL token verification: the gateway in `jwt` mode (a bare UUID is a
+# 401) and every user holds a SIGNED token minted below. AUTH_MODE=legacy to compare.
+export AUTH_MODE="${AUTH_MODE:-jwt}"
 
 DC="docker compose -p $P -f docker-compose.yml -f docker-compose.ai.yml --profile mock"
 PGUSER=$(grep -E '^POSTGRES_USER=' .env | cut -d= -f2)
@@ -45,7 +48,8 @@ BOB=00000000-0000-4000-8000-000000000002
 MOD=00000000-0000-4000-8000-000000000003
 
 psql_q() { $DC exec -T postgres psql -q -t -A -U "$PGUSER" -d "$PGDB" -c "$1"; }
-driver() { docker run --rm --network "${P}_default" -v "$HERE":/e2e "${P}-gateway" python /e2e/proof_driver.py "$@"; }
+mint() { $DC exec -T gateway python -m app.tokens "$1" < /dev/null | tail -1; }
+driver() { docker run --rm --network "${P}_default" -e TOKEN_ALICE -e TOKEN_BOB -e TOKEN_MOD -v "$HERE":/e2e "${P}-gateway" python /e2e/proof_driver.py "$@"; }
 say()    { printf '\n=== %s\n' "$*"; }
 field()  { sed -n "s/.*\"$1\": \"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" | head -1; }
 send()   {  # send <file> <label>: prints the event, sets MSG and SENT_AT
@@ -68,7 +72,12 @@ cleanup() { if [ "$KEEP" = 0 ]; then $DC down -v >/dev/null 2>&1; echo "(stack r
 trap cleanup EXIT
 
 say "0. samples"
-[ -f "$HERE/samples/silence.webm" ] || { mkdir -p "$HERE/samples"; "$HERE/make_samples.sh" "$HERE/samples"; }
+# `bash`, not the file's own executable bit: a checkout from Windows (or `core.fileMode=false`)
+# has none, and a proof whose recordings were never made is not a proof.
+[ -s "$HERE/samples/silence.webm" ] || { mkdir -p "$HERE/samples"; bash "$HERE/make_samples.sh" "$HERE/samples"; }
+for f in speech.webm silence.webm; do
+  [ -s "$HERE/samples/$f" ] || { echo "PRECONDITION FAILED: $HERE/samples/$f was not made; this proof would prove nothing"; exit 1; }
+done
 ls -l "$HERE/samples"
 
 say "1. bring the stack up (own Postgres, own volumes; project $P)"
@@ -85,6 +94,9 @@ psql_q "INSERT INTO users (id,name,preferred_language,role) VALUES
   ('$MOD','Moderator','en','moderator')
   ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, preferred_language = EXCLUDED.preferred_language" >/dev/null
 psql_q "SELECT '  '||name||' role='||role||' language='||preferred_language FROM users ORDER BY name"
+# The users exist now (a signed token for a user with no row is a 401), so mint their tokens.
+export TOKEN_ALICE=$(mint $ALICE) TOKEN_BOB=$(mint $BOB) TOKEN_MOD=$(mint $MOD)
+echo "auth: AUTH_MODE=$AUTH_MODE, signed tokens minted for 3 users (${#TOKEN_ALICE} chars each)"
 driver queue
 
 say "3. SCENARIO A: real speech. The undo window is 0, so delivery is attempted at once; it must WAIT for the pipeline"
