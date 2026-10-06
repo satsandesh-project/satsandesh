@@ -8,6 +8,8 @@
 #      pointed at https://10.x.x.x:PORT) sends no server name, and Caddy then looks up the address
 #      the connection ARRIVED on, which behind docker port publishing is the container's own, not
 #      the host's: no certificate, `tlsv1 alert internal error`. Found from a laptop, not in-network;
+#      HTTP/3 is switched off (`servers { protocols h1 h2 }`): Caddy would advertise it on :443
+#      with Alt-Svc, a UDP port this stack does not publish, and browsers would try and time out.
 #   1. a global `auto_https disable_redirects`, so the redirect below is the ONLY redirect and
 #      points at the port browsers really reach HTTPS on (Caddy's own redirect would use the
 #      default 443, which this stack does not publish);
@@ -34,7 +36,7 @@ fi
 if [ "$PORT" = "443" ]; then TARGET="https://$TLS_HOST"; else TARGET="https://$TLS_HOST:$PORT"; fi
 
 {
-  printf '{\n\tauto_https disable_redirects\n\tdefault_sni %s\n}\n\n' "$TLS_HOST"
+  printf '{\n\tauto_https disable_redirects\n\tdefault_sni %s\n\tservers {\n\t\tprotocols h1 h2\n\t}\n}\n\n' "$TLS_HOST"
   printf ':80 {\n\tredir %s{uri} 302\n}\n\n' "$TARGET"
   awk -v host="$TLS_HOST" '
     !done && $0 == ":80 {" {
