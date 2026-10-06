@@ -98,9 +98,16 @@ Observed from the running endpoint (2026-10-06): the **leaf** certificate is val
    TLS-ALPN is used), which only whoever runs the network can open; for (b): DNS API credentials
    and a Caddy build with the provider's plugin.
 3. **The elder app must be told it is on HTTPS.** Its API origin (`PUBLIC_ORIGIN` /
-   `REFLEX_API_URL`, `GATEWAY_PUBLIC_URL`) and the gateway's `CORS_ORIGINS` are `http://...:8095`
-   today; a page served over HTTPS that calls an `http://` API is blocked as mixed content. **This
-   was not tested**: the proof stack ran the gateway and Caddy, not the elder app.
+   `REFLEX_API_URL`, `GATEWAY_PUBLIC_URL`) and the gateway's `CORS_ORIGINS` (`ALLOWED_ORIGINS`) are
+   `http://...:8095` today; a page served over HTTPS that calls an `http://` API is blocked as
+   mixed content. Set **both** `PUBLIC_ORIGIN` and `ALLOWED_ORIGINS` to
+   `https://<TLS_HOST>:<port>` and restart the gateway **and the elder app**, not only Caddy: the
+   elder app reads that address when it starts. M1 tested this on a separate demo stack
+   (not staging): the built page then has no `http://` address left and uses `wss://` for its
+   WebSocket, `wss://` handshakes to the elder app's `/_event` and the gateway's `/ws` returned 101,
+   and a CORS preflight from the HTTPS origin is allowed (the old `http://` origin is refused).
+   **Still not tested:** a real browser going through the certificate warning to load the app and
+   use the microphone.
 4. HSTS and a permanent redirect, only after (1).
 5. `AUTH_MODE=jwt` for any deployment real people reach (`OPEN_QUESTIONS.md` #23, #32).
 
