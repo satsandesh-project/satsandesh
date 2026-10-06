@@ -70,4 +70,19 @@ try:
 except Exception as e:  # noqa: BLE001
     check("routing checks ran", False, repr(e))
 
+# 5. the PLAIN-HTTP URL people use today must keep working, not redirect to an HTTPS port that
+#    may not be published (turning the mode on must not break anyone already on http://)
+try:
+    plain = http.client.HTTPConnection(host, 80, timeout=10)
+    plain.request("GET", "/me/settings")
+    resp = plain.getresponse()
+    body = resp.read().decode()
+    check(
+        "plain HTTP on :80 still answers (no redirect)",
+        resp.status == 200 and body.startswith("GATEWAY"),
+        f"status={resp.status} location={resp.getheader('Location')} body={body[:30]!r}",
+    )
+except Exception as e:  # noqa: BLE001
+    check("plain HTTP on :80 still answers (no redirect)", False, repr(e))
+
 sys.exit(1 if failures else 0)
