@@ -552,3 +552,39 @@ cached thereafter). A rationale cap + 8 threads bought only 10–20 %.
 the report is copied from them. `ruff` clean; 111 tests still green.
 
 **Where it ran:** local.
+
+## 2026-10-06 — Moderator console v1: review round on #103 (Week 7 · PR #103)
+
+**Asked for:** Fix the three review items on #103 (Kshitiz, Veerendra): a
+missing `pydantic` dependency, a README that called switching to the real
+gateway "a config change", and a queue fetch that read one page.
+
+**Produced:** `GatewayQueueSource.fetch_queue` follows `next_cursor` to the
+end; every non-409 failure becomes a `SourceError` shown as a banner (a
+failed refresh keeps the last queue); the source is chosen from
+`CONSOLE_SOURCE` / `CONSOLE_GATEWAY_*` at startup; `requirements.txt` gains
+`pydantic` and `httpx`, `requirements-dev.txt` is new; the fixture defaults
+to "no sender notice delivered", as the gateway does today. 36 tests, run
+against the chat mock in-process.
+
+**Corrected:**
+- My first paging test claimed to cover the bug but asked for 100 per page,
+  so 30 items never reached the server's default of 25 and it passed with
+  the bug present. A mutation check (bug reintroduced) caught it; the test
+  was renamed to say what it checks and a real three-page test added.
+- My first clean-venv check proved only the dev dependencies: `pydantic`
+  came in through `fastapi`. Re-ran on a venv with `requirements.txt` only.
+- The README's "a config change" claim was mine; the source was built at
+  import time and read no setting.
+
+**Decided differently:**
+- Did not add role gating or the voice-note transcript to this round; both
+  are listed under "Not done yet" in the README rather than half-built.
+- Did not put the console in CI here; one job covering both clients is worth
+  more than one each.
+
+**Verified by:** `ruff check` and `ruff format --check` clean repo-wide;
+36 console tests pass in the working venv and in clean venvs; the paging
+test fails with the original bug put back.
+
+**Where it ran:** local.
