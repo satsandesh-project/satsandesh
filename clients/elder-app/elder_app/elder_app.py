@@ -213,6 +213,7 @@ TEXTS = {
         "status_delivered": "Delivered",
         "status_cancelled": "Cancelled",
         "status_held": "Waiting for review",
+        "status_processing": "Processing...",
         "status_blocked": "Not sent",
         "quiet_hours_title": "Quiet hours",
         "quiet_hours_hint": "No message sounds or push alerts between these times.",
@@ -302,6 +303,7 @@ TEXTS = {
         "status_delivered": "అందింది",
         "status_cancelled": "రద్దు చేయబడింది",
         "status_held": "సమీక్ష కోసం వేచి ఉంది",
+        "status_processing": "ప్రాసెస్ అవుతోంది...",
         "status_blocked": "పంపబడలేదు",
         "quiet_hours_title": "నిశ్శబ్ద సమయం",
         "quiet_hours_hint": "ఈ సమయాల మధ్య సందేశ శబ్దాలు లేదా పుష్ నోటిఫికేషన్లు రావు.",
@@ -528,6 +530,17 @@ window.__satsandeshWsInit = true;
     return (STATUS_TEXT[ui] || STATUS_TEXT.en)[key];
   }
 
+  // How long ago the sender's own device heard the server accept this message. A message the
+  // server still calls `pending` after the undo window is not 'sending' any more and cannot be
+  // undone: with the pipeline on, delivery waits for transcription, translation and moderation,
+  // which can take a minute (it was measured at 6 to 60 s for one Telugu note), and a held
+  // message can stay pending until a person decides. Locally-sent messages are timed from the
+  // ack; ones loaded from the server are timed from its created_at.
+  function pastUndoWindow(msg) {
+    const since = msg.ack_at || (msg.created_at ? Date.parse(msg.created_at) : 0);
+    return !!since && Date.now() > since + UNDO_WINDOW_MS;
+  }
+
   function statusLabel(msg) {
     if (msg.status === "cancelled") return statusWord("status_cancelled");
     // Set aside by the pipeline or a moderator. The sender is told only that it did not go
@@ -554,6 +567,7 @@ window.__satsandeshWsInit = true;
     }
     if (msg.status === "delivered") return statusWord("status_delivered");
     if (msg.status === "sent") return statusWord("status_sent");
+    if (msg.status === "pending" && pastUndoWindow(msg)) return statusWord("status_processing");
     return statusWord("status_pending");
   }
 
@@ -820,7 +834,8 @@ window.__satsandeshWsInit = true;
       bubble.style.background = isOwn ? "#EAF1EC" : "#FFFCF6";
       bubble.style.border = isOwn ? "none" : "1px solid #EADCC4";
       bubble.style.fontFamily = "Mulish, 'Noto Sans Telugu', system-ui, sans-serif";
-      bubble.style.cursor = isOwn && msg.status === "pending" ? "pointer" : "default";
+      bubble.style.cursor =
+        isOwn && msg.status === "pending" && !pastUndoWindow(msg) ? "pointer" : "default";
       if (!isOwn && msg.target_type === "circle") {
         // No user directory exists yet (see module docstring's
         // "Contacts" section) -- a circle has no way to resolve another
@@ -851,7 +866,7 @@ window.__satsandeshWsInit = true;
         status.style.fontStyle = isCancelledOrFailed ? "italic" : "normal";
         status.textContent = statusLabel(msg);
         bubble.appendChild(status);
-        if (msg.status === "pending" && msg.id) {
+        if (msg.status === "pending" && msg.id && !pastUndoWindow(msg)) {
           bubble.onclick = () => cancelMessage(msg.id, contactId);
         }
       }
@@ -876,16 +891,59 @@ window.__satsandeshWsInit = true;
     if (window.__satCurrentContactId === contactId) renderCurrentThread();
   }
 
+  // After the undo window, ask the server what became of the message instead of assuming it was
+  // sent: the window ending only means the SERVER is now free to deliver it. Delivery waits for
+  // the pipeline when it is on, and a message can be held for a person or fail closed, so a blind
+  // local 'Sent' told the sender something untrue. Polling GET /messages (the author sees their
+  // own messages in every status) and merging only the status avoids replacing the whole thread,
+  // which the sync frame does and which would drop messages still in flight.
+  const POLL_EVERY_MS = 5000;
+  const POLL_FOR_MS = 5 * 60 * 1000;
+
+  async function pollMessageStatus(contactId, messageId, startedAt) {
+    const thread = threadFor(contactId);
+    const local = thread.find((x) => x.id === messageId);
+    if (!local || local.status !== "pending") return;
+    try {
+      const params = new URLSearchParams({
+        target_type: local.target_type || "user",
+        target_id: contactId,
+        limit: "200",
+      });
+      const resp = await fetch(GATEWAY_URL + "/messages?" + params.toString(), {
+        headers: { Authorization: "Bearer " + window.__satToken },
+      });
+      if (resp.ok) {
+        const batch = await resp.json();
+        const remote = (batch.messages || []).find((m) => m.id === messageId);
+        if (remote && remote.status !== "pending") {
+          upsertMessage(contactId, { id: messageId, status: remote.status });
+          return;
+        }
+      }
+    } catch (err) {
+      // Offline or a blip: keep showing 'Processing' and try again.
+    }
+    if (Date.now() - startedAt < POLL_FOR_MS) {
+      window.__satPendingTimers[messageId] = setTimeout(
+        () => pollMessageStatus(contactId, messageId, startedAt),
+        POLL_EVERY_MS
+      );
+    }
+  }
+
   function scheduleSentTransition(contactId, messageId) {
     if (window.__satPendingTimers[messageId]) clearTimeout(window.__satPendingTimers[messageId]);
     window.__satPendingTimers[messageId] = setTimeout(() => {
-      delete window.__satPendingTimers[messageId];
-      const thread = threadFor(contactId);
-      const m = thread.find((x) => x.id === messageId);
-      if (m && m.status === "pending") {
-        upsertMessage(contactId, { id: messageId, status: "sent" });
-      }
+      // The window is over: the label changes from 'Sending... (tap to cancel)' to 'Processing...'
+      // and the server is asked for the real status until it answers.
+      renderIfCurrent(contactId);
+      pollMessageStatus(contactId, messageId, Date.now());
     }, UNDO_WINDOW_MS + 1000);
+  }
+
+  function renderIfCurrent(contactId) {
+    if (window.__satCurrentContactId === contactId) renderCurrentThread();
   }
 
   function sendDeliveredAck(messageId) {
@@ -982,6 +1040,7 @@ window.__satsandeshWsInit = true;
           client_msg_id: data.client_msg_id,
           id: data.id,
           status: data.status,
+          ack_at: Date.now(),
         });
         scheduleSentTransition(contactId, data.id);
         delete window.__satPendingSendTarget[data.client_msg_id];
@@ -1042,10 +1101,25 @@ window.__satsandeshWsInit = true;
         renderings: m.renderings || [],
         transcript: m.transcript || null,
         transcript_language: m.transcript_language || null,
+        created_at: m.created_at,
         status: m.status,
       }));
       for (const m of data.messages) {
         if (m.author_id !== window.__satUserId && m.status === "sent") sendDeliveredAck(m.id);
+        // My own message the server still calls pending: ask again when its undo window is over
+        // (at once if it already is), so a message that was processing when the page closed does
+        // not stay on 'Processing...' forever.
+        if (m.author_id === window.__satUserId && m.status === "pending" && m.id) {
+          const wait = Math.max(
+            0,
+            Date.parse(m.created_at) + UNDO_WINDOW_MS + 1000 - Date.now()
+          );
+          if (window.__satPendingTimers[m.id]) clearTimeout(window.__satPendingTimers[m.id]);
+          window.__satPendingTimers[m.id] = setTimeout(
+            () => pollMessageStatus(contactId, m.id, Date.now()),
+            wait
+          );
+        }
       }
       if (window.__satCurrentContactId === contactId) renderCurrentThread();
     } else if (frame.type === "error") {
@@ -1440,6 +1514,7 @@ STATUS_TEXT_KEYS = (
     "status_cancelled",
     "status_held",
     "status_blocked",
+    "status_processing",
 )
 
 RECEIVER_TEXT_KEYS = (

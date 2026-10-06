@@ -462,3 +462,20 @@ def test_a_failed_copy_is_visible_not_silent():
     assert state.copied_circle_id is True and state.copy_circle_id_failed is False
     for lang in ("en", "te"):
         assert TEXTS[lang].get("copy_failed")
+
+
+def test_a_pending_message_past_its_undo_window_is_processing_not_sent():
+    # The app used to flip "Sending..." to "Sent" with its own timer 31 s after sending. With the
+    # pipeline on, delivery waits for transcription, translation and moderation (6 to 60 s for one
+    # Telugu note, measured), and a message can be held, so "Sent" was untrue. It must ask the
+    # server, say "Processing..." meanwhile, and stop offering a cancel it no longer honours.
+    assert "pollMessageStatus" in CHAT_CONNECT_JS_TEMPLATE
+    assert 'statusWord("status_processing")' in CHAT_CONNECT_JS_TEMPLATE
+    assert "pastUndoWindow(msg)" in CHAT_CONNECT_JS_TEMPLATE
+    assert (
+        'upsertMessage(contactId, { id: messageId, status: "sent" })'
+        not in CHAT_CONNECT_JS_TEMPLATE
+    )
+    assert "status_processing" in STATUS_TEXT_KEYS
+    for lang in ("en", "te"):
+        assert TEXTS[lang].get("status_processing")
