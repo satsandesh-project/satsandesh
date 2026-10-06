@@ -25,7 +25,7 @@ from app.config import get_settings
 from app.db.models import Job, Message
 from app.db.models import User as DbUser
 from app.db.moderation import list_moderation_events, list_moderation_queue
-from app.db.repository import create_message, get_visible_messages_since
+from app.db.repository import create_media_object, create_message, get_visible_messages_since
 from app.pipeline_watchdog import hold_stuck_messages, run_pipeline_watchdog_loop
 
 GRACE = 120.0
@@ -66,6 +66,43 @@ def _dm(db_session, *, age_seconds=600, text=SECRET_TEXT):
     db_session.commit()
     _age(db_session, message.id, age_seconds)
     return message.id, author.id, target.id
+
+
+def _voice_dm(db_session, *, age_seconds=600):
+    """A voice DM with a transcript (the two columns go together, and only voice has them)."""
+    author, target = _user(db_session, "VoiceAuthor"), _user(db_session, "VoiceTarget")
+    media, _ = create_media_object(
+        db_session,
+        media_id=uuid.uuid4(),
+        author_id=author.id,
+        format="wav_pcm16",
+        sha256_hex=uuid.uuid4().hex,
+        size_bytes=10,
+        duration_ms=4200,
+    )
+    message = create_message(
+        db_session,
+        author_id=author.id,
+        target_type="user",
+        target_user_id=target.id,
+        kind="voice",
+        source_lang="te",
+        client_msg_id=uuid.uuid4(),
+        original_media_ref=f"media:{media.id}",
+        media_object_id=media.id,
+        media_format="wav_pcm16",
+        media_duration_ms=4200,
+        undo_expires_at=datetime.now(UTC) + timedelta(seconds=300),
+    )
+    pipeline.start_pipeline(db_session, message)
+    db_session.execute(
+        update(Message)
+        .where(Message.id == message.id)
+        .values(transcript=SECRET_TRANSCRIPT, transcript_language="te")
+    )
+    db_session.commit()
+    _age(db_session, message.id, age_seconds)
+    return message.id
 
 
 def _age(db_session, message_id, seconds):
@@ -253,24 +290,35 @@ def test_the_recipient_cannot_read_a_stuck_message_before_or_after_it_is_held(db
     assert [m.id for m in own] == [message_id], "the author still sees their own message"
 
 
-def test_neither_the_log_nor_the_event_carries_what_the_message_says(db_session, outbox, caplog):
+def _assert_no_content_leaks(db_session, message_id, caplog, *secrets):
+    assert str(message_id) in caplog.text, "a human reading the log can find the message"
+    (event,) = list_moderation_events(db_session, message_id)
+    for secret in secrets:
+        assert secret not in caplog.text
+        for field in (event.rationale, event.note, event.notice_text, event.label):
+            assert secret not in (field or "")
+
+
+def test_neither_the_log_nor_the_event_carries_a_text_messages_words(db_session, outbox, caplog):
     message_id, *_ = _dm(db_session, text=SECRET_TEXT)
-    db_session.execute(
-        update(Message)
-        .where(Message.id == message_id)
-        .values(transcript=SECRET_TRANSCRIPT, transcript_language="te")  # the two go together
-    )
-    db_session.commit()
     _delete_job(db_session, message_id)
 
     with caplog.at_level(logging.INFO, logger="app.pipeline_watchdog"):
         hold_stuck_messages(grace_seconds=GRACE)
 
-    assert str(message_id) in caplog.text, "a human reading the log can find the message"
-    assert SECRET_TEXT not in caplog.text and SECRET_TRANSCRIPT not in caplog.text
-    (event,) = list_moderation_events(db_session, message_id)
-    for field in (event.rationale, event.note, event.notice_text, event.label):
-        assert SECRET_TEXT not in (field or "") and SECRET_TRANSCRIPT not in (field or "")
+    _assert_no_content_leaks(db_session, message_id, caplog, SECRET_TEXT)
+
+
+def test_neither_the_log_nor_the_event_carries_a_voice_notes_transcript(db_session, outbox, caplog):
+    message_id = _voice_dm(db_session)
+    _delete_job(db_session, message_id)
+    assert _msg(db_session, message_id).transcript == SECRET_TRANSCRIPT, "the setup has one"
+
+    with caplog.at_level(logging.INFO, logger="app.pipeline_watchdog"):
+        hold_stuck_messages(grace_seconds=GRACE)
+
+    assert _msg(db_session, message_id).status == "held"
+    _assert_no_content_leaks(db_session, message_id, caplog, SECRET_TRANSCRIPT)
 
 
 # --- the loop --------------------------------------------------------------------------------
