@@ -1,4 +1,3 @@
-1 file reformatted
 """Client half of test_tls_internal.sh: runs INSIDE the test network.
 
 usage: tls_check.py <host-or-ip> <root.crt>
