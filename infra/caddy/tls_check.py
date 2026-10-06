@@ -111,6 +111,9 @@ try:
     check("Referrer-Policy: strict-origin-when-cross-origin", h.get("referrer-policy") == "strict-origin-when-cross-origin", str(h.get("referrer-policy")))
     check("X-Frame-Options: SAMEORIGIN", h.get("x-frame-options") == "SAMEORIGIN", str(h.get("x-frame-options")))
     check("the Server header is removed", "server" not in h, str(h.get("server")))
+    # Caddy would advertise HTTP/3 on :443 (Alt-Svc), a UDP port this stack does not publish:
+    # browsers would try it, time out, and fall back. HTTP/3 is switched off instead.
+    check("no Alt-Svc advertising HTTP/3", "alt-svc" not in h, str(h.get("alt-svc")))
     check("NO Strict-Transport-Security", "strict-transport-security" not in h, str(h.get("strict-transport-security")))
 except Exception as e:  # noqa: BLE001
     check("header checks ran", False, repr(e))
