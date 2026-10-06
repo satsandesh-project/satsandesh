@@ -169,6 +169,27 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
    so the collision is documented before the sweeper is live on staging,
    not to pre-empt that design.
 
+   **DECIDED (Week 8): option (a), for `held` only.** `moderation_events` and the moderator console
+   exist now, so the collision is real, not hypothetical. `find_expired_media` skips any media
+   carried by a `held`, not-deleted message, as the voice note itself or as a rendering's audio,
+   however old it is; protection ends when the message leaves `held` (tests:
+   `tests/test_retention_held.py`, with a sabotage check). Consequences and what is NOT decided:
+   1. **`blocked` is not protected.** A block is a ruling; whether blocked audio should outlive 30
+      days for an appeal (appeals are Week 9, #65) is a retention and privacy policy decision for
+      people, not for a query. One line (`_UNRESOLVED_STATUSES` in `app/db/repository.py`).
+   2. **Held audio is kept until a human rules: there is no upper bound.** A held message nobody
+      opens keeps an elder's voice indefinitely. With the stuck-pipeline watchdog (#20) now
+      sending stuck messages to the same queue, that is more likely, not less. A maximum (say 90
+      days, then ...what?) is a policy call.
+   3. **The clock is the media's own age, not time since release.** A message held for more than
+      30 days and then released has audio that is eligible for the very next sweep: its recipients
+      may lose the audio within the hour (the text stays). The test
+      `test_once_a_held_message_is_released_its_old_audio_is_swept_again` pins this as the current
+      behaviour; if a released message's audio should get a fresh 30 days, that needs a clock that
+      restarts on release (a column or the event's timestamp), and a decision to do it.
+   4. Option (b), a tombstone so a swept id is distinguishable from a missing one, is still not
+      built (#6).
+
 10. **Who may download a voice note, beyond the author and delivered
     recipients.** `GET /media/{id}` now allows only the author, or a
     recipient of a message carrying the media whose status is `sent` or
@@ -244,6 +265,12 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     consistent with the original's, but say if renderings should be kept
     longer or re-synthesized on demand. Also: only a message's *original*
     audio is open to a moderator (#14), not its renderings'.
+
+    **UPDATE (Week 8):** the producer exists (the pipeline ingests render audio, owned by the message's
+    author, as assumed above) and the sweep treats it like any media with one exception: a rendering's
+    audio is kept while its message is `held` (#9). Everything else here is unchanged and still a
+    choice for people: renderings follow the same 30-day window as the original, and (#9, point 3) a
+    long-held message that is then released can lose both within an hour.
 
 16. **Transcript and renderings are hidden until a message is `sent`, even
     from its author.** Stored while `pending` (the pipeline runs inside the

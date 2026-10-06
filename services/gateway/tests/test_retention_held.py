@@ -142,6 +142,9 @@ def test_once_a_held_message_is_released_its_old_audio_is_swept_again(db_session
 
     assert str(media_id) in swept
     assert _gone(db_session, media_id), "protection ends when the human has ruled"
+    # NOTE (OPEN_QUESTIONS #9, point 3): the clock is the media's own age, so a long-held message's
+    # audio is eligible at the NEXT sweep after release. This pins the current behaviour, not a
+    # judgement that it is right; a clock that restarts on release is a decision for people.
 
 
 @pytest.mark.parametrize("status", ["sent", "delivered", "cancelled", "blocked"])
