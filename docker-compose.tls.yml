@@ -8,12 +8,15 @@
 #   - NOT a public URL and NOT a Let's Encrypt certificate: that needs a domain and an inbound
 #     path from the internet, neither of which this project has yet (docs/deployment.md).
 #   - The routes are exactly the ones in infra/caddy/Caddyfile (the entrypoint derives the TLS
-#     site from it); /moderation* stays unrouted.
+#     site from it); /moderation* stays unrouted. Plain HTTP on the container's :80 REDIRECTS (302)
+#     to the HTTPS port; there is no HSTS (internal-CA certificate: it would lock testers out).
 #   - Nothing changes unless you layer this file: the base compose and Caddyfile are untouched.
 services:
   caddy:
     environment:
       TLS_HOST: ${TLS_HOST:?set TLS_HOST to the address or name browsers will use}
+      # the host port browsers use for HTTPS: the http->https redirect must name it
+      TLS_PUBLIC_PORT: ${CADDY_TLS_HOST_PORT:-8443}
     entrypoint: ["/bin/sh", "/tls-internal-entrypoint.sh"]
     command: []
     ports:
