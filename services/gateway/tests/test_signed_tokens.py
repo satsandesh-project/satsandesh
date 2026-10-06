@@ -206,8 +206,14 @@ def test_a_valid_token_for_an_elder_cannot_reach_the_moderator_routes(client, db
     elder = _user(db_session, "Elder")
     moderator = _user(db_session, "Mod", role="moderator")
 
-    assert client.get("/moderation/queue", headers=_hdr(tokens.issue_token(elder.id))).status_code == 403
-    assert client.get("/moderation/queue", headers=_hdr(tokens.issue_token(moderator.id))).status_code == 200
+    assert (
+        client.get("/moderation/queue", headers=_hdr(tokens.issue_token(elder.id))).status_code
+        == 403
+    )
+    assert (
+        client.get("/moderation/queue", headers=_hdr(tokens.issue_token(moderator.id))).status_code
+        == 200
+    )
 
 
 # -- media rules unchanged, under real tokens --------------------------------------------------
