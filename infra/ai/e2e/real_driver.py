@@ -200,6 +200,8 @@ def cmd_burst(circle_id: str, timeout_s: float, n: int, specs: list[str]) -> Non
         notes.append({"i": i, "label": label, "lang": lang, "media": up.json()})
     emit(event="burst_start", n=n, samples=[s[1] for s in samples], readers=list(RECIPIENTS))
 
+    # What the circle already holds (earlier bursts reuse it): known, not "unexpected".
+    before = sorted({m["id"] for uid in RECIPIENTS.values() for m in _view(uid, circle_id)})
     barrier = threading.Barrier(n)
 
     def send(note: dict) -> None:
@@ -347,7 +349,7 @@ def cmd_burst(circle_id: str, timeout_s: float, n: int, specs: list[str]) -> Non
         completion_s_sorted=sorted(round(w, 1) for w in wall),
         per_reader_s={reader: summarize(by_reader[reader]) for reader in RECIPIENTS},
         rendering_audio=verdicts,
-        audit=audit(list(by_id), final_views),
+        audit=audit(list(by_id), final_views, known=before),
         observation_window_s=round(time.time() - t0, 1),
     )
 

@@ -70,6 +70,17 @@ def test_audit_catches_a_note_delivered_twice_to_one_reader():
     assert found["lost"] == {}
 
 
+def test_audit_does_not_call_earlier_messages_in_the_circle_unexpected():
+    # The circle is reused across depths: what was already there before the burst is known.
+    found = audit(["a"], {"bob": ["old1", "a", "old2"]}, known=["old1", "old2"])
+    assert found == {"lost": {}, "duplicated": {}, "unexpected": {}}
+
+
+def test_audit_still_flags_a_message_that_is_neither_sent_nor_known():
+    found = audit(["a"], {"bob": ["old1", "a", "zzz"]}, known=["old1"])
+    assert found["unexpected"] == {"bob": ["zzz"]}
+
+
 def test_audit_catches_a_message_nobody_sent():
     found = audit(["a"], {"bob": ["a", "zzz"]})
     assert found["unexpected"] == {"bob": ["zzz"]}

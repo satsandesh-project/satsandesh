@@ -50,11 +50,12 @@ def audio_verdict(stats: dict | None) -> str:
     return "silent" if stats["rms"] < SILENCE_RMS else "ok"
 
 
-def audit(sent_ids: list[str], views: dict[str, list[str]]) -> dict:
+def audit(sent_ids: list[str], views: dict[str, list[str]], known: list[str] = ()) -> dict:
     """Correctness findings from what each reader saw: ids a reader never saw (lost), ids a
-    reader saw more than once (duplicated), and ids nobody here sent (unexpected). Each is a
+    reader saw more than once (duplicated), and ids that are neither sent in this burst nor
+    in `known` (what the circle already held before it) (unexpected). Each is a
     {reader: [ids]} map; all three empty means clean."""
-    sent = set(sent_ids)
+    sent = set(sent_ids) | set(known)
     lost: dict[str, list[str]] = {}
     duplicated: dict[str, list[str]] = {}
     unexpected: dict[str, list[str]] = {}
