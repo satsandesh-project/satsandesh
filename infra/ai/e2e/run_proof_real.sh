@@ -140,7 +140,7 @@ report_depth() {  # $1 depth  $2 dir  $3 start (iso, utc)  $4 start epoch
       if(n%5==1) printf "   t+%ss  queued=%s running=%s done=%s dead=%s\n", $1-t0, a[1], a[2], a[3], a[4] }
     END { printf "   samples=%d  max(queued+running)=%d  max running=%d  closest approach of a running lease to expiry=%ss  lease renewals seen (same job, remaining time jumped up)=%d\n", n, m, r, ml, ren+0 }' "$d/jobs.txt"
   echo "-- host (vmstat 1; includes the OTHER stacks on this shared server):"
-  awk 'NR>3 { n++; if(min==""||$15<min)min=$15; if($13+$14>mx)mx=$13+$14; if($7>si)si=$7; if($8>so)so=$8; if($3>sw)sw=$3 }
+  awk '$1 ~ /^[0-9]+$/ && $15 ~ /^[0-9]+$/ && NR>3 { n++; if(min==""||$15+0<min+0)min=$15; if($13+$14>mx)mx=$13+$14; if($7+0>si+0)si=$7; if($8+0>so+0)so=$8; if($3+0>sw+0)sw=$3 }
        END { printf "   samples=%d  min idle=%s%%  max us+sy=%s%%  max swapped=%d MiB  max si=%s so=%s (KiB/s)\n", n, min, mx, sw/1024, si+0, so+0 }' "$d/vmstat.txt"
   awk '$2=="host" { n++; if(av==""||$3<av)av=$3; if($4>sw)sw=$4 } END { printf "   (sampled with the services) samples=%d  min MemAvailable=%d MiB  max swap in use=%d MiB\n", n, av, sw }' "$d/procs.txt"
   echo "-- services (process tree under each container's init pid; CPU is a LOWER bound, see sample_procs):"

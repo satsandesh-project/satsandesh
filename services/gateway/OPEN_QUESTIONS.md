@@ -69,6 +69,13 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
      should be a comfortable multiple of the heartbeat interval, and a
      process that is suspended for a whole lease still loses its job
      (correctly -- the other worker's result stands).
+   - **MEASURED (Week 8): the one worker IS the capacity limit.** Ten notes sent at once
+     are ten queued `process_message` jobs worked one at a time (`max running = 1` in all 18 depth
+     runs); the last note waits for nine. Ten Hindi notes: p50 32 s, worst 62 s; ten Telugu
+     notes: worst 61 to 441 s depending on the run (the ASR's cost per Telugu note ranged 6 to
+     60 s). The heartbeat held on every long job (never closer than 40 s to expiry on a 60 s
+     lease). Contention **between** workers was not tested. Numbers and limits:
+     `infra/ai/README.md` "Ten notes at once".
    - **Permanent vs. transient failures.** A handler can raise
      `PermanentJobError` to land a job in `dead` after one attempt
      (no format mapping, a 4xx from the AI service); anything else is
@@ -420,3 +427,12 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     **At his request the orchestrator is NOT pointed at a per-language ASR split yet** (it
     would need to choose the transcribe URL by declared language; not built). The size of
     the risk is unmeasured: the test speech was synthetic and one sentence.
+
+    **UPDATE (Week 8 load runs, `infra/ai/README.md` "Ten notes at once"):** the spread is
+    larger and it is not only latency. The same Telugu clip took **7 s in one run and 30 to 60 s
+    in two others** (5 s of audio); across 55 Telugu notes the ASR produced **41 different
+    transcripts** (Hindi: 30 notes, 4 transcripts, one per synthesized file); **2 of 55 Telugu
+    notes came back as garbage characters, the translation was empty, and the pipeline held them**
+    (fail-closed worked; the sender is told nothing, #18). The "decoder fallback" guess is still
+    unproven. `AI_TRANSCRIBE_TIMEOUT_S` is 120 s against a 60 s worst case for 5 s of audio: a
+    30 s Telugu note has not been measured and may not fit. Still synthetic speech.

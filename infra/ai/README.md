@@ -151,12 +151,106 @@ for the languages its recipients read, minus its own.
    per-message); the client picks the one for its language.
 
 ### What this does NOT show
-- One run per note, one CPU server, no concurrency or load.
+- One run per note, one CPU server, no concurrency or load. (Concurrency and load are in the
+  next section.)
 - Synthesized speech, not a person; and the stopgap that treats `webm_opus` as `ogg_opus` was
   **on** (OPEN_QUESTIONS #11), so the real browser path is only as good as that stopgap.
 - Moderation is still the keyword stub.
 - Translation quality was judged by me reading the Hindi and English output; the **Telugu
   text needs a native reader**.
+
+## Ten notes at once (`run_proof_real.sh --load`)
+
+Run 2026-10-06 on the same server: **16 CPUs, 32 GB, shared with three other stacks** (load
+average 2.5 to 7.5 before each depth). **No CPU or memory limit was set, and that was checked
+from inside every container**: `cpu.max` (cgroup v1 `quota=-1`), `Cpus_allowed_list=0-15`,
+`NanoCpus=0`. So every number below is *unconstrained on a shared host*, not "a 4-core pilot
+box". Real gateway, ASR, MT and render; moderation is the keyword stub;
+`AI_ACCEPT_WEBM_AS_OGG_OPUS=true` (#2 is untouched); `JOB_LEASE_SECONDS=60`. The notes are the
+same **5-second** Piper clips as above, **not 30 seconds**. 18 depth runs in four invocations, 85
+notes (55 Telugu, 30 Hindi), one author, three readers (te, en, hi). Wall time is POST
+`/messages` until the **last** reader could see the note. Raw files: `/tmp/aireal-load/` on the
+server; the driver is `real_driver.py burst`, the tests for its arithmetic are
+`test_load_stats.py` (CI does not collect them).
+
+### What I predicted, and what happened
+
+I predicted the first thing to break would be none of lease expiry, an AI-client timeout, memory
+or the queue depth, but the **latency a user sees**, because the gateway runs **one worker loop
+per process** and `process_message` jobs are taken one at a time, so ten notes are a queue of ten
+and the AI services almost never see two requests at once. **Right**, and exactly so for Hindi:
+`max running = 1` in all 18 depth runs, and ten Hindi notes finished at 6.5, 12.8, 19.1 … 61.8 s
+(6.3 s each). **Wrong in one important way**: I assumed a note costs about 6 s. A **Telugu** note
+costs **6 to 60 s** (below), so the queue is not a fixed multiple of a known cost.
+
+### Numbers
+
+| Depth, mix | p50 | p90 | worst | note |
+|---|---|---|---|---|
+| 1, Hindi | 6.3 s | | | 6.3 and 7.3 s in two runs |
+| 1, Telugu | | | | **7.3, 7.4** (run 2); **30, 49** (run 3a); **48, 61** (run 3b): same code, same server |
+| 3, Telugu (run 2) | 13.8 s | | 19.1 s | 7.5, 13.8, 19.1 |
+| 10, Hindi | 31.6 s | 55.7 s | 61.8 s | a straight staircase |
+| 10, Telugu, run 2 | 30.7 s | 54.9 s | 61.0 s | the fast Telugu run |
+| 10, Telugu, run 3a | 190 s | 338 s | 389 s | each job 29 to 51 s |
+| 10, Telugu, run 3b | 211 s | 441 s | 441 s | **9 of 10 delivered**: one was held (below) |
+| 10, Hindi+Telugu | 96 to 119 s | 168 to 264 s | 199 to 270 s | three runs |
+
+With ten samples "p90" is the ninth value, so read it as "the second-worst". **The wait is almost
+all queueing:** at depth 10 the last note waits for nine others.
+
+### Did the lease heartbeat hold under load?
+
+Yes, for the case that was tested. On every job longer than the 20 s heartbeat interval the
+lease was renewed (1 to 15 renewals per depth, seen as the remaining lease jumping back up for the
+same job) and **never came closer to expiry than 40 s of 60 s**; no job needed a second attempt;
+no log line about a lost lease or a failed heartbeat. **Not tested: contention between workers.**
+There is one worker, so two gateway replicas claiming from the same table (OPEN_QUESTIONS #3)
+were never exercised.
+
+### Correctness (a single occurrence would have been a stop-and-report)
+- **Delivered without a classifier verdict: 0. Duplicated (more than one classifier event, or a
+  note a reader saw twice): 0. Lost: 0.** Counted in the database and from each reader's view.
+- **Two Telugu notes were held, not lost**: the ASR returned a garbage transcript (Arabic and
+  Sinhala characters), the translation came back empty, and the pipeline held the note for a
+  human (`system` `HOLD`, no notice text). Nobody was shown anything: the readers never see it,
+  and **the sender gets no signal** (#18). 2 of 55 Telugu notes; 0 of 30 Hindi.
+- **No rendering audio was silence**: every audio rendering fetched as a reader was measured
+  non-silent. One Hindi rendering (built from a garbage Telugu transcript) lost its audio: the
+  render service raised `wave.Error: # channels not specified` and the rendering degraded to
+  `tts_skipped` (text only). Handled gracefully; the cause is in `services/ai/render` (M3's).
+
+### The host
+- **CPU:** the host was never above about 70% busy (30 to 48% idle at the worst second; this
+  includes the other tenants). Per service, from the process tree: **speech 2.1 to 3.5 cores
+  on average while transcribing** (its 4 ASR threads), mt and render burst to **8 to 9 cores for a
+  second or two** per call. CPU is a lower bound (whole seconds; a child that exits between samples is
+  missed).
+- **Memory:** peaks speech 1.5 GB, mt 1.5 GB, render 2.0 to 2.7 GB, gateway 0.12 GB, postgres
+  0.14 GB (about 6 GB for the stack); `MemAvailable` never below 25 GB. **Swap** was a constant 177 MiB
+  (not ours) with under 16 KiB/s in or out. No `OOMKilled`, no restarts. Over about 85 notes render's
+  memory went up and down (2.5, 2.7, 2.5, 2.7 GB): not a leak test.
+
+### Where the first run was wrong (and how it was found)
+My first run printed identical CPU and memory for every container, and host figures that contradicted each
+other ("95% idle" next to "60% busy"). Causes: on this host the containers share one cgroup, so
+`docker stats` and the cgroup files report the same numbers for all of them, and `docker top`
+fails in runc; and `vmstat` reprints its header mid-file, which my awk compared as a number. Both are
+fixed and the host figures above were **recomputed from the raw files**. The per-service sampler
+was checked against the live stack (distinct values) before it was used again. A first version of the
+audit also counted earlier notes in the shared circle as "unexpected".
+
+### What this does NOT show
+- **A 30-second note.** M3's p90 is for a 30 s note; these are 5 s. Telugu took 6 to 60 s for
+  5 s of audio, and `AI_TRANSCRIBE_TIMEOUT_S` is **120 s**. If the cost grows with length, a 30 s
+  Telugu note could hit the timeout (a retryable error: it would be retried with backoff). Not
+  measured.
+- **Why the same Telugu note took 7 s in one run and 30 to 60 s in another.** Piper re-synthesizes the
+  sample every run and run 2's file was not kept (hashes are printed from run 3 on); within one run,
+  identical audio gave 41 different transcripts across 55 Telugu notes, which looks like Whisper's
+  temperature fallback (slow, random) but is **not proven**. Speech is M3's.
+- A smaller host, a CPU limit, real traffic (one author sending ten notes in the same
+  second is not how elders use it), the real moderation classifier, or two gateway replicas.
 
 ## Still not decided (M3's / yours)
 
@@ -177,4 +271,7 @@ infra/ai/e2e/run_proof.sh       # mock MT/render: ~10 min first run (model downl
 # the real MT and render: .env must also have HF_TOKEN, from an account that has accepted
 # the gate on BOTH ai4bharat/indictrans2-*-dist-200M repos. First run downloads the models.
 infra/ai/e2e/run_proof_real.sh
+
+# ten notes at once instead of the two single notes: a depth is N, or N:hi / N:te / N:hi+te
+infra/ai/e2e/run_proof_real.sh --load "1:te 1:te 10:hi 10:te" --keep
 ```
