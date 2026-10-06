@@ -119,13 +119,14 @@ def test_release_delivers_the_message_leaves_the_queue_and_appends_an_event(clie
 
     assert resp.status_code == 200, resp.text
     out = ModerationReviewOut.model_validate(resp.json())
-    assert out.message_status == "delivered"
+    # the real gateway sets `sent` on a release (app/moderation.py); delivery follows
+    assert out.message_status == "sent"
     assert out.event.actor_kind is ModerationActorKind.MODERATOR
     assert out.event.action.value == "ALLOW" and out.event.note == "fine on reading"
     assert out.event.actor_id is not None
     assert out.event.confidence is None and out.event.model_version is None
     assert out.notice_sent is False  # honest, as on the real gateway (OPEN_QUESTIONS #18)
-    assert _status_of(client, message_id) == "delivered"
+    assert _status_of(client, message_id) == "sent"
     assert _queue(client).items == []
 
     trail = ModerationEventsOut.model_validate(
