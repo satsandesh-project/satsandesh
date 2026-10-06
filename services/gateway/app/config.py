@@ -171,6 +171,16 @@ class Settings(BaseSettings):
     # action -> status mapping open; this assumes a nudge records a notice and
     # still delivers. Set false to hold nudged messages for a human instead.
     PIPELINE_NUDGE_DELIVERS: bool = True
+    # The stuck-pipeline watchdog (app/pipeline_watchdog.py, OPEN_QUESTIONS #20): holds a message
+    # whose pipeline is pending but which no queued or running job is working on, so it reaches
+    # the moderator queue instead of waiting forever. Runs only with PIPELINE_ENABLED. The grace
+    # period is how long a message may have no live job before it is held (a message gets its job
+    # in the same transaction, so a healthy one never needs it); it is NOT a deadline for a slow
+    # message, which is left alone while its job is queued or running. Same test-only off switch
+    # as the other background loops.
+    PIPELINE_WATCHDOG_ENABLED: bool = True
+    PIPELINE_WATCHDOG_INTERVAL_SECONDS: float = 60.0
+    PIPELINE_STUCK_GRACE_SECONDS: float = 120.0
     # Where the GATEWAY sees the render service's output directory (an
     # absolute path). The render service reports a file:// path on ITS disk;
     # the gateway reads the file by name from here, so the two containers may
