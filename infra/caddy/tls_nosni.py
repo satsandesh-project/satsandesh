@@ -10,7 +10,6 @@ handshake fails with `tlsv1 alert internal error`. This connects the way a brows
 checks the certificate is still served, chains to our root, and is valid for the expected name.
 """
 
-import ipaddress
 import socket
 import ssl
 import sys
@@ -25,14 +24,9 @@ try:
         with ctx.wrap_socket(raw) as tls:  # no server_hostname -> no SNI
             cert = tls.getpeercert()
     sans = [v for _, v in cert.get("subjectAltName", ())]
-    try:
-        ipaddress.ip_address(expected)
-        ok = expected in sans
-    except ValueError:
-        ok = expected in sans
-    print(
-        f"{'PASS' if ok else 'FAIL'}  a client that sends no SNI still gets the certificate  SANs={sans}"
-    )
+    ok = expected in sans  # an IP or a DNS name: both appear as strings in the SAN list
+    verdict = "PASS" if ok else "FAIL"
+    print(f"{verdict}  a client that sends no SNI still gets the certificate  SANs={sans}")
     sys.exit(0 if ok else 1)
 except Exception as e:  # noqa: BLE001
     print(f"FAIL  a client that sends no SNI still gets the certificate  {e!r}")
