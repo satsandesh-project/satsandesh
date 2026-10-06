@@ -262,6 +262,15 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     (hold until the sender acknowledges, say) -- the setting is the whole
     change.
 
+    **ANSWERED by M4 (contract 0.6.0, `ModerationAction`) and built (Week 8).** NUDGE is "not
+    delivered to a circle"; in a 1:1 it delivers until the organisation decides otherwise
+    (workshop knob 1, default "circles only"). `PIPELINE_NUDGE_DELIVERS` now governs 1:1 only; a
+    circle NUDGE never delivers. **A choice to confirm with M4:** there is no "nudged" status, so
+    an undelivered NUDGE is `held`, which puts it in the moderator queue (recorded as the
+    classifier's NUDGE, not rewritten to HOLD). If NUDGEs to circles should NOT take a moderator's
+    time (the sender gets the private notice and that is all), that needs a status or a flag that
+    keeps them out of the queue; the gateway has neither.
+
 18. **The sender's notice has no wire surface.** For a non-ALLOW verdict the
     orchestrator translates the classifier's notice into the sender's language
     and records it in the event's `notice_text`, but the only thing the sender's
@@ -271,6 +280,30 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     endpoint), not something the gateway should invent. The proposal's promise
     that nothing happens silently is, today, honoured in the audit trail and
     not yet on the sender's screen.
+
+    **PARTLY CLOSED (Week 8).** M4 merged the contract (0.6.0): `MessageOut.moderation_notice` /
+    `moderation_notice_language` (author-only, the durable copy) and `MessageStatusOut.notice_text`
+    / `notice_language` (the live frame). The gateway now serves both, to the AUTHOR only (a recipient
+    who can read a nudged DM sees none, over HTTP and WebSocket: `notices_for_author`), in the
+    language it was written in (new `moderation_events.notice_language`), and the mock serves it too.
+    What the sender is and is not told: they get the notice text and the status; **never** the
+    label, confidence, rationale or model (a precise reason for a block is also a guide to evading
+    the classifier; tests pin that none of it reaches the sender). The notice is the one on the
+    LATEST event, so after a moderator's ruling the sender sees the status and no older reason.
+    **Still open, and M4's:**
+    1. **No wording exists for a hold the classifier did not make.** A pipeline failure or a
+       watchdog hold (#20) is a SYSTEM event with no notice, so that sender sees `held` and
+       nothing else. Today that is silent in exactly the way this item says it must not be (2 of 55
+       Telugu notes in the load runs). The words are policy, not engineering.
+    2. **A moderator's release or block carries no notice** (`notice_sent` stays `false`, #24e), so
+       a sender whose note was held and then blocked sees `blocked` and no reason; one whose note was
+       released sees it appear for the recipients and is not told it was a hold.
+    3. **BLOCK may owe a notice with no text**: the AI contract sets `nudge_text` "when action is
+       NUDGE (or HOLD ...)"; for BLOCK the classifier may return none. Not observed (the real
+       classifier has not run).
+    4. **HOLD says nothing about how long** or whether the sender sees the outcome; there is no
+       SLA, and BLOCK's "may appeal" has no surface until Week 9.
+    5. M1's client has to render it.
 
 19. **With the pipeline on, every real browser voice note is held until the
     `webm_opus` decision (#2).** Fail-closed, deliberately: a note that cannot
@@ -329,7 +362,8 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     contract; whether it should carry the transcript is M4's call (asked on
     #86). (d) `contracts/chat/mock/` has no moderation routes, so the console
     has no mock to build against; adding them is a small `contracts/chat/`
-    change not made here. (e) `notice_sent` is always `false` (see #18).
+    change not made here. (e) `notice_sent` is always `false` (see #18: the sender's notice is now served on `MessageOut`, but
+    a moderator's own decisions carry no notice, so what `notice_sent` should mean is M4's call).
 
 25. **Found Week 7 (after Phases 4-6 merged): the read path leaked every
     message that was not out.** `get_messages_since` returned every
