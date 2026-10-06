@@ -288,6 +288,31 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     is the missing safety net; not built here (it needs a deadline someone has
     to choose).
 
+    **BUILT (Week 8): `app/pipeline_watchdog.py`.** A message is STUCK when its pipeline is
+    `pending` and **no `process_message` job is queued or running** for it (a retry waiting out its
+    backoff is `queued`; a job whose worker died is `running` with an expired lease and is
+    reclaimed, so both are alive). It is deliberately **not** "pending longer than N seconds": the
+    load runs (`infra/ai/README.md`) showed legitimate waits of several minutes behind other notes
+    with a live job, and an age rule would hold those. A stuck message goes through the same
+    fail-closed path as a dead-lettered job: `held` with a SYSTEM event, the sender's devices told,
+    and **it appears in the moderator queue**, which is the surface: no new endpoint, service or
+    contract. The log line (`pipeline watchdog: held message <id>`) and the event carry the id and
+    the reason, never the text or transcript (tests pin that, and that the recipient cannot read it).
+    A timed loop like the retention sweeper, only when `PIPELINE_ENABLED`;
+    `PIPELINE_WATCHDOG_INTERVAL_SECONDS` (60) and `PIPELINE_STUCK_GRACE_SECONDS` (120). The 120 is a
+    guess for races, not a measured number: a message gets its job in the same transaction, so a
+    healthy one has none to wait for. **What it does NOT do:**
+    1. **A live job that never finishes is not detected.** A job `running` forever is, by this
+       definition, alive. Every call it makes has a timeout (`AI_*_TIMEOUT_S`, a 15 s statement
+       timeout), so it is bounded, but nothing here proves a wedged handler cannot keep
+       renewing its lease.
+    2. **Nobody is paged.** `infra/monitoring/healthwatch.sh` only polls Docker healthchecks; the
+       signal is the moderator queue plus a log line. If nobody opens the queue, a stuck message is
+       held and unread: better than pending forever, not the same as handled.
+    3. **The sender is told it is `held` and nothing else**: a SYSTEM event has no notice (#18).
+    4. Two gateway replicas were not run; the row lock (`FOR UPDATE SKIP LOCKED`) is shown with a
+       second session holding the row.
+
 21. **Closed by the gate: the unlocked pending check on rendering writes.** The
     #87 review noted `upsert_rendering`'s pending check does not lock the row,
     so a write racing the `pending -> sent` flip could land after delivery.
