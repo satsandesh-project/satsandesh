@@ -288,9 +288,11 @@ def test_a_websocket_with_a_bad_token_is_closed_1008_and_a_good_one_connects(
 ):
     user = _user(db_session)
 
-    with pytest.raises(WebSocketDisconnect) as err:
-        with client.websocket_connect("/ws?token=a.b.c") as ws:
-            ws.receive_text()
+    with (
+        pytest.raises(WebSocketDisconnect) as err,
+        client.websocket_connect("/ws?token=a.b.c") as ws,
+    ):
+        ws.receive_text()
     assert err.value.code == 1008
 
     with client.websocket_connect(f"/ws?token={tokens.issue_token(user.id)}"):
