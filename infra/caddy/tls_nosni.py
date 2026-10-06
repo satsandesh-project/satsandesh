@@ -30,7 +30,9 @@ try:
         ok = expected in sans
     except ValueError:
         ok = expected in sans
-    print(f"{'PASS' if ok else 'FAIL'}  a client that sends no SNI still gets the certificate  SANs={sans}")
+    print(
+        f"{'PASS' if ok else 'FAIL'}  a client that sends no SNI still gets the certificate  SANs={sans}"
+    )
     sys.exit(0 if ok else 1)
 except Exception as e:  # noqa: BLE001
     print(f"FAIL  a client that sends no SNI still gets the certificate  {e!r}")
