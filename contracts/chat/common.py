@@ -3,7 +3,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
 
-CONTRACTS_VERSION = "0.5.0"
+CONTRACTS_VERSION = "0.6.0"
 """
 Schema-shape version for everything in contracts/chat/. Mirrors
 contracts/ai/common.CONTRACTS_VERSION in purpose — bump when any field is
@@ -12,6 +12,15 @@ consumer can tell which shape it is looking at. The two version strings are
 independent counters: contracts/ai/ and contracts/chat/ are owned and
 evolved on different schedules by different people, so pinning them to one
 number would force one package's churn onto the other for no shared benefit.
+
+0.5.0 -> 0.6.0 (Week 7): answers to the three questions issue #65 asked of
+M4. MessageOut gained `moderation_notice`/`moderation_notice_language`
+(author-only) and MessageStatusOut gained `notice_text`/`notice_language`,
+so a nudged, held or blocked sender is actually told -- previously
+ModerationReviewOut.notice_sent could only ever be false, because nothing
+carried a notice. ModerationQueueItem gained `transcript`/
+`transcript_language`. All additive and optional; an older payload without
+them still parses.
 
 0.1.0 -> 0.2.0 (Week 6): MediaRef gained a required `format` field and a
 constrained `uri` shape, and MessageOut gained `media_ref` — see

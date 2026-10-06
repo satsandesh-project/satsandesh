@@ -1,6 +1,6 @@
 {
   "code": "NOT_FOUND",
-  "contract_version": "0.5.0",
+  "contract_version": "0.6.0",
   "detail": {
     "circle_id": "circle-does-not-exist"
   },

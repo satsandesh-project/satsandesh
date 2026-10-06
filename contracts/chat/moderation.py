@@ -41,6 +41,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from contracts.chat.common import MediaRef, VersionedModel
+from contracts.chat.renderings import LANGUAGE_PATTERN
 
 
 class ModerationLabel(str, Enum):
@@ -62,6 +63,27 @@ class ModerationAction(str, Enum):
     *actions*, not delivery states: `MessageStatus` (common.py) stays the
     chat-level lifecycle, and the mapping between them belongs to the
     gateway, not to either enum. See DECISIONS.md #6.
+
+    **Delivery semantics**, spelled out here because leaving them to
+    `docs/policy-taxonomy.md` alone already caused one wrong default
+    (issue #65, where NUDGE was implemented as delivering):
+
+    - `ALLOW` — delivered normally.
+    - `NUDGE` — **not delivered to a circle.** The policy document is
+      explicit: "Private, kindly-worded nudge to sender; not delivered to
+      circles". The sender gets a private notice; the circle never sees
+      the message. For a **1:1** the proposal calls this "a policy knob
+      the organisation sets" (§7.3), so a NUDGE in a DM *does* deliver
+      until the organisation decides otherwise — see
+      `docs/policy-taxonomy-workshop.md` knob 1, default "circles only".
+      So the behaviour is target-aware, not global.
+    - `HOLD` — not delivered; waits for a human. Nothing is deleted.
+    - `BLOCK` — not delivered; the sender is told and may appeal.
+
+    Every non-`ALLOW` outcome owes the sender a notice (proposal §15,
+    "never silent deletion") — see `ModerationEvent.notice_text` for what
+    was said, and `MessageOut.moderation_notice` for how the sender
+    actually receives it.
     """
 
     ALLOW = "ALLOW"
@@ -159,6 +181,18 @@ class ModerationQueueItem(BaseModel):
     )
     original_language: str | None = None
     original_media_ref: MediaRef | None = None
+    transcript: str | None = Field(
+        default=None,
+        min_length=1,
+        description="A voice note's original-language text, as the ASR heard it. Same "
+        "field name and meaning as MessageOut.transcript. Deliberately NOT folded into "
+        "`original_text`: that field is what the sender *typed*, and a transcript is what "
+        "the machine *heard* — which is exactly the thing that can be wrong. Collapsing "
+        "them would hide ASR error at the moment a moderator most needs to see it, and "
+        "the original recording stays the trust anchor when recognition errs (proposal "
+        "§7.2). Null until the pipeline has transcribed it.",
+    )
+    transcript_language: str | None = Field(default=None, pattern=LANGUAGE_PATTERN)
     pivot_text_en: str | None = Field(
         default=None,
         description="The English pivot the classifier actually read. Null when the "

@@ -78,6 +78,18 @@ class MessageOut(VersionedModel):
     renderings: list[Rendering] = Field(default_factory=list, max_length=MAX_RENDERINGS_PER_MESSAGE)
     transcript: str | None = Field(default=None, min_length=1)
     transcript_language: str | None = Field(default=None, pattern=LANGUAGE_PATTERN)
+    moderation_notice: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Why this message was nudged, held or blocked, in the sender's own "
+        "language. **Author-only**: null for every other reader, which the gateway "
+        "enforces at serialisation — a receiver must never see it. On the durable record "
+        "rather than only on a WS frame because an elder is routinely offline when a "
+        "moderator acts, and a frame alone loses the notice precisely in the case that "
+        "matters; this way they see it on the next sync. Null for an ALLOWed message. "
+        "See contracts/chat/moderation.py and issue #65.",
+    )
+    moderation_notice_language: str | None = Field(default=None, pattern=LANGUAGE_PATTERN)
     created_at: datetime
     status: MessageStatus
 
@@ -140,3 +152,14 @@ class MessageStatusOut(VersionedModel):
     status: MessageStatus
     delivered_count: int | None = None
     member_count: int | None = None
+    notice_text: str | None = Field(
+        default=None,
+        min_length=1,
+        description="The live half of the sender notice: this frame already goes to the "
+        "sender's own devices on a status change, so a status moving to `held` or "
+        "`blocked` can carry the reason with it instead of making the client ask. The "
+        "durable copy is `MessageOut.moderation_notice` — this frame is the immediate "
+        "path, not the record, and is simply missed by a sender who is offline. Null for "
+        "any status change that owes no notice.",
+    )
+    notice_language: str | None = Field(default=None, pattern=LANGUAGE_PATTERN)

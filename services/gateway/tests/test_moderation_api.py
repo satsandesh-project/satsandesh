@@ -610,6 +610,13 @@ def test_blocking_a_held_message_blocks_it_and_tells_the_sender_the_status_chang
         "status": "blocked",
         "delivered_count": None,
         "member_count": None,
+        # Added by contracts/chat 0.6.0 (issue #65's "sender notice" answer).
+        # Still None here: this test asserts the status frame is sent, and
+        # nothing populates the notice yet -- that is the gateway work this
+        # contract change unblocks. When it lands, these become the blocked
+        # notice and its language, and this assertion is where that shows.
+        "notice_text": None,
+        "notice_language": None,
     }
     assert [f for f in sent_frames if f[1]["type"] == "message.new"] == [], "never delivered"
 

@@ -173,3 +173,35 @@ screen needs) and M3/M4 (what the pipeline can produce):
    already holds the message: there is no frame for it. Worth confirming
    that "renderings are fixed at delivery" is acceptable for v1, rather than
    discovering it when the first model upgrade lands.
+
+### Answered (2026-10-04) — issue #65's three questions
+
+1. **Does a NUDGE deliver?** No, not to a circle — `docs/policy-taxonomy.md`
+   is explicit ("not delivered to circles"). For a 1:1 it does, until the
+   organisation decides otherwise (proposal §7.3 calls it a policy knob;
+   `docs/policy-taxonomy-workshop.md` knob 1, default "circles only"). So
+   the behaviour is **target-aware, not global** — `PIPELINE_NUDGE_DELIVERS`
+   should branch on `target_type`. The semantics now live in
+   `ModerationAction`'s docstring; leaving them only in the policy file is
+   what caused the wrong default.
+
+2. **Sender notice shape.** `MessageOut.moderation_notice` (+ language),
+   **author-only**, is the durable copy — an elder is routinely offline when
+   a moderator acts, and a WS frame alone loses the notice precisely then.
+   `MessageStatusOut.notice_text` (+ language) is the live path, riding a
+   frame that already goes to the sender's devices on a status change.
+   Author-only visibility is a gateway serialisation rule, not something the
+   model can enforce: worth a test that a non-author reading the same message
+   gets null.
+
+3. **Voice notes in the queue.** `ModerationQueueItem.transcript` /
+   `transcript_language`, matching `MessageOut`'s existing field names —
+   **not** folded into `original_text`, which means "what the sender typed".
+   A transcript is what the machine heard, and that is exactly the thing that
+   can be wrong; collapsing them hides ASR error from the moderator at the
+   moment it matters most.
+
+Still open from that thread, for M2: a BLOCK raises no moderator alert (the
+queue is the only signal), and `/moderation*` stays unrouted by Caddy until
+real JWT verification exists — the right call while any UUID is accepted as
+its bearer.
