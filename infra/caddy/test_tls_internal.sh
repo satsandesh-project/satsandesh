@@ -41,7 +41,7 @@ run_case() {  # run_case <label> <TLS_HOST> [extra docker args...]
   echo; echo "=== case: $label (TLS_HOST=$host)"
   docker rm -f ${N}-caddy >/dev/null 2>&1; : > "$ROOT"
   docker run -d --name "${N}-caddy" --network "$N" "$@" \
-    -e TLS_HOST="$host" \
+    -e TLS_HOST="$host" -e TLS_PUBLIC_PORT=8443 \
     -v "$HERE/Caddyfile":/etc/caddy/Caddyfile:ro \
     -v "$HERE/tls-internal-entrypoint.sh":/tls-internal-entrypoint.sh:ro \
     --entrypoint /bin/sh caddy:2-alpine /tls-internal-entrypoint.sh >/dev/null
@@ -51,7 +51,7 @@ run_case() {  # run_case <label> <TLS_HOST> [extra docker args...]
   done
   [ -s "$ROOT" ] || { echo "FAIL  Caddy never produced a root certificate; its log:"; docker logs "${N}-caddy" 2>&1 | tail -8; status=1; return; }
   sleep 3
-  docker run --rm --network "$N" -v "$HERE/tls_check.py":/c.py:ro -v "$ROOT":/root.crt:ro \
+  docker run --rm --network "$N" -e EXPECT_TLS_PORT=8443 -v "$HERE/tls_check.py":/c.py:ro -v "$ROOT":/root.crt:ro \
     python:3.11-slim python /c.py "$host" /root.crt || status=1
 }
 
