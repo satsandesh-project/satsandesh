@@ -72,7 +72,12 @@ cleanup() { if [ "$KEEP" = 0 ]; then $DC down -v >/dev/null 2>&1; echo "(stack r
 trap cleanup EXIT
 
 say "0. samples"
-[ -f "$HERE/samples/silence.webm" ] || { mkdir -p "$HERE/samples"; "$HERE/make_samples.sh" "$HERE/samples"; }
+# `bash`, not the file's own executable bit: a checkout from Windows (or `core.fileMode=false`)
+# has none, and a proof whose recordings were never made is not a proof.
+[ -s "$HERE/samples/silence.webm" ] || { mkdir -p "$HERE/samples"; bash "$HERE/make_samples.sh" "$HERE/samples"; }
+for f in speech.webm silence.webm; do
+  [ -s "$HERE/samples/$f" ] || { echo "PRECONDITION FAILED: $HERE/samples/$f was not made; this proof would prove nothing"; exit 1; }
+done
 ls -l "$HERE/samples"
 
 say "1. bring the stack up (own Postgres, own volumes; project $P)"
