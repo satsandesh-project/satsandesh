@@ -336,3 +336,32 @@ my first attempt looked like the fix had failed. 2 new tests (32 total).
 
 **Not verified:** a real phone (the copy command and long-press behave differently per OS);
 the circle-ID button was not clicked separately, but it runs the same script and handler.
+
+## 2026-10-06 — "Sent" was a local timer, not a fact
+
+Reading Veerendra's load proof (#110): with the pipeline on, one Telugu note takes 6 to 60 s, and a
+burst of ten took up to minutes. That exposed a lie in the elder app. It flipped "Sending... (tap to
+cancel)" to "Sent" with its own timer 31 s after sending, without asking the server. The undo window
+ending only means the server is now *free* to deliver; with the pipeline on, delivery waits for
+transcription, translation and moderation, and the message may be held for a person or fail closed.
+So the sender was told "Sent" about a message that had not gone out, and the cancel tap was still
+offered after the window.
+
+Fix: after the window the label reads "Processing..." (English and Telugu), the cancel tap goes away,
+and the app asks `GET /messages` every 5 s (up to 5 minutes) for the real status, merging only the
+status. It polls rather than using the WebSocket `sync.request` because that frame replaces the whole
+thread, which would drop messages still in flight. A pending message loaded after a reload keeps being
+followed. Held, blocked, sent and delivered now come from the server, not from a clock.
+
+**Verification:** on my demo stack with `PIPELINE_ENABLED=true` and a 45 s job-poll interval (so a
+message really stays pending past the window) against the stub AI service (which fails closed to a
+hold): "Sending... (tap to cancel)" until 30 s, "Processing..." from 32 s to 36 s, then "Waiting for
+review" at 38 s; the gateway log shows the status polls. 1 new test (33 total) in the app's container.
+
+**Not verified:** a message that stays pending for minutes and then becomes `sent`/`delivered` (the demo
+fails closed to a hold; a real success path needs the real services); a flaky network during polling;
+the Telugu word ("ప్రాసెస్ అవుతోంది...") needs a native reader.
+
+**Noticed, not mine:** the gateway lets a sender cancel a message that is still `pending` after the
+undo window if the pipeline is holding it (`DELETE /messages/{id}` only checks `status == pending`).
+The client no longer offers it, but the server still accepts it.
