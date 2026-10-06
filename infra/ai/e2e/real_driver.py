@@ -24,6 +24,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import struct
 import sys
 import time
@@ -39,9 +40,20 @@ RECIPIENTS = {
     "carol(en)": "00000000-0000-4000-8000-000000000003",
     "dan(hi)": "00000000-0000-4000-8000-000000000004",
 }
+TOKEN_ENV = {
+    ALICE: "TOKEN_ALICE",
+    "00000000-0000-4000-8000-000000000002": "TOKEN_BOB",
+    "00000000-0000-4000-8000-000000000003": "TOKEN_CAROL",
+    "00000000-0000-4000-8000-000000000004": "TOKEN_DAN",
+}
 
 
-def _auth(token: str) -> dict:
+def _auth(user_id: str) -> dict:
+    """Bearer header for one of this proof's users. The run script mints a SIGNED token per
+    user (`python -m app.tokens`) and passes it as TOKEN_<NAME>, so the proof exercises the
+    real verification. With no token in the environment it falls back to the bare UUID, which
+    only the gateway's default `legacy` mode accepts."""
+    token = os.environ.get(TOKEN_ENV.get(user_id, ""), user_id)
     return {"Authorization": f"Bearer {token}"}
 
 
