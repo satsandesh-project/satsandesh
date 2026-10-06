@@ -937,14 +937,39 @@ def fail_job(
     return new_status
 
 
+# A message in one of these statuses is still waiting for a human to rule on it, so the audio
+# a moderator would listen to must outlive the retention window (OPEN_QUESTIONS #9). `blocked`
+# is deliberately NOT here: a block is a ruling, and keeping blocked audio longer for an appeal
+# is a retention/privacy policy decision for people (appeals are Week 9), not something to settle
+# silently in a query. Add it here if they decide to.
+_UNRESOLVED_STATUSES = ("held",)
+
+
 def find_expired_media(session: Session, *, older_than: datetime) -> list[MediaObject]:
     """Every media_objects row whose created_at is strictly before
-    `older_than` -- the retention sweeper's candidate list (app/retention.py).
-    Read-only: doesn't touch storage or delete anything itself, same split
-    as create_media_object/app/media.py (DB-only here, the actual file I/O
-    stays with the caller)."""
+    `older_than` -- the retention sweeper's candidate list (app/retention.py)
+    -- EXCEPT audio carried by a message that is still awaiting a ruling
+    (`held`, not deleted): either the voice note itself or one of its
+    renderings' audio. Read-only: doesn't touch storage or delete anything
+    itself, same split as create_media_object/app/media.py (DB-only here, the
+    actual file I/O stays with the caller)."""
+    awaiting = (Message.status.in_(_UNRESOLVED_STATUSES), Message.deleted_at.is_(None))
+    original_audio = select(Message.media_object_id).where(
+        *awaiting, Message.media_object_id.is_not(None)
+    )
+    rendering_audio = (
+        select(MessageRendering.audio_media_object_id)
+        .join(Message, Message.id == MessageRendering.message_id)
+        .where(*awaiting, MessageRendering.audio_media_object_id.is_not(None))
+    )
     return list(
-        session.execute(select(MediaObject).where(MediaObject.created_at < older_than)).scalars()
+        session.execute(
+            select(MediaObject).where(
+                MediaObject.created_at < older_than,
+                MediaObject.id.not_in(original_audio),
+                MediaObject.id.not_in(rendering_audio),
+            )
+        ).scalars()
     )
 
 
