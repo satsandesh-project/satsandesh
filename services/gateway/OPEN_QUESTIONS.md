@@ -351,6 +351,13 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     delivered with a junk transcript, and moderation rules on a meaningless pivot. The
     place to fix it is `services/ai/speech/` (M3: VAD / no-speech filtering in the engine),
     not the gateway; recorded here because the gateway's safety story leans on it.
+    **M3's decision (#98, 2026-10-05):** a VAD / no-speech filter goes in the same change as
+    denoise, order denoise -> VAD -> ASR; today `engine.py` calls `transcribe()` with no
+    `vad_filter`, which explains "Beep" and "You". Nothing changes in the gateway: an empty
+    transcript is already held for a person (`test_a_silent_note_is_held_for_a_human_...`),
+    and `contracts/ai`'s `TranscribeResponse.text` has no minimum length, so empty is a valid
+    answer. One detail for the service: `detected_language` is still REQUIRED, so an empty
+    result must still carry some language. Still open until it ships.
 
 27. **Releasing a pipeline-failure hold does not re-run the pipeline.** In the proof, a
     message whose pipeline died at the moderation stage (service down) was held with a
@@ -392,3 +399,24 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     degrades to the original audio), or not in Month 2 is M3's call: asked on #98. Not
     measured: whether denoising would help real noisy recordings at all. Related, and possibly
     the same fix: the ASR hallucinating words from silence and tones (#26).
+
+    **RESOLVED (2026-10-05, M3 on #98): denoise lives in `services/ai/speech/`, before ASR.**
+    No gateway change and no new contract; the orchestrator keeps sending the same request.
+    It will be RNNoise (`pyrnnoise`), behind a switch that ships OFF until M3 has A/B'd it on
+    real noisy Telugu recordings (nobody has shown denoising helps Whisper; it can hurt). It
+    covers the faster-whisper service only; M3 will test it in front of
+    `speech_indicconformer` too and add it there only if it helps. So the Week 7 line's
+    "denoise" stage exists as a service-side step that is currently off, not as an
+    orchestrator stage.
+
+31. **The real ASR is not adequate for Telugu on current evidence, and the fix is not
+    decided.** The real-services proof (`infra/ai/README.md`) gave the same synthetic Telugu
+    sentence three different transcripts (two scripts, one in Devanagari), and the wrong
+    meaning reached readers with no signal; latency ranged ~6-37 s (unexplained). M3
+    (#98): `faster-whisper small` is not adequate; he expects `speech_indicconformer` to be
+    the Telugu path with faster-whisper for Hindi/English, but is not deciding until he has
+    compared small / medium / IndicConformer (CTC and RNNT) on real recordings with latency
+    (his Week 8 tuning), and will check whether the latency spread is decoder fallback.
+    **At his request the orchestrator is NOT pointed at a per-language ASR split yet** (it
+    would need to choose the transcribe URL by declared language; not built). The size of
+    the risk is unmeasured: the test speech was synthetic and one sentence.
