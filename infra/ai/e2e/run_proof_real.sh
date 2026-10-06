@@ -94,27 +94,33 @@ sample_jobs() {  # $1 = out file. One line a second: epoch | queued running done
     echo "$(date +%s) | $row" >> "$1"; sleep 1
   done
 }
-# Per-service CPU and memory, from /proc of the container's own processes (`docker top` gives the
-# host pids). NOT docker stats and NOT the cgroup files: on a host where the containers share one
-# cgroup (cgroup v1 here) both report the same number for every container, which a first version of
-# this script printed as if it were per-service. A child that starts and exits between two samples
-# (ffmpeg) is not seen, so CPU here is a lower bound.
-sample_procs() {  # $1 = out file, then "service:container-id" pairs. A line per service per cycle: epoch service rss_mib cpu_ticks
-  local out=$1 pair svc cid p s ticks rss pages now f
-  shift
-  local pairs=("$@")
+# Per-service CPU and memory: the host processes that descend from each container's init pid
+# (`docker inspect` .State.Pid), summed from `ps`. NOT docker stats, NOT the cgroup files, NOT
+# `docker top`: on this host the containers share one cgroup, so docker stats and the cgroup
+# files report the same number for every container (a first version of this script printed that as
+# if it were per-service) and `docker top` fails in runc. cputimes is whole seconds, and a child
+# that starts and exits between two samples (ffmpeg) is not seen, so CPU here is a lower bound.
+sample_procs() {  # $1 = out file, then "service:init-pid" pairs. Lines: epoch service rss_mib cpu_seconds, and epoch host avail_mib swap_used_mib
+  local out=$1; shift
+  local pairs="$*" now
   while :; do
     now=$(date +%s)
-    for pair in "${pairs[@]}"; do
-      svc=${pair%%:*}; cid=${pair#*:}; ticks=0; rss=0
-      for p in $(docker top "$cid" -eo pid 2>/dev/null | tail -n +2); do
-        s=$(< "/proc/$p/stat") 2>/dev/null || continue
-        s=${s##*) }; read -ra f <<< "$s"; ticks=$((ticks + f[11] + f[12]))
-        read -r _ pages _ < "/proc/$p/statm" 2>/dev/null && rss=$((rss + pages * 4 / 1024))
-      done
-      echo "$now $svc $rss $ticks" >> "$out"
-    done
+    ps -e -o pid=,ppid=,rss=,cputimes= | awk -v now="$now" -v pairs="$pairs" '
+      { ppid[$1]=$2; rss[$1]=$3; cpu[$1]=$4; pids[n++]=$1 }
+      END {
+        m = split(pairs, a, " ")
+        for (i = 1; i <= m; i++) { split(a[i], kv, ":"); root[kv[1]] = kv[2] }
+        for (sv in root) {
+          r = 0; c = 0
+          for (j = 0; j < n; j++) {
+            p = pids[j]; q = p
+            while (q > 1) { if (q == root[sv]) { r += rss[p]; c += cpu[p]; break } q = ppid[q] }
+          }
+          print now, sv, int(r / 1024), c
+        }
+      }' >> "$out"
     echo "$now host $(awk '/MemAvailable/ {printf "%d", $2/1024}' /proc/meminfo) $(awk '/SwapTotal/ {t=$2} /SwapFree/ {f=$2} END {printf "%d", (t-f)/1024}' /proc/meminfo)" >> "$out"
+    sleep 1
   done
 }
 report_depth() {  # $1 depth  $2 dir  $3 start (iso, utc)  $4 start epoch
@@ -137,8 +143,8 @@ report_depth() {  # $1 depth  $2 dir  $3 start (iso, utc)  $4 start epoch
   awk 'NR>3 { n++; if(min==""||$15<min)min=$15; if($13+$14>mx)mx=$13+$14; if($7>si)si=$7; if($8>so)so=$8; if($3>sw)sw=$3 }
        END { printf "   samples=%d  min idle=%s%%  max us+sy=%s%%  max swapped=%d MiB  max si=%s so=%s (KiB/s)\n", n, min, mx, sw/1024, si+0, so+0 }' "$d/vmstat.txt"
   awk '$2=="host" { n++; if(av==""||$3<av)av=$3; if($4>sw)sw=$4 } END { printf "   (sampled with the services) samples=%d  min MemAvailable=%d MiB  max swap in use=%d MiB\n", n, av, sw }' "$d/procs.txt"
-  echo "-- services (per-process /proc sums; CPU is a LOWER bound, see sample_procs):"
-  awk -v hz="$(getconf CLK_TCK)" '$2!="host" { s=$2; if(!(s in t0)) t0[s]=$1; t1[s]=$1; if($3>pk[s])pk[s]=$3;
+  echo "-- services (process tree under each container's init pid; CPU is a LOWER bound, see sample_procs):"
+  awk -v hz=1 '$2!="host" { s=$2; if(!(s in t0)) t0[s]=$1; t1[s]=$1; if($3>pk[s])pk[s]=$3;
          if((s in pt) && $4>pt[s]) { cpu[s]+=($4-pt[s])/hz; if($1>pn[s]) { r=($4-pt[s])/hz/($1-pn[s]); if(r>pr[s])pr[s]=r } } pt[s]=$4; pn[s]=$1 }
        END { for(s in pk) printf "   %-11s peak RSS %6d MiB   CPU %7.1f s over %ds = %.2f cores on average   busiest 1-3 s window %.1f cores\n", s, pk[s], cpu[s], t1[s]-t0[s], cpu[s]/(t1[s]-t0[s]+1), pr[s] }' "$d/procs.txt" | sort
   echo "-- containers: OOMKilled / restarts (after):"
@@ -170,7 +176,9 @@ load_depth() {
   vmstat 1 > "$d/vmstat.txt" & local vm=$!
   sample_jobs "$d/jobs.txt" & local js=$!
   local pairs=""
-  for svc in gateway speech mt render moderation postgres; do pairs="$pairs $svc:$($DC ps -q "$svc")"; done
+  for svc in gateway speech mt render moderation postgres; do
+    pairs="$pairs $svc:$(docker inspect -f '{{.State.Pid}}' "$($DC ps -q "$svc")")"
+  done
   # shellcheck disable=SC2086
   sample_procs "$d/procs.txt" $pairs & local st=$!
   sleep 3   # a few quiet samples first: the baseline
@@ -221,6 +229,8 @@ CIRCLE=$(echo "$CIRCLE_OUT" | sed -n 's/.*"circle_id": "\([^"]*\)".*/\1/p')
 if [ -n "$LOAD" ]; then
   say "load: preconditions (what limits are actually enforced, seen from inside the containers)"
   cpu_precondition
+  echo "samples used (Piper re-synthesizes them on every run, so the audio can differ between runs):"
+  sha256sum "$HERE"/samples/real_*.webm "$HERE"/samples/real_*.wav | sed 's#  .*/#  #'
   mkdir -p "$LOAD_DIR"
   for depth in $LOAD; do load_depth "$depth"; done
 else
