@@ -14,6 +14,7 @@ Exits 0 only if every check passed.
 """
 
 import http.client
+import os
 import socket
 import ssl
 import sys
@@ -78,19 +79,40 @@ try:
 except Exception as e:  # noqa: BLE001
     check("routing checks ran", False, repr(e))
 
-# 5. the PLAIN-HTTP URL people use today must keep working, not redirect to an HTTPS port that
-#    may not be published (turning the mode on must not break anyone already on http://)
+# 5. plain HTTP must REDIRECT to HTTPS (never serve the app in cleartext), to the port browsers
+#    actually reach HTTPS on (the published one, not the default 443), keeping path and query.
+#    Temporary (302) on purpose: a permanent redirect is cached by browsers, and this certificate
+#    comes from an internal CA that testers may not have installed yet.
+port = os.environ.get("EXPECT_TLS_PORT", "8443")
+suffix = "" if port == "443" else f":{port}"
 try:
     plain = http.client.HTTPConnection(host, 80, timeout=10)
-    plain.request("GET", "/me/settings")
+    plain.request("GET", "/me/settings?x=1")
     resp = plain.getresponse()
-    body = resp.read().decode()
+    resp.read()
+    want = f"https://{host}{suffix}/me/settings?x=1"
     check(
-        "plain HTTP on :80 still answers (no redirect)",
-        resp.status == 200 and body.startswith("GATEWAY"),
-        f"status={resp.status} location={resp.getheader('Location')} body={body[:30]!r}",
+        "plain HTTP redirects to HTTPS (302), keeping path and query",
+        resp.status == 302 and resp.getheader("Location") == want,
+        f"status={resp.status} location={resp.getheader('Location')} want={want}",
     )
 except Exception as e:  # noqa: BLE001
-    check("plain HTTP on :80 still answers (no redirect)", False, repr(e))
+    check("plain HTTP redirects to HTTPS (302), keeping path and query", False, repr(e))
+
+# 6. headers worth having at a boundary; and NO HSTS (an internal-CA certificate must not be
+#    pinned in testers' browsers: HSTS would lock them out of the site until it expires)
+try:
+    conn = http.client.HTTPSConnection(host, 443, context=ctx, timeout=10)
+    conn.request("GET", "/me/settings")
+    r = conn.getresponse()
+    r.read()
+    h = {k.lower(): v for k, v in r.getheaders()}
+    check("X-Content-Type-Options: nosniff", h.get("x-content-type-options") == "nosniff", str(h.get("x-content-type-options")))
+    check("Referrer-Policy: strict-origin-when-cross-origin", h.get("referrer-policy") == "strict-origin-when-cross-origin", str(h.get("referrer-policy")))
+    check("X-Frame-Options: SAMEORIGIN", h.get("x-frame-options") == "SAMEORIGIN", str(h.get("x-frame-options")))
+    check("the Server header is removed", "server" not in h, str(h.get("server")))
+    check("NO Strict-Transport-Security", "strict-transport-security" not in h, str(h.get("strict-transport-security")))
+except Exception as e:  # noqa: BLE001
+    check("header checks ran", False, repr(e))
 
 sys.exit(1 if failures else 0)
