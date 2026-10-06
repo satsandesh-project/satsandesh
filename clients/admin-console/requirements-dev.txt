@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=8.0
+# The tests drive GatewayQueueSource against the chat mock
+# (contracts/chat/mock/), which is a FastAPI app. Reflex does not bring
+# FastAPI, so it is a test dependency, not a runtime one.
+fastapi>=0.110

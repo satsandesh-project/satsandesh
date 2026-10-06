@@ -34,7 +34,12 @@ import uuid
 
 import reflex as rx
 
-from admin_console.source import FixtureQueueSource, QueueSource, ReviewConflict
+from admin_console.source import (
+    QueueSource,
+    ReviewConflict,
+    SourceError,
+    build_source_from_env,
+)
 from contracts.chat.moderation import ModerationReviewIn
 
 COLOR = {
@@ -49,7 +54,8 @@ COLOR = {
     "degraded": "#7c3aed",
 }
 
-_source: QueueSource = FixtureQueueSource()
+# Chosen by the environment (CONSOLE_SOURCE, see source.py), fixture by default.
+_source: QueueSource = build_source_from_env()
 
 
 def set_source(source: QueueSource) -> None:
@@ -123,9 +129,29 @@ class State(rx.State):
     note: str = ""
     banner: str = ""
     banner_is_error: bool = False
+    source_label: str = ""
+
+    def _say(self, message: str, *, error: bool) -> None:
+        """Add to the banner rather than replace it. A decision that went
+        through and a queue refresh that then failed are both things the
+        moderator needs to know; letting the second overwrite the first
+        would make a successful release look like it had not happened."""
+        self.banner = f"{self.banner} {message}".strip() if self.banner else message
+        self.banner_is_error = self.banner_is_error or error
 
     def load_queue(self) -> None:
-        self.rows = [_to_row(i) for i in _source.fetch_queue().items]
+        self.source_label = _source.label
+        try:
+            items = _source.fetch_queue().items
+        except SourceError as exc:
+            # Keep what was on screen: blanking the queue would read as
+            # "nothing is waiting", which is the one wrong thing to imply
+            # when the truth is "I could not ask".
+            self._say(
+                f"Could not refresh the queue — {exc} Showing the last list loaded.", error=True
+            )
+            return
+        self.rows = [_to_row(i) for i in items]
         if self.selected_id and all(r.message_id != self.selected_id for r in self.rows):
             self.selected_id = ""
             self.trail = []
@@ -134,7 +160,13 @@ class State(rx.State):
         self.selected_id = message_id
         self.note = ""
         self.banner = ""
-        out = _source.fetch_events(uuid.UUID(message_id))
+        self.banner_is_error = False
+        try:
+            out = _source.fetch_events(uuid.UUID(message_id))
+        except SourceError as exc:
+            self.trail = []
+            self._say(f"Could not load the audit trail — {exc}", error=True)
+            return
         self.trail = [
             TrailRow(
                 actor=e.actor_kind.value,
@@ -169,17 +201,27 @@ class State(rx.State):
         try:
             out = _source.review(uuid.UUID(self.selected_id), release=release, body=body)
         except ReviewConflict as exc:
-            self.banner = f"Not applied — {exc}"
-            self.banner_is_error = True
+            self.banner = ""
+            self.banner_is_error = False
+            self._say(f"Not applied — {exc}", error=True)
             self.load_queue()
             return
+        except SourceError as exc:
+            # Not applied, and not a conflict: the decision did not happen.
+            # Keep the selection so the moderator can simply try again.
+            self.banner = ""
+            self.banner_is_error = False
+            self._say(f"Not applied — {exc}", error=True)
+            return
         verb = "Released" if release else "Blocked"
-        self.banner = (
+        self.banner = ""
+        self.banner_is_error = False
+        self._say(
             f"{verb}. Sender notified."
             if out.notice_sent
-            else f"{verb}, but the sender has NOT been notified yet."
+            else f"{verb}, but the sender has NOT been notified yet.",
+            error=not out.notice_sent,
         )
-        self.banner_is_error = not out.notice_sent
         self.selected_id = ""
         self.trail = []
         self.load_queue()
@@ -359,7 +401,7 @@ def index() -> rx.Component:
             rx.heading("Moderator console", size="6"),
             rx.spacer(),
             rx.text(
-                "Fixtures — not connected to the gateway (issue #65)",
+                State.source_label,
                 style={"font_size": "0.8rem", "color": COLOR["muted"]},
             ),
             width="100%",

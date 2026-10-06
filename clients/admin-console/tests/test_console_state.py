@@ -75,11 +75,29 @@ def test_release_appends_to_the_trail_and_leaves_the_queue(
     assert all(i.message_id != item.message_id for i in source.fetch_queue().items)
 
 
-def test_block_records_the_notice_the_sender_received(source: FixtureQueueSource) -> None:
+def test_block_records_the_notice_only_when_one_really_went_out() -> None:
+    """`notice_text` is "what the sender was actually told", so it is only
+    recorded when a notice was delivered. Asked for the happy path
+    explicitly: the default mirrors the real gateway, which does not yet."""
+    delivering = FixtureQueueSource(notices_delivered=True)
+    item = delivering.fetch_queue().items[0]
+    out = delivering.review(item.message_id, release=False, body=ModerationReviewIn())
+    assert out.message_status == "blocked"
+    assert out.notice_sent is True
+    assert out.event.notice_text, "a blocked sender must be told, and the trail records what"
+
+
+def test_the_default_fixture_does_not_promise_a_notice_the_gateway_does_not_send(
+    source: FixtureQueueSource,
+) -> None:
+    """An earlier fixture returned notice_sent=True and told the sender they
+    could appeal. The real gateway sends no notice yet and appeals are Week 9,
+    so a fixture people copy behaviour from must not claim either."""
     item = source.fetch_queue().items[0]
     out = source.review(item.message_id, release=False, body=ModerationReviewIn())
-    assert out.message_status == "blocked"
-    assert out.event.notice_text, "a blocked sender must be told, and the trail records what"
+    assert out.notice_sent is False
+    assert out.event.notice_text is None
+    assert "appeal" not in (out.event.rationale + (out.event.note or "")).lower()
 
 
 def test_a_moderator_can_correct_the_classifier_label(source: FixtureQueueSource) -> None:
@@ -173,3 +191,114 @@ def test_state_surfaces_a_conflict_instead_of_applying_it() -> None:
     state.block()
     assert state.banner_is_error
     assert "Not applied" in state.banner
+
+
+# -- failures that are not conflicts must reach the moderator ---------------
+
+
+class _FailingSource:
+    """Every call fails the way a down or refusing gateway would."""
+
+    label = "Gateway — http://down"
+
+    def __init__(self, message: str = "boom") -> None:
+        self._message = message
+
+    def fetch_queue(self):
+        from admin_console.source import SourceError
+
+        raise SourceError(self._message)
+
+    def fetch_events(self, message_id):
+        from admin_console.source import SourceError
+
+        raise SourceError(self._message)
+
+    def review(self, message_id, *, release, body):
+        from admin_console.source import SourceError
+
+        raise SourceError(self._message)
+
+
+def test_a_failed_refresh_keeps_the_last_queue_and_says_so() -> None:
+    """Blanking the queue would read as 'nothing is waiting' -- the one
+    wrong thing to imply when the truth is 'I could not ask'."""
+    from admin_console import admin_console as console
+
+    console.set_source(FixtureQueueSource())
+    state = console.State()
+    state.load_queue()
+    before = list(state.rows)
+    assert before
+
+    console.set_source(_FailingSource("The gateway did not answer within 10 s."))
+    state.load_queue()
+
+    assert state.rows == before, "the last list stays on screen"
+    assert state.banner_is_error
+    assert "Could not refresh the queue" in state.banner
+    assert "last list loaded" in state.banner
+    assert state.source_label == "Gateway — http://down"
+
+
+def test_a_failed_decision_is_reported_and_keeps_the_selection() -> None:
+    from admin_console import admin_console as console
+
+    console.set_source(FixtureQueueSource())
+    state = console.State()
+    state.load_queue()
+    state.select(state.rows[0].message_id)
+    chosen = state.selected_id
+
+    console.set_source(_FailingSource("This account is not a moderator (403)."))
+    state.release()
+
+    assert state.banner_is_error
+    assert state.banner.startswith("Not applied")
+    assert "not a moderator" in state.banner
+    assert state.selected_id == chosen, "kept, so the moderator can simply try again"
+
+
+def test_a_failed_audit_trail_load_is_reported() -> None:
+    from admin_console import admin_console as console
+
+    console.set_source(FixtureQueueSource())
+    state = console.State()
+    state.load_queue()
+    console.set_source(_FailingSource("The gateway returned an error (503)."))
+    state.select(state.rows[0].message_id)
+
+    assert state.banner_is_error
+    assert "audit trail" in state.banner
+    assert state.trail == []
+
+
+def test_a_successful_decision_followed_by_a_failed_refresh_shows_both() -> None:
+    """The decision went through; the refresh did not. Letting the second
+    message overwrite the first would make a successful release look like it
+    never happened."""
+    from admin_console import admin_console as console
+
+    class _FlakyRefresh(FixtureQueueSource):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_next_queue = False
+
+        def fetch_queue(self):
+            if self.fail_next_queue:
+                from admin_console.source import SourceError
+
+                raise SourceError("The gateway did not answer.")
+            return super().fetch_queue()
+
+    src = _FlakyRefresh()
+    console.set_source(src)
+    state = console.State()
+    state.load_queue()
+    state.select(state.rows[0].message_id)
+    src.fail_next_queue = True
+    state.release()
+
+    assert "Released" in state.banner
+    assert "Could not refresh the queue" in state.banner
+    assert state.banner_is_error
