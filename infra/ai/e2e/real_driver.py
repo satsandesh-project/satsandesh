@@ -17,6 +17,13 @@ Subcommands (each prints JSON lines):
         until the message is visible to them; for every rendering that has audio, the
         audio is fetched THROUGH THE GATEWAY as that recipient and measured
         (size, duration, loudness), because "has_audio: true" does not mean it plays.
+    burst <circle_id> <timeout_s> <n> <webm:label:lang> [<webm:label:lang> ...]
+        N notes dispatched TOGETHER (every upload is done first, then all N POST /messages
+        are released at once from a barrier), cycling through the given samples. One poller
+        per reader records when each note first became visible to that reader and measures
+        its rendering audio. Prints per-note events and one `burst_summary` (p50/p90/worst of
+        the time to visible, an audit for lost / duplicated / unexpected messages, and a
+        verdict per rendering audio). The single-note `run` above is unchanged.
 """
 
 from __future__ import annotations
@@ -26,11 +33,13 @@ import json
 import math
 import struct
 import sys
+import threading
 import time
 import uuid
 import wave
 
 import httpx
+from load_stats import audio_verdict, audit, summarize
 
 BASE = "http://gateway:8000"
 ALICE = "00000000-0000-4000-8000-000000000001"
@@ -169,12 +178,188 @@ def cmd_run(path: str, label: str, source_lang: str, circle_id: str, timeout_s: 
         emit(event="never_visible", recipient=name, waited_s=round(time.time() - sent_at, 1))
 
 
+def cmd_burst(circle_id: str, timeout_s: float, n: int, specs: list[str]) -> None:
+    samples = []
+    for spec in specs:
+        path, label, lang = spec.rsplit(":", 2)
+        with open(path, "rb") as f:
+            samples.append((f.read(), label, lang))
+
+    # Every upload first, so the burst measures the pipeline and not the upload.
+    notes = []
+    for i in range(n):
+        data, label, lang = samples[i % len(samples)]
+        up = httpx.post(
+            f"{BASE}/media",
+            params={"format": "webm_opus", "duration_ms": 5000},
+            content=data,
+            headers=_auth(ALICE),
+            timeout=60,
+        )
+        up.raise_for_status()
+        notes.append({"i": i, "label": label, "lang": lang, "media": up.json()})
+    emit(event="burst_start", n=n, samples=[s[1] for s in samples], readers=list(RECIPIENTS))
+
+    barrier = threading.Barrier(n)
+
+    def send(note: dict) -> None:
+        body = {
+            "client_msg_id": str(uuid.uuid4()),
+            "target_type": "circle",
+            "target_id": circle_id,
+            "kind": "voice",
+            "source_lang": note["lang"],
+            "media_ref": {
+                "uri": note["media"]["uri"],
+                "format": note["media"]["format"],
+                "duration_ms": 5000,
+            },
+        }
+        barrier.wait()
+        note["sent_at"] = time.time()
+        try:
+            r = httpx.post(f"{BASE}/messages", json=body, headers=_auth(ALICE), timeout=60)
+        except httpx.HTTPError as e:
+            note["send_error"] = repr(e)
+            return
+        note["ack_s"] = round(time.time() - note["sent_at"], 3)
+        note["http"] = r.status_code
+        if r.status_code in (200, 201):
+            note["id"] = r.json()["id"]
+            note["status"] = r.json()["status"]
+
+    threads = [threading.Thread(target=send, args=(note,)) for note in notes]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    accepted = [note for note in notes if "id" in note]
+    for note in notes:
+        emit(
+            event="sent" if "id" in note else "send_failed",
+            index=note["i"],
+            label=note["label"],
+            message_id=note.get("id"),
+            http=note.get("http"),
+            status=note.get("status"),
+            ack_s=note.get("ack_s"),
+            error=note.get("send_error"),
+        )
+    if not accepted:
+        emit(event="burst_summary", verdict="no note was accepted: nothing to measure")
+        return
+    starts = [note["sent_at"] for note in notes if "sent_at" in note]
+    emit(event="dispatch_spread_s", value=round(max(starts) - min(starts), 3))
+    by_id = {note["id"]: note for note in accepted}
+
+    lock = threading.Lock()
+    visible_at: dict[tuple[str, str], dict] = {}  # (reader, message id) -> what it saw
+    final_views: dict[str, list[str]] = {}
+    deadline = time.time() + timeout_s
+
+    def poll(reader: str, uid: str) -> None:
+        todo = set(by_id)
+        while time.time() < deadline:
+            try:
+                view = _view(uid, circle_id)
+            except httpx.HTTPError:
+                time.sleep(1.0)
+                continue
+            now = time.time()
+            for m in view:
+                if m["id"] not in todo:
+                    continue
+                renderings = []
+                for r in m.get("renderings", []):
+                    audio = r.get("audio")
+                    stats = _audio_stats(uid, audio["uri"]) if audio else None
+                    renderings.append(
+                        {
+                            "language": r["language"],
+                            "text": r["text"],
+                            "degraded_reason": r["degraded_reason"],
+                            "audio": stats,
+                            "audio_verdict": audio_verdict(stats),
+                        }
+                    )
+                with lock:
+                    visible_at[(reader, m["id"])] = {
+                        "after_send_s": round(now - by_id[m["id"]]["sent_at"], 2),
+                        "status": m["status"],
+                        "transcript": m.get("transcript"),
+                        "renderings": renderings,
+                    }
+                todo.discard(m["id"])
+            if not todo:
+                break
+            time.sleep(1.0)
+        # One last look at the whole view, which is what the duplicate audit reads.
+        ids_seen: list[str] = []
+        try:
+            ids_seen = [m["id"] for m in _view(uid, circle_id)]
+        except httpx.HTTPError:
+            pass
+        with lock:
+            final_views[reader] = ids_seen
+
+    pollers = [threading.Thread(target=poll, args=(r, u)) for r, u in RECIPIENTS.items()]
+    t0 = time.time()
+    for t in pollers:
+        t.start()
+    for t in pollers:
+        t.join()
+
+    for (reader, mid), info in sorted(visible_at.items(), key=lambda kv: kv[1]["after_send_s"]):
+        emit(
+            event="visible",
+            recipient=reader,
+            index=by_id[mid]["i"],
+            label=by_id[mid]["label"],
+            message_id=mid,
+            **info,
+        )
+    for reader in RECIPIENTS:
+        for mid, note in by_id.items():
+            if (reader, mid) not in visible_at:
+                emit(event="never_visible", recipient=reader, index=note["i"], message_id=mid)
+
+    per_note: dict[str, list[float]] = {}
+    for (_, mid), info in visible_at.items():
+        per_note.setdefault(mid, []).append(info["after_send_s"])
+    # A note is "done" when its LAST reader could see it; only notes every reader saw count.
+    wall = [max(times) for times in per_note.values() if len(times) == len(RECIPIENTS)]
+    by_reader: dict[str, list[float]] = {reader: [] for reader in RECIPIENTS}
+    for (reader, _), info in visible_at.items():
+        by_reader[reader].append(info["after_send_s"])
+    verdicts: dict[str, int] = {}
+    for info in visible_at.values():
+        for r in info["renderings"]:
+            if r["audio"] is None and r["degraded_reason"]:
+                key = "text_only:" + str(r["degraded_reason"])
+            else:
+                key = r["audio_verdict"]
+            verdicts[key] = verdicts.get(key, 0) + 1
+    emit(
+        event="burst_summary",
+        n_sent=n,
+        n_accepted=len(accepted),
+        wall_s=summarize(wall),
+        completion_s_sorted=sorted(round(w, 1) for w in wall),
+        per_reader_s={reader: summarize(by_reader[reader]) for reader in RECIPIENTS},
+        rendering_audio=verdicts,
+        audit=audit(list(by_id), final_views),
+        observation_window_s=round(time.time() - t0, 1),
+    )
+
+
 def main(argv: list[str]) -> None:
     cmd, args = argv[1], argv[2:]
     if cmd == "circle":
         cmd_circle()
     elif cmd == "run":
         cmd_run(args[0], args[1], args[2], args[3], float(args[4]) if len(args) > 4 else 300.0)
+    elif cmd == "burst":
+        cmd_burst(args[0], float(args[1]), int(args[2]), args[3:])
     else:
         raise SystemExit(f"unknown subcommand {cmd!r}")
 
