@@ -38,6 +38,7 @@ def record_moderation_event(
     confidence: float | None = None,
     note: str | None = None,
     notice_text: str | None = None,
+    notice_language: str | None = None,
     model_version: str | None = None,
     degraded: bool = False,
     degraded_reason: str | None = None,
@@ -65,6 +66,7 @@ def record_moderation_event(
         rationale=rationale,
         note=note,
         notice_text=notice_text,
+        notice_language=notice_language,
         policy_version=policy_version,
         model_version=model_version,
         degraded=degraded,
@@ -81,6 +83,7 @@ def record_classifier_decision(
     message_id: uuid.UUID,
     decision: ModerationDecision,
     notice_text: str | None = None,
+    notice_language: str | None = None,
 ) -> ModerationEvent:
     """Store the classifier's answer as the classifier's event.
 
@@ -102,6 +105,7 @@ def record_classifier_decision(
         confidence=decision.confidence,
         rationale=decision.rationale,
         notice_text=notice_text,
+        notice_language=notice_language,
         policy_version=decision.policy_version,
         model_version=decision.model_version,
         degraded=degraded,

@@ -331,11 +331,15 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
             decision = _ai(session, client.moderate, ModerationRequest(text=message.pivot_text_en))
         except AiCallError as exc:
             _fail_or_retry(exc)
-        notice = None
+        notice, notice_language = None, None
         if decision.action is not ModerationAction.ALLOW and decision.nudge_text:
-            notice = _translate_notice(session, client, decision, author)
+            notice, notice_language = _translate_notice(session, client, decision, author)
         event = record_classifier_decision(
-            session, message_id=message_id, decision=decision, notice_text=notice
+            session,
+            message_id=message_id,
+            decision=decision,
+            notice_text=notice,
+            notice_language=notice_language,
         )
         session.commit()
 
@@ -492,16 +496,16 @@ def _ingest_rendering_audio(
 
 def _translate_notice(
     session: Session, client: AiClient, decision: ModerationDecision, author: User
-) -> str | None:
+) -> tuple[str | None, str | None]:
     """The classifier's notice is an English master (the mock's is Telugu).
-    Returns it in the sender's language, or None -- recorded honestly as 'no
-    notice produced' -- rather than the untranslated text passed off as what
-    the sender was told."""
+    Returns (text, language) in the sender's language, or (None, None) -- recorded
+    honestly as 'no notice produced' -- rather than the untranslated text passed off
+    as what the sender was told."""
     target = _primary_subtag(author.preferred_language)
     if target not in SUPPORTED_LANGUAGES:
-        return None
+        return None, None
     if decision.nudge_language is not None and decision.nudge_language.value == target:
-        return decision.nudge_text
+        return decision.nudge_text, target
     try:
         rendered = _ai(
             session,
@@ -510,11 +514,11 @@ def _translate_notice(
         )
     except AiCallError as exc:
         logger.warning("could not translate the moderation notice: %s", exc)
-        return None
+        return None, None
     for result in rendered.results:
         if result.language.value == target and result.text.strip():
-            return result.text.strip()
-    return None
+            return result.text.strip(), target
+    return None, None
 
 
 # --- finishing -----------------------------------------------------------------------------
