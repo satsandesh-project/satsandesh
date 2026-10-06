@@ -4,6 +4,10 @@
 # It derives the config from the one Caddyfile everybody already uses, instead of keeping a
 # second copy of the routes that would drift or editing the file staging serves today: every
 # route and every comment in it reaches the HTTPS site byte for byte. The generated config is:
+#   0. a global `default_sni <TLS_HOST>`: a client that connects to an IP address (every browser
+#      pointed at https://10.x.x.x:PORT) sends no server name, and Caddy then looks up the address
+#      the connection ARRIVED on, which behind docker port publishing is the container's own, not
+#      the host's: no certificate, `tlsv1 alert internal error`. Found from a laptop, not in-network;
 #   1. a global `auto_https disable_redirects`, so the redirect below is the ONLY redirect and
 #      points at the port browsers really reach HTTPS on (Caddy's own redirect would use the
 #      default 443, which this stack does not publish);
@@ -30,7 +34,7 @@ fi
 if [ "$PORT" = "443" ]; then TARGET="https://$TLS_HOST"; else TARGET="https://$TLS_HOST:$PORT"; fi
 
 {
-  printf '{\n\tauto_https disable_redirects\n}\n\n'
+  printf '{\n\tauto_https disable_redirects\n\tdefault_sni %s\n}\n\n' "$TLS_HOST"
   printf ':80 {\n\tredir %s{uri} 302\n}\n\n' "$TARGET"
   awk -v host="$TLS_HOST" '
     !done && $0 == ":80 {" {
