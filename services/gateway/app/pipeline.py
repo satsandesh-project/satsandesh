@@ -45,6 +45,7 @@ from app.db.base import SessionLocal
 from app.db.models import Membership, Message, MessageRendering, User
 from app.db.moderation import (
     latest_moderation_event,
+    notices_for_author,
     record_classifier_decision,
     record_moderation_event,
 )
@@ -134,27 +135,42 @@ def _request_delivery(message_id: uuid.UUID) -> None:
     _run_on_main_loop(deliver)
 
 
+def build_status_frame(
+    session: Session, message_id: uuid.UUID, status: str
+) -> tuple[uuid.UUID, dict] | None:
+    """The `message.status` frame for the sender's devices, and whose devices: (author id, frame),
+    or None when the message is gone. It carries the sender's notice when the latest event has one
+    (the live half of contracts/chat `MessageStatusOut.notice_text`; the durable half is
+    `MessageOut.moderation_notice`), and never the classifier's label, confidence or rationale."""
+    from contracts.chat.common import MessageStatus
+    from contracts.chat.envelope import FrameType
+    from contracts.chat.messages import MessageStatusOut
+
+    message = session.get(Message, message_id)
+    if message is None:
+        return None
+    notice = notices_for_author(session, [message], message.author_id).get(str(message_id))
+    data = MessageStatusOut(
+        id=str(message_id),
+        status=MessageStatus(status),
+        notice_text=notice[0] if notice else None,
+        notice_language=notice[1] if notice else None,
+    ).model_dump(mode="json")
+    return message.author_id, {"type": FrameType.MESSAGE_STATUS.value, "data": data}
+
+
 def _notify_author(message_id: uuid.UUID, status: str) -> None:
     """Tell the sender's connected devices their message's status changed, so
     a held or blocked message does not just sit on a 'pending' tick."""
 
     async def notify() -> None:
-        from contracts.chat.common import MessageStatus
-        from contracts.chat.envelope import FrameType
-        from contracts.chat.messages import MessageStatusOut
-
         from app.ws import manager
 
         with SessionLocal() as session:
-            author_id = session.scalar(select(Message.author_id).where(Message.id == message_id))
-        if author_id is None:
+            built = build_status_frame(session, message_id, status)
+        if built is None:
             return
-        frame = {
-            "type": FrameType.MESSAGE_STATUS.value,
-            "data": MessageStatusOut(id=str(message_id), status=MessageStatus(status)).model_dump(
-                mode="json"
-            ),
-        }
+        author_id, frame = built
         await manager.broadcast([str(author_id)], frame)
 
     _run_on_main_loop(notify)
