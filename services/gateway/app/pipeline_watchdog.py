@@ -103,7 +103,11 @@ def hold_stuck_messages(*, grace_seconds: float, now: datetime | None = None) ->
             ).first()
             if message is None:
                 continue  # locked by someone else right now: the next pass sees it
-            if message.status != "pending" or message.pipeline_state != "pending":
+            if (
+                message.status != "pending"
+                or message.pipeline_state != "pending"
+                or message.deleted_at is not None
+            ):
                 continue
             if _message_has_live_job(session, message_id):
                 continue

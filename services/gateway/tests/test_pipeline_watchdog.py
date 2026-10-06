@@ -256,6 +256,82 @@ def test_one_stuck_message_among_healthy_ones_is_the_only_one_held(db_session, o
     assert _msg(db_session, healthy).status == "pending"
 
 
+# --- the scan itself, and the things only a second session can show ----------------------------
+
+
+def test_the_scan_lists_only_the_orphan(db_session):
+    from app.pipeline_watchdog import find_stuck_message_ids
+
+    orphan, *_ = _dm(db_session)
+    _delete_job(db_session, orphan)
+    queued, *_ = _dm(db_session)  # live job
+    running, *_ = _dm(db_session)
+    _set_job(db_session, running, "running")
+    finished, *_ = _dm(db_session)
+    _delete_job(db_session, finished)
+    db_session.execute(
+        update(Message)
+        .where(Message.id == finished)
+        .values(status="sent", pipeline_state="complete")
+    )
+    db_session.commit()
+
+    assert find_stuck_message_ids(db_session, grace_seconds=GRACE) == [orphan]
+    assert queued not in find_stuck_message_ids(db_session, grace_seconds=GRACE)
+
+
+def test_a_deleted_message_is_left_alone(db_session, outbox):
+    message_id, *_ = _dm(db_session)
+    _delete_job(db_session, message_id)
+    db_session.execute(
+        update(Message).where(Message.id == message_id).values(deleted_at=datetime.now(UTC))
+    )
+    db_session.commit()
+
+    assert hold_stuck_messages(grace_seconds=GRACE) == []
+    assert _msg(db_session, message_id).status == "pending"
+    assert list_moderation_events(db_session, message_id) == []
+
+
+def test_a_message_deleted_after_the_scan_is_not_held(db_session, outbox, monkeypatch):
+    import app.pipeline_watchdog as watchdog
+
+    message_id, *_ = _dm(db_session)
+    _delete_job(db_session, message_id)
+    db_session.execute(
+        update(Message).where(Message.id == message_id).values(deleted_at=datetime.now(UTC))
+    )
+    db_session.commit()
+    monkeypatch.setattr(watchdog, "find_stuck_message_ids", lambda *a, **k: [message_id])
+
+    assert hold_stuck_messages(grace_seconds=GRACE) == []
+    assert list_moderation_events(db_session, message_id) == []
+
+
+def test_a_message_someone_else_is_working_on_right_now_is_skipped_not_waited_for(
+    db_session, engine, outbox
+):
+    """Another transaction holds the row (the sender undoing it, say): the watchdog must not queue
+    up behind it or write an event for a message it then cannot change. It skips, and the next
+    pass sees the message."""
+    from sqlalchemy.orm import Session
+
+    message_id, *_ = _dm(db_session)
+    _delete_job(db_session, message_id)
+
+    other = Session(engine)
+    try:
+        other.scalars(select(Message).where(Message.id == message_id).with_for_update()).one()
+
+        assert hold_stuck_messages(grace_seconds=GRACE) == []
+        assert list_moderation_events(db_session, message_id) == []
+    finally:
+        other.rollback()
+        other.close()
+
+    assert hold_stuck_messages(grace_seconds=GRACE) == [str(message_id)], "the next pass holds it"
+
+
 # --- the race between the scan and the hold ---------------------------------------------------
 # The scan and the hold are separate transactions; a message can change in between. The hold
 # re-checks under a row lock. Simulated by making the scan report a message that is no longer
