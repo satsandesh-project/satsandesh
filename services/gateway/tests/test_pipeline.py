@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.db.models import Job, MediaObject, Message, MessageRendering
 from app.db.models import User as DbUser
 from app.db.moderation import list_moderation_events
+from app.db.renderings import set_message_transcript
 from app.db.repository import (
     add_member,
     create_circle,
@@ -221,6 +222,102 @@ def test_a_voice_note_is_transcribed_first_and_the_transcript_stored(db_session,
     # The pivot translates the transcript, in the language ASR detected.
     assert fake.requests("pivot")[0]["text"] == "ఈ రోజు సత్సంగం ఎప్పుడు?"
     assert fake.requests("pivot")[0]["source_language"] == "te"
+
+
+# --- the script guard (Week 8 gate finding) ------------------------------------------------------
+# A transcript labelled `te` that is not written in Telugu is held for a person, instead of being
+# translated and delivered as confident nonsense. OFF by default: nothing changes until it is enabled.
+
+WRONG_SCRIPT = ("इसायंद्रम एदू गंतलकू आलेम लो बजनू", "te")  # Devanagari, labelled Telugu
+RIGHT_SCRIPT = ("ఈ రోజు సత్సంగం ఎప్పుడు?", "te")
+
+
+@pytest.fixture
+def script_guard(monkeypatch):
+    monkeypatch.setattr(get_settings(), "PIPELINE_SCRIPT_CHECK_ENABLED", True)
+    monkeypatch.setattr(get_settings(), "PIPELINE_SCRIPT_MIN_SHARE", 0.5)
+
+
+def test_a_transcript_in_the_wrong_script_is_held_for_a_person(
+    db_session, fake, outbox, script_guard
+):
+    fake.transcript = WRONG_SCRIPT
+    message_id = _dm(db_session, kind="voice", source_lang=None)
+
+    _run(db_session, message_id)
+
+    message = _msg(db_session, message_id)
+    assert message.status == "held" and message.pipeline_state == "complete"
+    assert fake.stages() == ["transcribe"], "no translation, no verdict, no rendering of nonsense"
+    # The moderator needs to SEE what was heard (and the recording), so the transcript is kept.
+    assert (message.transcript, message.transcript_language) == WRONG_SCRIPT
+    (event,) = list_moderation_events(db_session, message_id)
+    assert (event.actor_kind, event.action) == ("system", "HOLD")
+    assert "te" in event.rationale and "0%" in event.rationale and "Telugu" in event.rationale
+    assert outbox["status"] == [(message_id, "held")], "the sender's devices are told"
+    assert outbox["delivery"] == []
+
+
+def test_a_transcript_in_the_right_script_goes_through_as_before(
+    db_session, fake, outbox, script_guard
+):
+    fake.transcript = RIGHT_SCRIPT
+    message_id = _dm(db_session, kind="voice", source_lang=None)
+
+    _run(db_session, message_id)
+
+    assert fake.stages() == ["transcribe", "pivot", "moderate", "render"]
+    assert _msg(db_session, message_id).status == "pending"  # the undo window; not held
+
+
+def test_with_the_guard_off_a_wrong_script_transcript_is_processed_exactly_as_today(
+    db_session, fake, outbox
+):
+    # The default. This is the promise that shipping the guard changes nothing by itself.
+    fake.transcript = WRONG_SCRIPT
+    message_id = _dm(db_session, kind="voice", source_lang=None)
+
+    _run(db_session, message_id)
+
+    assert fake.stages() == ["transcribe", "pivot", "moderate", "render"]
+    assert _msg(db_session, message_id).status != "held"
+
+
+def test_a_typed_message_is_never_script_checked(db_session, fake, outbox, script_guard):
+    # Only ASR output is suspect; a typed message's language is the sender's own declaration.
+    message_id = _dm(db_session, kind="text", source_lang="te")
+
+    _run(db_session, message_id)
+
+    assert fake.stages() == ["pivot", "moderate", "render"]
+
+
+def test_a_run_resumed_after_a_crash_is_still_guarded(db_session, fake, outbox, script_guard):
+    # The transcript was stored, then the worker died before ruling. On the retry the ASR is not called
+    # again, so the check must not live only in the transcribe branch.
+    message_id = _dm(db_session, kind="voice", source_lang=None)
+    set_message_transcript(db_session, message_id, *WRONG_SCRIPT)
+    db_session.commit()
+
+    _run(db_session, message_id)
+
+    assert _msg(db_session, message_id).status == "held"
+    assert fake.stages() == []
+
+
+def test_the_threshold_is_a_share_of_letters_not_all_or_nothing(
+    db_session, fake, outbox, script_guard, monkeypatch
+):
+    # 4 Telugu letters + 4 Latin = exactly 0.5: not below the bar, so it passes; 2 + 6 = 0.25 is held.
+    fake.transcript = ("అఆఇఈ abcd", "te")
+    passing = _dm(db_session, kind="voice", source_lang=None)
+    _run(db_session, passing)
+    assert _msg(db_session, passing).status != "held"
+
+    fake.transcript = ("అఆ abcdef", "te")
+    failing = _dm(db_session, kind="voice", source_lang=None)
+    _run(db_session, failing)
+    assert _msg(db_session, failing).status == "held"
 
 
 def test_no_database_transaction_is_held_open_while_an_ai_service_is_called(
