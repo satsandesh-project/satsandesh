@@ -20,6 +20,13 @@
 # works. The Telugu ASR is unreliable (OPEN_QUESTIONS #31): a wrong-script transcript is delivered
 # with no signal. Know that before turning it on for people.
 #
+# KEEPING IT ON. --apply sets PIPELINE_ENABLED and the stopgap for ITS OWN recreate of the gateway, and
+# layers docker-compose.ai.yml on the command line. None of that is saved. A LATER plain
+# `docker compose up` (without the AI file) recreates the gateway from the base files only: the pipeline
+# goes off and the gateway points at the mock again, silently. To make it stick, --apply ends by printing
+# three lines for the stack's .env (PIPELINE_ENABLED, the stopgap, and COMPOSE_FILE listing the AI file
+# too); with them a plain `docker compose up` keeps everything. The script never edits that file itself.
+#
 # Needs HF_TOKEN in the stack's .env (the IndicTrans2 models are gated). This script never prints it
 # and never writes it: whoever owns the stack puts it there.
 set -uo pipefail
@@ -77,6 +84,13 @@ wait_healthy() {  # $1.. = services; up to 25 minutes (the first start downloads
 }
 
 FAILED=0
+hf_status() {  # $1 = URL -> the HTTP status. The token goes to curl on STDIN: never on a command line, never printed.
+  local t
+  t=$(grep -E '^HF_TOKEN=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '
+"'"'"' ')
+  printf 'header = "Authorization: Bearer %s"
+' "$t" | curl -s -K - -o /dev/null -w '%{http_code}' --max-time 20 "$1"
+}
 check() {  # $1 = description, $2 = 0 for ok
   if [ "$2" = 0 ]; then echo "  PASS  $1"; else echo "  FAIL  $1"; FAILED=1; fi
 }
@@ -87,6 +101,12 @@ echo "gateway now: $( [ -n "$GW" ] && settings || echo 'not running')"
 
 if [ "$MODE" = rollback ]; then
   echo "=== rollback: the gateway goes back to the mock AI and the pipeline off; AI containers stopped"
+  if grep -q -E '^PIPELINE_ENABLED=true' .env 2>/dev/null; then
+    echo "WARNING: $STAGING_DIR/.env still has PIPELINE_ENABLED=true (the 'keep it on' lines). .env wins over an"
+    echo "         unset shell variable, so the gateway below will come back with the pipeline ON. Remove"
+    echo "         PIPELINE_ENABLED, AI_ACCEPT_WEBM_AS_OGG_OPUS and the COMPOSE_FILE line from that .env, then run"
+    echo "         this --rollback again."
+  fi
   env -u PIPELINE_ENABLED -u AI_ACCEPT_WEBM_AS_OGG_OPUS "${DC_BASE[@]}" up -d --no-deps --force-recreate gateway
   "${DC_AI[@]}" stop speech moderation mt render
   echo "gateway now: $(settings)"
@@ -96,6 +116,15 @@ fi
 echo "=== checks"
 [ -f "$AI_FILE" ]; check "docker-compose.ai.yml exists at this commit" $?
 [ "$(grep -c '^HF_TOKEN=.' .env 2>/dev/null)" -ge 1 ]; check "HF_TOKEN is set in .env (value never shown)" $?
+if [ "$(grep -c '^HF_TOKEN=.' .env 2>/dev/null)" -ge 1 ]; then
+  code=$(hf_status https://huggingface.co/api/whoami-v2)
+  [ "$code" = 200 ]; check "Hugging Face accepts the HF_TOKEN (HTTP $code; 401 = revoked, expired or mistyped)" $?
+  for repo in ai4bharat/indictrans2-indic-en-dist-200M ai4bharat/indictrans2-en-indic-dist-200M; do
+    code=$(hf_status "https://huggingface.co/$repo/resolve/main/config.json")
+    { [ "$code" = 200 ] || [ "$code" = 302 ]; }
+    check "the token can read $repo (HTTP $code; 401 = token not valid, 403 = this account has not accepted the model's terms)" $?
+  done
+fi
 free_gb=$(df -BG --output=avail "$HOME" | tail -1 | tr -dc 0-9)
 [ "${free_gb:-0}" -ge 25 ]; check "free disk >= 25 GB (have ${free_gb:-?} GB)" $?
 mem_mb=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
@@ -128,5 +157,14 @@ echo "gateway now: $(settings)"
 for svc in gateway speech moderation mt render; do
   echo "  $svc: $(docker inspect -f '{{.State.Health.Status}}' "$("${DC_AI[@]}" ps -q "$svc")" 2>/dev/null)"
 done
+COMPOSE_NAMES=()
+for ((i = 1; i < ${#BASE[@]}; i += 2)); do COMPOSE_NAMES+=("$(basename "${BASE[$i]}")"); done
+COMPOSE_NAMES+=(docker-compose.ai.yml)
+COMPOSE_VALUE=$(IFS=:; echo "${COMPOSE_NAMES[*]}")
+echo "=== to KEEP it on (this --apply set the flags for this recreate only; a later plain 'docker compose up' would turn the pipeline off again)"
+echo "  add these lines to $STAGING_DIR/.env (this script does not edit it):"
+echo "    PIPELINE_ENABLED=true"
+[ "$STOPGAP" = 1 ] && echo "    AI_ACCEPT_WEBM_AS_OGG_OPUS=true"
+echo "    COMPOSE_FILE=$COMPOSE_VALUE"
 echo "done. Send a Telugu voice note from the app and watch it: 'docker compose -p $PROJECT logs -f gateway'."
 echo "To undo: $0 --rollback"
