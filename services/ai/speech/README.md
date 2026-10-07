@@ -61,6 +61,9 @@ documented default below — there is no silent, undocumented fallback.
 | `ASR_COMPUTE_TYPE` | `int8` | one of `int8`, `int8_float16`, `float16`, `float32` |
 | `ASR_CPU_THREADS` | `4` | this machine has no CUDA GPU; 4 leaves headroom on a laptop CPU instead of pinning every core |
 | `ASR_PORT` | `8002` | |
+| `ASR_VAD_FILTER` | `true` | faster-whisper `vad_filter` (Silero VAD drops non-speech before decoding); `false` restores the old behaviour. `condition_on_previous_text` is always off |
+| `ASR_NO_SPEECH_THRESHOLD` | `0.6` | drop segments with `no_speech_prob` above this **and** `avg_logprob < -1.0` |
+| `ASR_DENOISE` | `off` | `off` or `rnnoise` (RNNoise via the optional `denoise` extra: `pip install ".[denoise]"`). Order: denoise → ASR. Adds a `denoise` stage timing when on. A/B a file with `tools/denoise_ab.py` |
 
 ## Development
 

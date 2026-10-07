@@ -46,3 +46,14 @@ Used by: services/ai/mt/ and services/ai/render/
 - Models: ai4bharat/indictrans2-indic-en-dist-200M,
   ai4bharat/indictrans2-en-indic-dist-200M.
 - License: MIT.
+
+================================================================================
+pyrnnoise / RNNoise (optional ASR denoising)
+================================================================================
+Used by: services/ai/speech/denoise.py (optional `denoise` extra, ASR_DENOISE=rnnoise;
+off by default)
+
+- pyrnnoise: Python bindings for RNNoise. License: Apache-2.0 (per the project;
+  confirm against the installed distribution's LICENSE before redistributing).
+- RNNoise (Xiph.Org / Mozilla, Jean-Marc Valin): BSD 3-clause. Bundled in the
+  pyrnnoise wheel; retain its copyright notice when redistributing.
