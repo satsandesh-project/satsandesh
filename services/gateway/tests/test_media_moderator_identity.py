@@ -114,3 +114,18 @@ def test_a_recipient_with_a_bare_uuid_still_hears_a_delivered_note(client, db_se
     media_id = _voice(db_session, author=alice, target=bob, status="sent")
 
     assert client.get(f"/media/{media_id}", headers=_hdr(bob.id)).status_code == 200
+
+
+def test_the_repository_function_fails_closed_when_not_told_the_token_was_signed(db_session):
+    """The route always passes the flag, so only a direct call can pin the default."""
+    from app.db.models import MediaObject
+    from app.db.repository import user_can_fetch_media
+
+    alice, bob = _user(db_session, "Alice"), _user(db_session, "Bob")
+    mod = _user(db_session, "Mod", "moderator")
+    media_id = _voice(db_session, author=alice, target=bob, status="held")
+    media = db_session.get(MediaObject, media_id)
+
+    assert user_can_fetch_media(db_session, media, mod.id) is False
+    assert user_can_fetch_media(db_session, media, mod.id, moderator_may_review=False) is False
+    assert user_can_fetch_media(db_session, media, mod.id, moderator_may_review=True) is True
