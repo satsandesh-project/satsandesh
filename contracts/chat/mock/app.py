@@ -181,8 +181,19 @@ _settings: dict[str, UserSettingsOut] = {}
 #     PENDING and are never queued.
 #   - no push: a release flips the status but sends no `message.new` over the WebSocket.
 #   - `notice_sent` is always False, as on the real gateway (OPEN_QUESTIONS #18).
+#   - the sender's notice (contracts 0.6.0, #18): the keyword classifier's HOLD/BLOCK event
+#     carries a canned Telugu `notice_text`, and `MessageOut.moderation_notice` is filled in on
+#     the AUTHOR's reads only (GET /messages with `X-Mock-User-Id`, the WebSocket's
+#     `?user_id=`), from the LATEST event: a moderator's release or block has no notice, so
+#     afterwards there is none. The wording is a PLACEHOLDER, not policy: what a sender is
+#     told is M4's to write (and a native Telugu reader's to check).
 _events: dict[str, list[ModerationEvent]] = {}  # message id -> its trail, oldest first
 _MOCK_POLICY_VERSION = "policy@mock"
+_MOCK_NOTICE_LANGUAGE = "te"
+_MOCK_NOTICES = {
+    ModerationAction.HOLD: "మీ సందేశం సమీక్షలో ఉంది.",  # "Your message is under review."
+    ModerationAction.BLOCK: "ఈ సందేశం పంపబడలేదు.",  # "This message was not sent."
+}
 
 
 def _as_uuid(value: str) -> uuid.UUID:
@@ -206,6 +217,7 @@ def _append_event(
     note: str | None = None,
     confidence: float | None = None,
     model_version: str | None = None,
+    notice_text: str | None = None,
 ) -> ModerationEvent:
     event = ModerationEvent(
         id=uuid.uuid4(),
@@ -217,6 +229,7 @@ def _append_event(
         confidence=confidence,
         rationale=rationale,
         note=note,
+        notice_text=notice_text,
         policy_version=_MOCK_POLICY_VERSION,
         model_version=model_version,
         created_at=datetime.now(timezone.utc),
@@ -281,11 +294,31 @@ def _store_message(msg: MessageIn, author_id: str, deliver_voice: bool = False) 
             rationale=f"Mock classifier: the text contained {'block' if blocked else 'hold'!r}.",
             confidence=0.9,
             model_version="mock-classifier",
+            notice_text=_MOCK_NOTICES[ModerationAction.BLOCK if blocked else ModerationAction.HOLD],
         )
     return record
 
 
-def _sync_batch(req: SyncRequest) -> SyncBatch:
+def _for_viewer(message: MessageOut, viewer_id: str) -> MessageOut:
+    """`moderation_notice` is AUTHOR-ONLY (the same rule as the real gateway's
+    notices_for_author), taken from the message's LATEST event: if a moderator ruled after the
+    classifier there is no notice on that event and none is shown. Stored records never carry it,
+    so a `message.new` echo or another reader's copy cannot leak it."""
+    if message.author_id != viewer_id:
+        return message
+    trail = _events.get(message.id)
+    notice = trail[-1].notice_text if trail else None
+    if not notice:
+        return message
+    return message.model_copy(
+        update={
+            "moderation_notice": notice,
+            "moderation_notice_language": _MOCK_NOTICE_LANGUAGE,
+        }
+    )
+
+
+def _sync_batch(req: SyncRequest, viewer_id: str = "mock-user-1") -> SyncBatch:
     key = (req.target_type.value, req.target_id)
     history = _messages.get(key, [])
     since_seq = _message_seq.get(req.since_id, 0) if req.since_id else 0
@@ -294,7 +327,7 @@ def _sync_batch(req: SyncRequest) -> SyncBatch:
     return SyncBatch(
         target_type=req.target_type,
         target_id=req.target_id,
-        messages=page,
+        messages=[_for_viewer(m, viewer_id) for m in page],
         has_more=len(remaining) > len(page),
     )
 
@@ -320,10 +353,11 @@ async def list_messages(
     since: str | None = None,
     limit: int = 50,
     x_mock_latency_ms: str | None = Header(default=None),
+    x_mock_user_id: str = Header(default="mock-user-1"),
 ) -> SyncBatch:
     await _sleep_for_latency(x_mock_latency_ms)
     req = SyncRequest(target_type=target_type, target_id=target_id, since_id=since, limit=limit)
-    return _sync_batch(req)
+    return _sync_batch(req, x_mock_user_id)
 
 
 @app.get("/circles", response_model=list[Circle])
@@ -608,7 +642,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                 )
             elif raw.type is FrameType.SYNC_REQUEST:
                 req = SyncRequest.model_validate(raw.data)
-                batch = _sync_batch(req)
+                batch = _sync_batch(req, user_id)
                 await websocket.send_json(
                     {
                         "type": FrameType.SYNC_BATCH.value,

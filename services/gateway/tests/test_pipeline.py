@@ -605,7 +605,80 @@ def test_a_nudge_can_be_configured_to_hold_instead(db_session, fake, outbox, mon
     assert outbox["delivery"] == []
 
 
+def _circle_message(db_session, *, due=True):
+    author = _user(db_session, "Author", "te")
+    circle = create_circle(db_session, name="Satsang", created_by=author.id)
+    add_member(db_session, circle_id=circle.id, user_id=author.id, role="admin")
+    add_member(db_session, circle_id=circle.id, user_id=_user(db_session, "Other", "hi").id)
+    return _message(db_session, author, target_circle=circle, due=due)
+
+
+def test_a_nudge_to_a_circle_is_not_delivered_even_though_a_dm_nudge_is(db_session, fake, outbox):
+    # M4's answer on #17 (contracts/chat ModerationAction): NUDGE is "not delivered to a circle";
+    # in a 1:1 it is the organisation's knob and delivers until they decide otherwise.
+    fake.action = ModerationAction.NUDGE
+    fake.label = ModerationLabel.C_PERSONAL
+    fake.nudge_text = "Please be gentle."
+    message_id = _circle_message(db_session)
+
+    _run(db_session, message_id)
+
+    assert _msg(db_session, message_id).status == "held"
+    assert outbox["delivery"] == []
+    assert outbox["status"] == [(message_id, "held")], "the sender's devices are told"
+    (event,) = list_moderation_events(db_session, message_id)
+    assert event.action == "NUDGE", "recorded as the classifier's NUDGE, not rewritten to HOLD"
+
+
+def test_the_nudge_setting_only_governs_dms_a_circle_nudge_never_delivers(
+    db_session, fake, outbox, monkeypatch
+):
+    monkeypatch.setattr(get_settings(), "PIPELINE_NUDGE_DELIVERS", True)
+    fake.action = ModerationAction.NUDGE
+    fake.nudge_text = "Please be gentle."
+    message_id = _circle_message(db_session)
+
+    _run(db_session, message_id)
+
+    assert _msg(db_session, message_id).status == "held"
+
+
 # --- the sender's notice (decision 8) ----------------------------------------------------------------------
+
+
+def test_the_language_of_the_notice_is_recorded_with_it(db_session, fake, outbox):
+    # The wire's moderation_notice_language must be the language the sender was actually told in,
+    # not whatever their setting says by the time they read it.
+    fake.action = ModerationAction.HOLD
+    fake.nudge_text = "Held for review."
+    message_id = _dm(db_session, author_lang="te", target_lang="hi")
+
+    _run(db_session, message_id)
+
+    (event,) = list_moderation_events(db_session, message_id)
+    assert (event.notice_text, event.notice_language) == ("[te] Held for review.", "te")
+
+
+def test_an_allowed_message_has_no_notice_and_no_notice_language(db_session, fake, outbox):
+    message_id = _dm(db_session)
+
+    _run(db_session, message_id)
+
+    (event,) = list_moderation_events(db_session, message_id)
+    assert event.notice_text is None and event.notice_language is None
+
+
+def test_a_notice_that_could_not_be_produced_records_neither_text_nor_language(
+    db_session, fake, outbox
+):
+    fake.action = ModerationAction.HOLD
+    fake.nudge_text = "Held for review."
+    message_id = _dm(db_session, author_lang="ta", target_lang="hi")  # Tamil: not renderable
+
+    _run(db_session, message_id)
+
+    (event,) = list_moderation_events(db_session, message_id)
+    assert event.notice_text is None and event.notice_language is None
 
 
 def test_a_non_allow_notice_is_translated_into_the_senders_language_and_recorded(

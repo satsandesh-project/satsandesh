@@ -38,6 +38,7 @@ def record_moderation_event(
     confidence: float | None = None,
     note: str | None = None,
     notice_text: str | None = None,
+    notice_language: str | None = None,
     model_version: str | None = None,
     degraded: bool = False,
     degraded_reason: str | None = None,
@@ -65,6 +66,7 @@ def record_moderation_event(
         rationale=rationale,
         note=note,
         notice_text=notice_text,
+        notice_language=notice_language,
         policy_version=policy_version,
         model_version=model_version,
         degraded=degraded,
@@ -81,6 +83,7 @@ def record_classifier_decision(
     message_id: uuid.UUID,
     decision: ModerationDecision,
     notice_text: str | None = None,
+    notice_language: str | None = None,
 ) -> ModerationEvent:
     """Store the classifier's answer as the classifier's event.
 
@@ -102,6 +105,7 @@ def record_classifier_decision(
         confidence=decision.confidence,
         rationale=decision.rationale,
         notice_text=notice_text,
+        notice_language=notice_language,
         policy_version=decision.policy_version,
         model_version=decision.model_version,
         degraded=degraded,
@@ -195,3 +199,37 @@ def list_moderation_queue(
         stmt = stmt.where(Message.id > after_message_id)
     rows = session.execute(stmt.order_by(Message.id).limit(limit)).all()
     return [(row[0], row[1], row[2], row[3]) for row in rows]
+
+
+def notices_for_author(
+    session: Session, messages: list[Message], viewer_id: uuid.UUID
+) -> dict[str, tuple[str, str | None]]:
+    """The sender's notice for each of `messages`, as `{message id: (text, language)}`, and ONLY for
+    those `viewer_id` wrote: the author-only rule lives here, so a caller cannot forget it and a
+    recipient who can read a nudged DM never receives the notice (OPEN_QUESTIONS #18, #25).
+
+    The notice is the one on the message's LATEST event. If a moderator ruled after the classifier
+    (a release, a block) there is no notice on that event and none is shown: the classifier's older
+    text would describe a state the message has left. One query for the whole page."""
+    ids = [m.id for m in messages if m.author_id == viewer_id]
+    if not ids:
+        return {}
+    latest = (
+        select(
+            ModerationEvent.message_id,
+            ModerationEvent.notice_text,
+            ModerationEvent.notice_language,
+        )
+        .where(ModerationEvent.message_id.in_(ids))
+        .distinct(ModerationEvent.message_id)
+        .order_by(
+            ModerationEvent.message_id,
+            ModerationEvent.created_at.desc(),
+            ModerationEvent.id.desc(),
+        )
+    )
+    return {
+        str(message_id): (text, language)
+        for message_id, text, language in session.execute(latest)
+        if text
+    }

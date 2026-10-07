@@ -654,6 +654,8 @@ class ModerationEvent(Base):
     rationale: Mapped[str] = mapped_column(sa.Text, nullable=False)
     note: Mapped[str | None] = mapped_column(sa.Text)
     notice_text: Mapped[str | None] = mapped_column(sa.Text)
+    # The language notice_text was written in (see the migration that added it).
+    notice_language: Mapped[str | None] = mapped_column(sa.Text)
     policy_version: Mapped[str] = mapped_column(sa.Text, nullable=False)
     model_version: Mapped[str | None] = mapped_column(sa.Text)
     degraded: Mapped[bool] = mapped_column(

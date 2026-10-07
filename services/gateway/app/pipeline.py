@@ -45,6 +45,7 @@ from app.db.base import SessionLocal
 from app.db.models import Membership, Message, MessageRendering, User
 from app.db.moderation import (
     latest_moderation_event,
+    notices_for_author,
     record_classifier_decision,
     record_moderation_event,
 )
@@ -134,27 +135,42 @@ def _request_delivery(message_id: uuid.UUID) -> None:
     _run_on_main_loop(deliver)
 
 
+def build_status_frame(
+    session: Session, message_id: uuid.UUID, status: str
+) -> tuple[uuid.UUID, dict] | None:
+    """The `message.status` frame for the sender's devices, and whose devices: (author id, frame),
+    or None when the message is gone. It carries the sender's notice when the latest event has one
+    (the live half of contracts/chat `MessageStatusOut.notice_text`; the durable half is
+    `MessageOut.moderation_notice`), and never the classifier's label, confidence or rationale."""
+    from contracts.chat.common import MessageStatus
+    from contracts.chat.envelope import FrameType
+    from contracts.chat.messages import MessageStatusOut
+
+    message = session.get(Message, message_id)
+    if message is None:
+        return None
+    notice = notices_for_author(session, [message], message.author_id).get(str(message_id))
+    data = MessageStatusOut(
+        id=str(message_id),
+        status=MessageStatus(status),
+        notice_text=notice[0] if notice else None,
+        notice_language=notice[1] if notice else None,
+    ).model_dump(mode="json")
+    return message.author_id, {"type": FrameType.MESSAGE_STATUS.value, "data": data}
+
+
 def _notify_author(message_id: uuid.UUID, status: str) -> None:
     """Tell the sender's connected devices their message's status changed, so
     a held or blocked message does not just sit on a 'pending' tick."""
 
     async def notify() -> None:
-        from contracts.chat.common import MessageStatus
-        from contracts.chat.envelope import FrameType
-        from contracts.chat.messages import MessageStatusOut
-
         from app.ws import manager
 
         with SessionLocal() as session:
-            author_id = session.scalar(select(Message.author_id).where(Message.id == message_id))
-        if author_id is None:
+            built = build_status_frame(session, message_id, status)
+        if built is None:
             return
-        frame = {
-            "type": FrameType.MESSAGE_STATUS.value,
-            "data": MessageStatusOut(id=str(message_id), status=MessageStatus(status)).model_dump(
-                mode="json"
-            ),
-        }
+        author_id, frame = built
         await manager.broadcast([str(author_id)], frame)
 
     _run_on_main_loop(notify)
@@ -331,11 +347,15 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
             decision = _ai(session, client.moderate, ModerationRequest(text=message.pivot_text_en))
         except AiCallError as exc:
             _fail_or_retry(exc)
-        notice = None
+        notice, notice_language = None, None
         if decision.action is not ModerationAction.ALLOW and decision.nudge_text:
-            notice = _translate_notice(session, client, decision, author)
+            notice, notice_language = _translate_notice(session, client, decision, author)
         event = record_classifier_decision(
-            session, message_id=message_id, decision=decision, notice_text=notice
+            session,
+            message_id=message_id,
+            decision=decision,
+            notice_text=notice,
+            notice_language=notice_language,
         )
         session.commit()
 
@@ -492,16 +512,16 @@ def _ingest_rendering_audio(
 
 def _translate_notice(
     session: Session, client: AiClient, decision: ModerationDecision, author: User
-) -> str | None:
+) -> tuple[str | None, str | None]:
     """The classifier's notice is an English master (the mock's is Telugu).
-    Returns it in the sender's language, or None -- recorded honestly as 'no
-    notice produced' -- rather than the untranslated text passed off as what
-    the sender was told."""
+    Returns (text, language) in the sender's language, or (None, None) -- recorded
+    honestly as 'no notice produced' -- rather than the untranslated text passed off
+    as what the sender was told."""
     target = _primary_subtag(author.preferred_language)
     if target not in SUPPORTED_LANGUAGES:
-        return None
+        return None, None
     if decision.nudge_language is not None and decision.nudge_language.value == target:
-        return decision.nudge_text
+        return decision.nudge_text, target
     try:
         rendered = _ai(
             session,
@@ -510,19 +530,23 @@ def _translate_notice(
         )
     except AiCallError as exc:
         logger.warning("could not translate the moderation notice: %s", exc)
-        return None
+        return None, None
     for result in rendered.results:
         if result.language.value == target and result.text.strip():
-            return result.text.strip()
-    return None
+            return result.text.strip(), target
+    return None, None
 
 
 # --- finishing -----------------------------------------------------------------------------
 
 
-def _holds(action: str) -> bool:
+def _holds(action: str, target_type: str) -> bool:
+    """Whether a verdict keeps the message from being delivered. NUDGE is target-aware (M4's
+    answer on #17, contracts/chat ModerationAction): "not delivered to a circle", while in a 1:1
+    it delivers unless the organisation's knob (PIPELINE_NUDGE_DELIVERS) says otherwise. There is
+    no "nudged" status, so a NUDGE that is not delivered is `held`."""
     if action == ModerationAction.NUDGE.value:
-        return not get_settings().PIPELINE_NUDGE_DELIVERS
+        return target_type == "circle" or not get_settings().PIPELINE_NUDGE_DELIVERS
     return action in (ModerationAction.HOLD.value, ModerationAction.BLOCK.value)
 
 
@@ -533,7 +557,7 @@ def _finish(session: Session, message: Message, action: str, *, state: str) -> N
     pending is always followed by this delivery."""
     message_id = message.id
     new_status = None
-    if _holds(action):
+    if _holds(action, message.target_type):
         target = "blocked" if action == ModerationAction.BLOCK.value else "held"
         # False when an earlier (crashed) attempt already applied it.
         if set_message_status(session, message_id, new_status=target, expected="pending"):
@@ -549,7 +573,7 @@ def _finish(session: Session, message: Message, action: str, *, state: str) -> N
     if new_status is not None:
         _notify_author(message_id, new_status)
         return
-    if _holds(action) or message.status != "pending":
+    if _holds(action, message.target_type) or message.status != "pending":
         return
     expires = message.undo_expires_at
     if expires is None or expires <= datetime.now(UTC):
