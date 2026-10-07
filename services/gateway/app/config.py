@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -149,6 +149,19 @@ class Settings(BaseSettings):
     # to contracts/ai or transcode here is M3's decision (OPEN_QUESTIONS.md #2).
     AI_ACCEPT_WEBM_AS_OGG_OPUS: bool = False
 
+    # Week 8: how a bearer token becomes a user (app/auth.py, app/tokens.py).
+    #   legacy  the default. A token that is a UUID is THAT user (the Week 3 stub: no signature,
+    #           no expiry), so nothing existing breaks. A token that looks like a JWT is
+    #           still verified strictly.
+    #   jwt     ONLY a valid signed token is accepted; a bare UUID is a 401.
+    # Turning `jwt` on for a deployment is step 2: the elder app mints its own random UUID in
+    # the browser today and has no way to obtain a signed token yet (OPEN_QUESTIONS #32), so
+    # switching it on before that would lock every elder out.
+    AUTH_MODE: Literal["legacy", "jwt"] = "legacy"
+    # How long a signed token lives. There is no refresh and no revocation yet, so this is also
+    # how long a stolen one works. Elders are not asked to log in again often; 30 days.
+    AUTH_TOKEN_TTL_SECONDS: int = 30 * 24 * 3600
+
     # Week 7 Phase 5: the pipeline orchestrator (app/pipeline.py,
     # ORCHESTRATOR_DESIGN.md). OFF by default: with it off nothing about
     # message creation or delivery changes, on staging or anywhere. Turning it
@@ -158,6 +171,16 @@ class Settings(BaseSettings):
     # action -> status mapping open; this assumes a nudge records a notice and
     # still delivers. Set false to hold nudged messages for a human instead.
     PIPELINE_NUDGE_DELIVERS: bool = True
+    # The stuck-pipeline watchdog (app/pipeline_watchdog.py, OPEN_QUESTIONS #20): holds a message
+    # whose pipeline is pending but which no queued or running job is working on, so it reaches
+    # the moderator queue instead of waiting forever. Runs only with PIPELINE_ENABLED. The grace
+    # period is how long a message may have no live job before it is held (a message gets its job
+    # in the same transaction, so a healthy one never needs it); it is NOT a deadline for a slow
+    # message, which is left alone while its job is queued or running. Same test-only off switch
+    # as the other background loops.
+    PIPELINE_WATCHDOG_ENABLED: bool = True
+    PIPELINE_WATCHDOG_INTERVAL_SECONDS: float = 60.0
+    PIPELINE_STUCK_GRACE_SECONDS: float = 120.0
     # Where the GATEWAY sees the render service's output directory (an
     # absolute path). The render service reports a file:// path on ITS disk;
     # the gateway reads the file by name from here, so the two containers may

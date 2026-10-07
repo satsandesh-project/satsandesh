@@ -25,6 +25,7 @@ Only the Python standard library plus httpx (already in the gateway image).
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import uuid
@@ -35,9 +36,15 @@ BASE = "http://gateway:8000"
 ALICE = "00000000-0000-4000-8000-000000000001"
 BOB = "00000000-0000-4000-8000-000000000002"
 MOD = "00000000-0000-4000-8000-000000000003"
+TOKEN_ENV = {ALICE: "TOKEN_ALICE", BOB: "TOKEN_BOB", MOD: "TOKEN_MOD"}
 
 
-def _auth(token: str) -> dict:
+def _auth(user_id: str) -> dict:
+    """Bearer header for one of this proof's users. The run script mints a SIGNED token per
+    user (`python -m app.tokens`) and passes it as TOKEN_<NAME>, so the proof exercises the
+    real verification. With no token in the environment it falls back to the bare UUID, which
+    only the gateway's default `legacy` mode accepts."""
+    token = os.environ.get(TOKEN_ENV.get(user_id, ""), user_id)
     return {"Authorization": f"Bearer {token}"}
 
 

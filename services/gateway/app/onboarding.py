@@ -46,6 +46,7 @@ from app.db.base import get_db
 from app.db.models import Invite
 from app.db.models import User as DbUser
 from app.models import User
+from app.tokens import issue_token
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -125,7 +126,10 @@ class ActivateRequest(BaseModel):
 
 
 class ActivateResponse(BaseModel):
-    token: str  # the elder's UUID — use as Bearer token on subsequent requests
+    token: str  # the elder's UUID: the LEGACY Bearer token (AUTH_MODE=legacy only); kept unchanged
+    # Week 8: a signed session token (app/tokens.py). Use this as the Bearer token; it is the
+    # only kind accepted once AUTH_MODE=jwt. Additive, so existing callers are unaffected.
+    access_token: str
     user_id: str
     display_name: str
     language: str
@@ -227,6 +231,7 @@ def activate_invite(
     user_id = str(user.id)
     return ActivateResponse(
         token=user_id,
+        access_token=issue_token(user.id),
         user_id=user_id,
         display_name=display_name,
         language=language,

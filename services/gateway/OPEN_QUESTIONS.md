@@ -176,6 +176,27 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
    so the collision is documented before the sweeper is live on staging,
    not to pre-empt that design.
 
+   **DECIDED (Week 8): option (a), for `held` only.** `moderation_events` and the moderator console
+   exist now, so the collision is real, not hypothetical. `find_expired_media` skips any media
+   carried by a `held`, not-deleted message, as the voice note itself or as a rendering's audio,
+   however old it is; protection ends when the message leaves `held` (tests:
+   `tests/test_retention_held.py`, with a sabotage check). Consequences and what is NOT decided:
+   1. **`blocked` is not protected.** A block is a ruling; whether blocked audio should outlive 30
+      days for an appeal (appeals are Week 9, #65) is a retention and privacy policy decision for
+      people, not for a query. One line (`_UNRESOLVED_STATUSES` in `app/db/repository.py`).
+   2. **Held audio is kept until a human rules: there is no upper bound.** A held message nobody
+      opens keeps an elder's voice indefinitely. With the stuck-pipeline watchdog (#20) now
+      sending stuck messages to the same queue, that is more likely, not less. A maximum (say 90
+      days, then ...what?) is a policy call.
+   3. **The clock is the media's own age, not time since release.** A message held for more than
+      30 days and then released has audio that is eligible for the very next sweep: its recipients
+      may lose the audio within the hour (the text stays). The test
+      `test_once_a_held_message_is_released_its_old_audio_is_swept_again` pins this as the current
+      behaviour; if a released message's audio should get a fresh 30 days, that needs a clock that
+      restarts on release (a column or the event's timestamp), and a decision to do it.
+   4. Option (b), a tombstone so a swept id is distinguishable from a missing one, is still not
+      built (#6).
+
 10. **Who may download a voice note, beyond the author and delivered
     recipients.** `GET /media/{id}` now allows only the author, or a
     recipient of a message carrying the media whose status is `sent` or
@@ -252,6 +273,12 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     longer or re-synthesized on demand. Also: only a message's *original*
     audio is open to a moderator (#14), not its renderings'.
 
+    **UPDATE (Week 8):** the producer exists (the pipeline ingests render audio, owned by the message's
+    author, as assumed above) and the sweep treats it like any media with one exception: a rendering's
+    audio is kept while its message is `held` (#9). Everything else here is unchanged and still a
+    choice for people: renderings follow the same 30-day window as the original, and (#9, point 3) a
+    long-held message that is then released can lose both within an hour.
+
 16. **Transcript and renderings are hidden until a message is `sent`, even
     from its author.** Stored while `pending` (the pipeline runs inside the
     undo window) but exposed on the wire only once the message is out
@@ -295,6 +322,31 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     is the missing safety net; not built here (it needs a deadline someone has
     to choose).
 
+    **BUILT (Week 8): `app/pipeline_watchdog.py`.** A message is STUCK when its pipeline is
+    `pending` and **no `process_message` job is queued or running** for it (a retry waiting out its
+    backoff is `queued`; a job whose worker died is `running` with an expired lease and is
+    reclaimed, so both are alive). It is deliberately **not** "pending longer than N seconds": the
+    load runs (`infra/ai/README.md`) showed legitimate waits of several minutes behind other notes
+    with a live job, and an age rule would hold those. A stuck message goes through the same
+    fail-closed path as a dead-lettered job: `held` with a SYSTEM event, the sender's devices told,
+    and **it appears in the moderator queue**, which is the surface: no new endpoint, service or
+    contract. The log line (`pipeline watchdog: held message <id>`) and the event carry the id and
+    the reason, never the text or transcript (tests pin that, and that the recipient cannot read it).
+    A timed loop like the retention sweeper, only when `PIPELINE_ENABLED`;
+    `PIPELINE_WATCHDOG_INTERVAL_SECONDS` (60) and `PIPELINE_STUCK_GRACE_SECONDS` (120). The 120 is a
+    guess for races, not a measured number: a message gets its job in the same transaction, so a
+    healthy one has none to wait for. **What it does NOT do:**
+    1. **A live job that never finishes is not detected.** A job `running` forever is, by this
+       definition, alive. Every call it makes has a timeout (`AI_*_TIMEOUT_S`, a 15 s statement
+       timeout), so it is bounded, but nothing here proves a wedged handler cannot keep
+       renewing its lease.
+    2. **Nobody is paged.** `infra/monitoring/healthwatch.sh` only polls Docker healthchecks; the
+       signal is the moderator queue plus a log line. If nobody opens the queue, a stuck message is
+       held and unread: better than pending forever, not the same as handled.
+    3. **The sender is told it is `held` and nothing else**: a SYSTEM event has no notice (#18).
+    4. Two gateway replicas were not run; the row lock (`FOR UPDATE SKIP LOCKED`) is shown with a
+       second session holding the row.
+
 21. **Closed by the gate: the unlocked pending check on rendering writes.** The
     #87 review noted `upsert_rendering`'s pending check does not lock the row,
     so a write racing the `pending -> sent` flip could land after delivery.
@@ -319,6 +371,13 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     moderator account exists on a deployment real people can reach. Not in
     scope for this phase; recorded because it is the biggest risk the
     console adds.
+    **UPDATE (Week 8, step 1 of 2):** signed tokens now exist (`app/tokens.py`, HS256,
+    `sub`/`iss`/`iat`/`exp` all required, algorithm pinned) and `AUTH_MODE=jwt` accepts only
+    them; a token that looks like a JWT is verified strictly in EVERY mode, and the role is
+    read from `users.role` on each request. **The risk above is NOT closed:** the default is
+    still `AUTH_MODE=legacy` (a UUID is that user), because the elder app cannot obtain a
+    signed token yet (#32), and no deployment runs `jwt`. It closes for a deployment when
+    that deployment runs `jwt`. Until then `/moderation*` stays unrouted by Caddy.
 
 24. **Console scope decisions worth confirming with M4.** (a) The queue shows
     only `held` messages; `blocked` ones are not browsable (appeals are
@@ -385,8 +444,10 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     wrong hour with no error anywhere.
 
 29. **What still blocks switching the pipeline on for real users** (after this change,
-    `/me/settings` no longer does): real JWT verification (the moderator routes and held-audio
-    access rest on a stub identity, #23); M1's `timezone` on `/me/settings` (#28; #92, which
+    `/me/settings` no longer does): real JWT verification **turned on** (the code exists since
+    Week 8 and is verified, `AUTH_MODE=jwt`, but it is off by default and no deployment runs it:
+    the moderator routes and held-audio access still rest on a stub identity until one does,
+    #23, and switching it on needs the elder app to obtain a signed token first, #32); M1's `timezone` on `/me/settings` (#28; #92, which
     sends `source_lang` so typed messages are not all treated as Telugu, has since merged);
     M4's answers (#24) and a notice surface
     for a held sender (#18); and M3's ASR choice, `webm_opus` handling and the
@@ -434,5 +495,30 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     transcripts** (Hindi: 30 notes, 4 transcripts, one per synthesized file); **2 of 55 Telugu
     notes came back as garbage characters, the translation was empty, and the pipeline held them**
     (fail-closed worked; the sender is told nothing, #18). The "decoder fallback" guess is still
-    unproven. `AI_TRANSCRIBE_TIMEOUT_S` is 120 s against a 60 s worst case for 5 s of audio: a
-    30 s Telugu note has not been measured and may not fit. Still synthetic speech.
+    unproven. `AI_TRANSCRIBE_TIMEOUT_S` is 120 s against a 60 s worst case for 5 s of audio. A
+    30 s Telugu note was measured afterwards (`infra/ai/GATE_WEEK8.md`, #117): 74 to 120 s, three
+    of eight within 2 s of that timeout, none over it. Still synthetic speech.
+
+32. **The elder app has no way to obtain a signed token, so `AUTH_MODE=jwt` cannot be
+    switched on for staging yet.** The app mints its own random UUID in the browser
+    (`crypto.randomUUID()`, `window.__satToken`) and sends it as the Bearer token; nothing
+    server-side ever issued it. The only issuer is onboarding's `/activate` (a family member
+    invites; the elder scans a QR), which now also returns a signed `access_token` -- but
+    the elder app does not call onboarding, and Caddy does not route `/onboarding*`. The 36
+    users on staging hold client-made UUIDs, so a cutover also strands them. Options, a
+    decision for M1 (client) and M4/the supervisor (is open self-registration acceptable?):
+    (a) the elder app uses the QR onboarding flow; (b) a self-registration endpoint that
+    creates a user and returns a token -- simple, but then anyone can mint accounts, which is
+    exactly as open as the stub is today; (c) keep the UUID for existing users and require
+    signed tokens only for moderators/admins (a role-based `AUTH_MODE`). Not built: no
+    endpoint was added without that decision. A moderator today gets a token from an
+    operator: `python -m app.tokens <user-uuid>`.
+
+33. **What a signed token still does not do.** No revocation (a stolen token works until it
+    expires, 30 days by default, `AUTH_TOKEN_TTL_SECONDS`), no refresh, no secret rotation.
+    `JWT_SECRET` signs both session tokens and onboarding invites (the formats cannot be
+    confused, but a weak secret weakens both; CI uses a 21-character placeholder and nothing
+    enforces a minimum length). The WebSocket takes the token in the URL query (`?token=`,
+    because browsers cannot set headers on a handshake), so it can appear in proxy and access
+    logs; a short-lived ticket exchanged over HTTP first would avoid that. An unknown `sub`
+    is a 401 and is not provisioned, which is the intended change from the stub.

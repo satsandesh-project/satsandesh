@@ -55,6 +55,9 @@ grep -q '^HF_TOKEN=.' .env || { echo "HF_TOKEN is not set in .env (needed for mt
 export POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-55433}"
 export UNDO_WINDOW_SECONDS=0 JOB_LEASE_SECONDS=60 JOB_MAX_ATTEMPTS=3 AI_ACCEPT_WEBM_AS_OGG_OPUS=true
 export PIPELINE_ENABLED=true
+# The proof runs under the REAL token verification: the gateway in `jwt` mode (a bare UUID is a
+# 401) and every user holds a SIGNED token minted below. AUTH_MODE=legacy to compare.
+export AUTH_MODE="${AUTH_MODE:-jwt}"
 # deliberately NOT exporting AI_PIVOT_URL / AI_RENDER_URL: the compose defaults point at the
 # real mt and render services.
 
@@ -67,7 +70,8 @@ CAROL=00000000-0000-4000-8000-000000000003
 DAN=00000000-0000-4000-8000-000000000004
 
 psql_q() { $DC exec -T postgres psql -q -t -A -U "$PGUSER" -d "$PGDB" -c "$1"; }
-driver() { docker run --rm --network "${P}_default" -v "$HERE":/e2e "${P}-gateway" python /e2e/real_driver.py "$@"; }
+mint() { $DC exec -T gateway python -m app.tokens "$1" < /dev/null | tail -1; }
+driver() { docker run --rm --network "${P}_default" -e TOKEN_ALICE -e TOKEN_BOB -e TOKEN_CAROL -e TOKEN_DAN -v "$HERE":/e2e "${P}-gateway" python /e2e/real_driver.py "$@"; }
 say()    { printf '\n=== %s\n' "$*"; }
 healthy() {
   local svc=$1 limit=${2:-90} cid st
@@ -222,6 +226,8 @@ psql_q "INSERT INTO users (id,name,preferred_language,role) VALUES
   ('$DAN','Dan (reads Hindi)','hi','elder')
   ON CONFLICT (id) DO UPDATE SET preferred_language = EXCLUDED.preferred_language" >/dev/null
 psql_q "SELECT '  '||name||' prefers '||preferred_language FROM users ORDER BY name"
+export TOKEN_ALICE=$(mint $ALICE) TOKEN_BOB=$(mint $BOB) TOKEN_CAROL=$(mint $CAROL) TOKEN_DAN=$(mint $DAN)
+echo "auth: AUTH_MODE=$AUTH_MODE, signed tokens minted for 4 users"
 CIRCLE_OUT=$(driver circle); echo "$CIRCLE_OUT"
 CIRCLE=$(echo "$CIRCLE_OUT" | sed -n 's/.*"circle_id": "\([^"]*\)".*/\1/p')
 [ -n "$CIRCLE" ] || { echo "no circle"; exit 1; }

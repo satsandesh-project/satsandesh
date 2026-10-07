@@ -5,9 +5,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db.base import get_db
+from app.db.models import User as DbUser
 from app.db.repository import get_or_create_user
 from app.models import User
+from app.tokens import InvalidToken, looks_like_jwt, verify_token
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -44,6 +47,13 @@ def user_from_token(token: str | None, db: Session) -> User:
     # change" reasoning as the widening it completes.
     if token is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    # Week 8: a token that LOOKS like a JWT is verified strictly in every mode -- a bad one is a
+    # 401 and never falls through to the stub identity below. In `jwt` mode nothing else is
+    # accepted at all. Only in the default `legacy` mode does a non-JWT token reach the stub.
+    if looks_like_jwt(token):
+        return _user_from_signed_token(token, db)
+    if get_settings().AUTH_MODE == "jwt":
+        raise HTTPException(status_code=401, detail="Invalid token")
     try:
         parsed = uuid.UUID(token)
     except ValueError:
@@ -69,6 +79,26 @@ def user_from_token(token: str | None, db: Session) -> User:
             db, user_id=parsed, name="Test Elder", preferred_language="te", role="elder"
         )
     return User(id=token, name="Test Elder", preferred_language="te", role="elder")
+
+
+def _user_from_signed_token(token: str, db: Session) -> User:
+    """A valid signature is not enough: the user must exist. A signed token for an id with no
+    row is a 401 and creates nothing (the legacy stub provisioned rows; real auth must not).
+    The role is the DATABASE's, so a demotion applies on the very next request."""
+    try:
+        user_id = verify_token(token)
+    except InvalidToken:
+        raise HTTPException(status_code=401, detail="Invalid token") from None
+    try:
+        row = db.get(DbUser, user_id)
+    except OperationalError:  # same one retry as the legacy path: this is the hottest query
+        db.rollback()
+        row = db.get(DbUser, user_id)
+    if row is None:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return User(
+        id=str(row.id), name=row.name, preferred_language=row.preferred_language, role=row.role
+    )
 
 
 async def get_current_user(

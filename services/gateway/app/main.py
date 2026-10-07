@@ -16,6 +16,7 @@ from app.messages import router as messages_router
 from app.models import User
 from app.moderation import router as moderation_router
 from app.onboarding import router as onboarding_router
+from app.pipeline_watchdog import run_pipeline_watchdog_loop
 from app.push import router as push_router
 from app.recovery import recover_pending_fan_outs
 from app.retention import run_retention_sweep_loop
@@ -47,10 +48,15 @@ async def lifespan(app: FastAPI):
     stop_event = asyncio.Event()
     worker_task: asyncio.Task | None = None
     retention_task: asyncio.Task | None = None
+    watchdog_task: asyncio.Task | None = None
     if settings.JOB_WORKER_ENABLED:
         worker_task = asyncio.create_task(run_worker_loop(stop_event, this_worker_id=worker_id()))
     if settings.MEDIA_RETENTION_SWEEP_ENABLED:
         retention_task = asyncio.create_task(run_retention_sweep_loop(stop_event))
+    if settings.PIPELINE_ENABLED and settings.PIPELINE_WATCHDOG_ENABLED:
+        # OPEN_QUESTIONS #20: only meaningful with the pipeline on (otherwise no message is
+        # ever pipeline-pending), and the same loop shape as the retention sweeper.
+        watchdog_task = asyncio.create_task(run_pipeline_watchdog_loop(stop_event))
     if settings.STARTUP_RECOVERY_ENABLED:
         # A failure here must never keep the gateway from starting: the
         # worst case is the pre-existing behavior (a pending message that
@@ -67,6 +73,8 @@ async def lifespan(app: FastAPI):
             await worker_task
         if retention_task is not None:
             await retention_task
+        if watchdog_task is not None:
+            await watchdog_task
 
 
 app = FastAPI(
