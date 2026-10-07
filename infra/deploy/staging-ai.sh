@@ -20,6 +20,11 @@
 # works. The Telugu ASR is unreliable (OPEN_QUESTIONS #31): a wrong-script transcript is delivered
 # with no signal. Know that before turning it on for people.
 #
+# WHAT GOES LIVE. The gateway is REBUILT from the stack's own checkout (`--build`), so it runs whatever that
+# checkout contains: if staging's checkout is behind `main`, merged gateway work (the sender notice, the
+# watchdog, ...) is NOT live until someone updates the checkout. The elder app is not touched here: rebuild it
+# yourself (`docker compose build elder-app`) if its code changed. Update the checkout first, THEN run this.
+#
 # KEEPING IT ON. --apply sets PIPELINE_ENABLED and the stopgap for ITS OWN recreate of the gateway, and
 # layers docker-compose.ai.yml on the command line. None of that is saved. A LATER plain
 # `docker compose up` (without the AI file) recreates the gateway from the base files only: the pipeline
@@ -135,7 +140,7 @@ APPLY_ENV="PIPELINE_ENABLED=true"
 [ "$STOPGAP" = 1 ] && APPLY_ENV="$APPLY_ENV AI_ACCEPT_WEBM_AS_OGG_OPUS=true"
 echo "=== what --apply runs"
 echo "  1. ${DC_AI[*]} up -d --build speech moderation mt render"
-echo "  2. $APPLY_ENV ${DC_AI[*]} up -d --no-deps --force-recreate gateway"
+echo "  2. $APPLY_ENV ${DC_AI[*]} up -d --build --no-deps --force-recreate gateway"
 echo "  3. checks the gateway's effective settings and the AI services' health"
 echo "  rollback: $0 --rollback   (same STAGING_DIR / PROJECT)"
 
@@ -147,7 +152,7 @@ echo "=== 1. the AI services (first start downloads the models: be patient)"
 wait_healthy moderation speech mt render
 echo "=== 2. the gateway, recreated with the pipeline on"
 env PIPELINE_ENABLED=true $([ "$STOPGAP" = 1 ] && echo AI_ACCEPT_WEBM_AS_OGG_OPUS=true) \
-  "${DC_AI[@]}" up -d --no-deps --force-recreate gateway || die "could not recreate the gateway"
+  "${DC_AI[@]}" up -d --build --no-deps --force-recreate gateway || die "could not recreate the gateway"
 for _ in $(seq 1 40); do
   [ "$(docker inspect -f '{{.State.Health.Status}}' "$("${DC_AI[@]}" ps -q gateway)" 2>/dev/null)" = healthy ] && break
   sleep 3
