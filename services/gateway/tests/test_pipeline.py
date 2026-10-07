@@ -320,6 +320,34 @@ def test_the_threshold_is_a_share_of_letters_not_all_or_nothing(
     assert _msg(db_session, failing).status == "held"
 
 
+def test_a_transcript_that_cannot_be_judged_is_not_held_by_the_guard(
+    db_session, fake, outbox, script_guard
+):
+    # No letters at all (digits only): "unknown", never "wrong". Today's behaviour continues.
+    fake.transcript = ("123 456", "te")
+    message_id = _dm(db_session, kind="voice", source_lang=None)
+
+    _run(db_session, message_id)
+
+    assert fake.stages() == ["transcribe", "pivot", "moderate", "render"]
+
+
+def test_the_minimum_share_is_read_from_the_setting(
+    db_session, fake, outbox, script_guard, monkeypatch
+):
+    # 4 Telugu + 4 Latin letters = 0.5. Strict (0.9): held. Lenient (0.1): through.
+    fake.transcript = ("అఆఇఈ abcd", "te")
+    monkeypatch.setattr(get_settings(), "PIPELINE_SCRIPT_MIN_SHARE", 0.9)
+    strict = _dm(db_session, kind="voice", source_lang=None)
+    _run(db_session, strict)
+    assert _msg(db_session, strict).status == "held"
+
+    monkeypatch.setattr(get_settings(), "PIPELINE_SCRIPT_MIN_SHARE", 0.1)
+    lenient = _dm(db_session, kind="voice", source_lang=None)
+    _run(db_session, lenient)
+    assert _msg(db_session, lenient).status != "held"
+
+
 def test_no_database_transaction_is_held_open_while_an_ai_service_is_called(
     db_session, fake, outbox
 ):
