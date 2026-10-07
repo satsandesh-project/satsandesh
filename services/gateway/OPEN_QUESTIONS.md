@@ -411,6 +411,17 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     still `AUTH_MODE=legacy` (a UUID is that user), because the elder app cannot obtain a
     signed token yet (#32), and no deployment runs `jwt`. It closes for a deployment when
     that deployment runs `jwt`. Until then `/moderation*` stays unrouted by Caddy.
+    **UPDATE (phase 3a):** closed at the gateway instead, so routing no longer waits for `jwt`. Shown by
+    hand on a real stack first: in `legacy`, `Authorization: Bearer <a moderator's UUID>` on
+    `GET /moderation/queue` returned **200 with a held message's text**. Now every `/moderation*` route
+    refuses a non-JWT bearer (**401** `Moderation requires a signed token`) before the legacy stub runs
+    (so no `users` row is provisioned for it); a signed token is verified strictly in every mode, the
+    role is read from `users.role` on each request (demote, same token, **403** on the next call), and
+    identity is decided before any body, query or message lookup (a non-moderator gets 403 for a real
+    and a made-up message id alike). Caddy routes `/moderation*`. A moderator token is minted by an
+    operator (`python -m app.tokens <uuid>`). **Not closed:** the already-routed `/media/{id}` still
+    lets `users.role` moderator/admin fetch a held message's audio, and in `legacy` that identity is
+    still a bare UUID; read from the code, **not run on a stack**.
 
 24. **Console scope decisions worth confirming with M4.** (a) The queue shows
     only `held` messages; `blocked` ones are not browsable (appeals are
