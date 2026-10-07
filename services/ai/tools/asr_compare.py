@@ -1,44 +1,51 @@
 """
-Side-by-side ASR comparison for choosing the Telugu ASR path (GitHub issue #98, Q3).
+Side-by-side ASR comparison for choosing the Telugu/Hindi ASR path (GitHub issue #98, Q3).
 
-Evidence-gathering tooling only: it is not imported by any service, changes no
-routing and no contract. It has NO ground truth, so it makes no accuracy claim --
-read the transcripts yourself and fill in the empty "my verdict" column.
+Evidence-gathering tooling only: not imported by any service, changes no routing and no
+contract. It has NO ground truth, so it makes no accuracy claim -- read the transcripts
+yourself and fill in the empty "my verdict" column.
 
-For every WAV in a directory it runs, in-process and one engine at a time (each
-model is loaded once, then released before the next):
+For each audio file it runs, in-process and one engine at a time (each model is loaded
+once, then released before the next):
 
-  - faster-whisper small  int8   (the service default; services/ai/speech/engine.AsrEngine)
-  - faster-whisper medium int8
-  - IndicConformer CTC, and RNNT  (services/ai/speech_indicconformer/engine; needs HF_TOKEN
-    in the environment -- read from there only, never written anywhere)
+  - IndicConformer CTC and RNNT   (services/ai/speech_indicconformer/engine)
+  - faster-whisper small int8     (services/ai/speech/engine.AsrEngine), as the REFERENCE
 
-each with denoise off, and also on if services/ai/speech/denoise.py exists and
-pyrnnoise imports (otherwise that column is skipped, with a message). Every file is
-run twice per engine/denoise combination: the very first inference after a model load
-is labelled "cold", everything else "warm".
+`--denoise` adds a denoise-on row for every engine (RNNoise via services/ai/speech/denoise.py,
+needs the optional `denoise` extra; its time is included in the row's latency).
+
+Each row repeats the file `--runs` times (default 3). The first run is labelled cold when it
+is the first inference after that model load. p50/p90 are reported ONLY when runs >= 5;
+below that a percentile is not meaningful, so you get the individual run times instead.
+The script columns are the share of letters in the expected script (te -> Telugu,
+hi -> Devanagari), in Devanagari, and in Latin: a Telugu request answered in Devanagari or
+Latin is a wrong-script result.
+
+The tools run the raw engines: no no-speech gate, no service wrapper.
 
     cd services/ai
-    $env:PYTHONPATH = "..\\.."            # repo root on the path (PowerShell)
-    $env:HF_TOKEN = "hf_..."              # only needed for the IndicConformer rows
-    .\\.venv\\Scripts\\python.exe tools/asr_compare.py C:\\path\\to\\wavs --lang te
+    $env:PYTHONPATH = "..\\.."                    # repo root on the path (PowerShell)
+    $env:HF_HUB_OFFLINE = "1"                     # use the locally cached models
+    .\\.venv\\Scripts\\python.exe tools/asr_compare.py a.wav b.opus --lang te --out cmp.md
 
-Writes results.csv and results.md under tools/asr_compare_out/ (gitignored).
-First use of each model downloads its weights (medium is the largest).
+IndicConformer needs HF_TOKEN in the environment for a first download (read from there only,
+never written anywhere). With HF_HUB_OFFLINE=1 and the weights cached, no token is needed.
+
+The Markdown table goes to stdout (progress goes to stderr); `--out` also writes it to a
+file. Do not commit the output: it contains transcripts of real recordings.
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
 import importlib
 import os
 import platform
 import sys
 import time
 import wave
-from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, fields
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -49,8 +56,9 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 TARGET_SAMPLE_RATE_HZ = 16000
-DEFAULT_OUT_DIR = Path(__file__).resolve().parent / "asr_compare_out"
-ALL_ENGINES = ("whisper-small", "whisper-medium", "indic-ctc", "indic-rnnt")
+ALL_ENGINES = ("indic-ctc", "indic-rnnt", "whisper-small")
+PERCENTILE_MIN_RUNS = 5
+EXPECTED_SCRIPT = {"te": "Telugu", "hi": "Devanagari"}
 
 # ---- script detection ---------------------------------------------------------------
 
@@ -71,25 +79,38 @@ def _script_of(ch: str) -> str | None:
 
 
 def detect_script(text: str) -> str:
-    """Classify a transcript by Unicode block: "Telugu", "Devanagari", "Latin",
-    "mixed" (letters from more than one of those), or "none" (empty, or only
-    digits/punctuation/other scripts). Digits, spaces and punctuation are ignored.
-    The wrong-script check: a Telugu request that comes back "Devanagari" or "Latin".
-    """
+    """Classify a transcript by Unicode block: "Telugu", "Devanagari", "Latin", "mixed"
+    (letters from more than one of those) or "none". Digits/punctuation are ignored."""
     found = {s for s in (_script_of(c) for c in text) if s is not None}
     if not found:
         return "none"
-    if len(found) == 1:
-        return next(iter(found))
-    return "mixed"
+    return next(iter(found)) if len(found) == 1 else "mixed"
+
+
+def script_shares(text: str) -> dict[str, float | None]:
+    """Share (0-100) of the LETTERS in `text` that are Telugu / Devanagari / Latin.
+    Letters of any other script count in the denominator. None for all three when the
+    text has no letters (an empty transcript), so "0%" never means "nothing came back"."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return {"Telugu": None, "Devanagari": None, "Latin": None}
+    counts = {"Telugu": 0, "Devanagari": 0, "Latin": 0}
+    for c in letters:
+        script = _script_of(c)
+        if script is not None:
+            counts[script] += 1
+    return {k: round(100.0 * v / len(letters), 1) for k, v in counts.items()}
+
+
+def _pct(value: float | None) -> str:
+    return "-" if value is None else f"{value:g}%"
 
 
 # ---- audio --------------------------------------------------------------------------
 
 
 def resample_to_16k(audio: np.ndarray, sample_rate_hz: int) -> np.ndarray:
-    """FFT-based resample (numpy only -- scipy/soxr are not dependencies of this
-    package). Band-limited, fine for speech comparison; not studio quality."""
+    """FFT-based resample (numpy only). Band-limited, fine for comparison; not studio quality."""
     if sample_rate_hz == TARGET_SAMPLE_RATE_HZ or audio.size == 0:
         return audio
     n_out = max(1, round(audio.size * TARGET_SAMPLE_RATE_HZ / sample_rate_hz))
@@ -99,11 +120,8 @@ def resample_to_16k(audio: np.ndarray, sample_rate_hz: int) -> np.ndarray:
 
 
 def read_wav_16k_mono(path: Path) -> tuple[np.ndarray, str | None]:
-    """Return (float32 mono 16 kHz audio, note). `note` says what was changed, or None.
-
-    Raises ValueError with a clear message for anything it will not silently alter
-    (multi-channel, unsupported sample width / float WAV).
-    """
+    """(float32 mono 16 kHz audio, note). `note` says what was changed, or None. Raises
+    ValueError for anything it will not silently alter (multi-channel, odd sample width)."""
     try:
         with wave.open(str(path), "rb") as wf:
             channels, width, rate = wf.getnchannels(), wf.getsampwidth(), wf.getframerate()
@@ -128,92 +146,152 @@ def read_wav_16k_mono(path: Path) -> tuple[np.ndarray, str | None]:
     )
 
 
-# ---- results + writers --------------------------------------------------------------
+def load_audio(path: Path) -> tuple[np.ndarray, str | None]:
+    """.wav via the stdlib reader; anything else (opus/ogg/webm/mp3...) via the same
+    ffmpeg path the services use (already mono float32 16 kHz)."""
+    if path.suffix.lower() == ".wav":
+        return read_wav_16k_mono(path)
+    from services.ai.speech.engine import FfmpegDecodeError, FfmpegNotFoundError, decode_via_ffmpeg
+
+    try:
+        return decode_via_ffmpeg(path), f"decoded {path.suffix} via ffmpeg"
+    except (FfmpegDecodeError, FfmpegNotFoundError, FileNotFoundError) as exc:
+        raise ValueError(str(exc)) from exc
+
+
+# ---- results ------------------------------------------------------------------------
 
 
 @dataclass
-class Row:
+class Result:
+    """All runs of one file on one engine/denoise variant."""
+
     file: str
     engine: str
     mode: str
-    denoise: str  # "on" | "off"
-    run: int  # 1 or 2 for this file/engine/denoise
-    state: str  # "cold" (first inference after model load) | "warm"
-    wall_s: float  # denoise (if on) + ASR
+    denoise: bool
     audio_s: float
-    rtf: float  # wall_s / audio_s
-    transcript: str
-    script: str
+    run_times_s: list[float]
+    first_is_cold: bool
+    transcripts: list[str]
     model_version: str
-    my_verdict: str = ""
+    lang: str = "te"
+    my_verdict: str = field(default="", init=False)
+
+    @property
+    def transcript(self) -> str:
+        return self.transcripts[0] if self.transcripts else ""
+
+    @property
+    def consistent(self) -> bool:
+        return len(set(self.transcripts)) <= 1
+
+    def percentiles(self) -> tuple[float, float] | None:
+        """(p50, p90) in seconds, only when there are enough runs for it to mean anything."""
+        if len(self.run_times_s) < PERCENTILE_MIN_RUNS:
+            return None
+        p50, p90 = np.percentile(self.run_times_s, [50, 90])
+        return float(p50), float(p90)
 
 
-def make_row(
-    *,
-    file: str,
-    engine: str,
-    mode: str,
-    denoise: bool,
-    run: int,
-    cold: bool,
-    wall_s: float,
-    audio_s: float,
-    transcript: str,
-    model_version: str,
-) -> Row:
-    return Row(
-        file=file,
-        engine=engine,
-        mode=mode,
-        denoise="on" if denoise else "off",
-        run=run,
-        state="cold" if cold else "warm",
-        wall_s=round(wall_s, 3),
-        audio_s=round(audio_s, 3),
-        rtf=round(wall_s / audio_s, 3) if audio_s > 0 else 0.0,
-        transcript=transcript,
-        script=detect_script(transcript),
-        model_version=model_version,
-    )
+def run_engine(
+    eng: LoadedEngine,
+    clips: list[tuple[str, np.ndarray]],
+    denoise_fn: Callable[[np.ndarray], np.ndarray] | None,
+    runs: int,
+    lang: str,
+    on_result: Callable[[Result], None],
+) -> None:
+    """Every clip x (denoise off, and on if `denoise_fn`) x `runs`. The very first inference
+    after the model load is the only one that is cold."""
+    first_overall = eng.fresh
+    variants = [False] + ([True] if denoise_fn is not None else [])
+    for name, audio in clips:
+        for use_denoise in variants:
+            times: list[float] = []
+            texts: list[str] = []
+            for _ in range(runs):
+                start = time.perf_counter()
+                data = denoise_fn(audio) if use_denoise and denoise_fn else audio
+                texts.append(eng.transcribe(data))
+                times.append(time.perf_counter() - start)
+            on_result(
+                Result(
+                    file=name,
+                    engine=eng.name,
+                    mode=eng.mode,
+                    denoise=use_denoise,
+                    audio_s=audio.size / TARGET_SAMPLE_RATE_HZ,
+                    run_times_s=times,
+                    first_is_cold=first_overall,
+                    transcripts=texts,
+                    model_version=eng.model_version,
+                    lang=lang,
+                )
+            )
+            first_overall = False
 
 
-_COLUMNS = [f.name for f in fields(Row)]
-
-
-def write_csv(rows: Iterable[Row], path: Path) -> None:
-    # utf-8-sig so Excel shows Telugu/Devanagari correctly when double-clicked.
-    with path.open("w", encoding="utf-8-sig", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=_COLUMNS)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(asdict(row))
+# ---- markdown -----------------------------------------------------------------------
 
 
 def _md_cell(value: object) -> str:
     return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
-def render_markdown(rows: list[Row], header_lines: list[str]) -> str:
-    out = ["# ASR comparison", ""]
-    out += [f"- {line}" for line in header_lines]
+def render_markdown(results: list[Result], header_lines: list[str], lang: str, runs: int) -> str:
+    expected = EXPECTED_SCRIPT[lang]
+    show_pct = runs >= PERCENTILE_MIN_RUNS
+    cols = ["file", "engine", "denoise", "first run (s)", "all runs (s)"]
+    if show_pct:
+        cols += ["p50 (s)", "p90 (s)"]
+    cols += [
+        "RTF",
+        f"{expected} %",
+        "Devanagari %",
+        "Latin %",
+        "transcript",
+        "stable",
+        "my verdict",
+    ]
+
+    out = ["# ASR comparison", ""] + [f"- {line}" for line in header_lines]
     out += [
         "",
         (
-            "No ground truth: nothing here says which engine is more accurate. "
-            "`my verdict` is yours to fill in."
+            "No ground truth: nothing here says which engine is more accurate. faster-whisper "
+            "small is the reference, not the answer. `my verdict` is yours to fill in."
         ),
         "",
-        "| " + " | ".join(_COLUMNS) + " |",
-        "|" + "|".join("---" for _ in _COLUMNS) + "|",
+        "| " + " | ".join(cols) + " |",
+        "|" + "|".join("---" for _ in cols) + "|",
     ]
-    for row in rows:
-        values = asdict(row)
-        out.append("| " + " | ".join(_md_cell(values[c]) for c in _COLUMNS) + " |")
+    for r in results:
+        shares = script_shares(r.transcript)
+        engine = r.engine + (f"/{r.mode}" if r.mode != "-" else "")
+        first = f"{r.run_times_s[0]:.2f}" + (" (cold)" if r.first_is_cold else "")
+        cells = [
+            r.file,
+            engine,
+            "on" if r.denoise else "off",
+            first,
+            " / ".join(f"{t:.2f}" for t in r.run_times_s),
+        ]
+        if show_pct:
+            p = r.percentiles()
+            cells += [f"{p[0]:.2f}", f"{p[1]:.2f}"] if p else ["-", "-"]
+        mean_s = sum(r.run_times_s) / len(r.run_times_s)
+        cells += [
+            f"{mean_s / r.audio_s:.2f}" if r.audio_s > 0 else "-",
+            _pct(shares[expected]),
+            _pct(shares["Devanagari"]),
+            _pct(shares["Latin"]),
+            r.transcript or "(empty)",
+            "yes" if r.consistent else "NO: runs differ",
+            r.my_verdict,
+        ]
+        out.append("| " + " | ".join(_md_cell(c) for c in cells) + " |")
     return "\n".join(out) + "\n"
-
-
-def write_markdown(rows: list[Row], header_lines: list[str], path: Path) -> None:
-    path.write_text(render_markdown(rows, header_lines), encoding="utf-8")
 
 
 # ---- environment --------------------------------------------------------------------
@@ -233,7 +311,7 @@ def cpu_model() -> str:
             for line in cpuinfo.read_text(errors="replace").splitlines():
                 if line.lower().startswith("model name"):
                     return line.split(":", 1)[1].strip()
-    except Exception:  # noqa: BLE001, S110 - informational only
+    except OSError:
         pass
     return platform.processor() or "unknown"
 
@@ -241,25 +319,8 @@ def cpu_model() -> str:
 def _version(module: str) -> str:
     try:
         return str(getattr(importlib.import_module(module), "__version__", "unknown"))
-    except Exception:  # noqa: BLE001
+    except ImportError:
         return "not installed"
-
-
-def load_denoise() -> tuple[Callable[[np.ndarray], np.ndarray] | None, str]:
-    """(denoise_fn, message). Needs services/ai/speech/denoise.py exposing
-    `denoise(float32 mono 16 kHz) -> float32 same length`, and pyrnnoise importable."""
-    try:
-        module = importlib.import_module("services.ai.speech.denoise")
-    except ImportError:
-        return None, "denoise column skipped: services/ai/speech/denoise.py does not exist"
-    fn = getattr(module, "denoise", None)
-    if not callable(fn):
-        return None, "denoise column skipped: denoise.py has no `denoise(audio)` function"
-    try:
-        importlib.import_module("pyrnnoise")
-    except ImportError:
-        return None, "denoise column skipped: pyrnnoise is not installed"
-    return fn, "denoise column included (RNNoise via services.ai.speech.denoise)"
 
 
 # ---- engines ------------------------------------------------------------------------
@@ -289,14 +350,22 @@ def _load_whisper(size: str, lang: str, threads: int) -> LoadedEngine:
     )
 
 
+def _hf_token() -> str:
+    """HF_TOKEN from the environment, read here and never printed or written. With
+    HF_HUB_OFFLINE=1 the cached weights need no token, so a dummy non-secret is used."""
+    token = os.environ.get("HF_TOKEN", "").strip()
+    if token:
+        return token
+    if os.environ.get("HF_HUB_OFFLINE") == "1":
+        return "offline-no-token"
+    raise RuntimeError("HF_TOKEN is not set (or set HF_HUB_OFFLINE=1 to use the cached model)")
+
+
 def _load_indic(modes: list[str], lang: str) -> list[LoadedEngine]:
     from services.ai.speech_indicconformer.engine import IndicConformerEngine
     from services.ai.speech_indicconformer.settings import DEFAULT_MODEL_NAME
 
-    token = os.environ.get("HF_TOKEN", "").strip()
-    if not token:
-        raise RuntimeError("HF_TOKEN is not set in the environment")
-    engine = IndicConformerEngine(DEFAULT_MODEL_NAME, token, modes[0])
+    engine = IndicConformerEngine(DEFAULT_MODEL_NAME, _hf_token(), modes[0])
     engine.load()
     return [
         LoadedEngine(
@@ -311,138 +380,119 @@ def _load_indic(modes: list[str], lang: str) -> list[LoadedEngine]:
     ]
 
 
-def run_engine(
-    eng: LoadedEngine,
-    clips: list[tuple[str, np.ndarray]],
-    denoise_fn: Callable[[np.ndarray], np.ndarray] | None,
-    runs: int,
-    on_row: Callable[[Row], None],
-) -> None:
-    """Run every clip `runs` times with denoise off (and on, if available). The first
-    inference after the model load is the only one labelled cold."""
-    first = eng.fresh
-    variants = [False] + ([True] if denoise_fn is not None else [])
-    for name, audio in clips:
-        for use_denoise in variants:
-            for run in range(1, runs + 1):
-                start = time.perf_counter()
-                data = denoise_fn(audio) if use_denoise and denoise_fn else audio
-                text = eng.transcribe(data)
-                wall = time.perf_counter() - start
-                on_row(
-                    make_row(
-                        file=name,
-                        engine=eng.name,
-                        mode=eng.mode,
-                        denoise=use_denoise,
-                        run=run,
-                        cold=first,
-                        wall_s=wall,
-                        audio_s=audio.size / TARGET_SAMPLE_RATE_HZ,
-                        transcript=text,
-                        model_version=eng.model_version,
-                    )
-                )
-                first = False
+def get_denoise_fn() -> Callable[[np.ndarray], np.ndarray]:
+    """The services' RNNoise denoiser. Raises with an actionable message if pyrnnoise is
+    missing (--denoise was asked for explicitly, so do not silently skip it)."""
+    from services.ai.speech.denoise import DenoiseUnavailableError, get_denoiser
+
+    try:
+        denoiser = get_denoiser("rnnoise")
+    except DenoiseUnavailableError as exc:
+        raise SystemExit(f"--denoise: {exc}") from exc
+    assert denoiser is not None
+    return denoiser
 
 
 # ---- main ---------------------------------------------------------------------------
 
 
-def _load_clips(directory: Path) -> list[tuple[str, np.ndarray]]:
-    clips = []
-    for path in sorted(directory.glob("*.wav")):
-        try:
-            audio, note = read_wav_16k_mono(path)
-        except ValueError as exc:
-            print(f"SKIP {path.name}: {exc}")
-            continue
-        if note:
-            print(f"NOTE {path.name}: {note}")
-        clips.append((path.name, audio))
-    return clips
+def _log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("wav_dir", type=Path, help="directory of mono WAV files")
-    parser.add_argument("--lang", choices=["te", "hi"], default="te")
+    parser.add_argument("audio", type=Path, nargs="+", help="one or more audio files")
+    parser.add_argument("--lang", choices=["te", "hi"], required=True)
+    parser.add_argument("--runs", type=int, default=3, help="runs per file/variant (default 3)")
+    parser.add_argument("--denoise", action="store_true", help="also run every engine denoised")
     parser.add_argument(
         "--engines",
         default=",".join(ALL_ENGINES),
         help=f"comma list from: {', '.join(ALL_ENGINES)} (default: all)",
     )
-    parser.add_argument("--runs", type=int, default=2, help="runs per file/variant (default 2)")
     parser.add_argument("--threads", type=int, default=4, help="whisper cpu_threads (default 4)")
-    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-    args = parser.parse_args(argv)
+    parser.add_argument("--out", type=Path, default=None, help="also write the Markdown here")
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.runs < 1:
+        parser.error("--runs must be >= 1")
     wanted = [e.strip() for e in args.engines.split(",") if e.strip()]
     unknown = [e for e in wanted if e not in ALL_ENGINES]
     if unknown:
         parser.error(f"unknown engine(s): {unknown}")
-    if not args.wav_dir.is_dir():
-        parser.error(f"not a directory: {args.wav_dir}")
 
-    clips = _load_clips(args.wav_dir)
+    clips: list[tuple[str, np.ndarray]] = []
+    for path in args.audio:
+        try:
+            audio, note = load_audio(path)
+        except ValueError as exc:
+            _log(f"SKIP {path.name}: {exc}")
+            continue
+        if note:
+            _log(f"NOTE {path.name}: {note}")
+        clips.append((path.name, audio))
     if not clips:
-        print("no usable .wav files found")
+        _log("no usable audio files")
         return 1
 
-    denoise_fn, denoise_msg = load_denoise()
-    print(denoise_msg)
+    denoise_fn = get_denoise_fn() if args.denoise else None
 
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    rows: list[Row] = []
-    notes: list[str] = [denoise_msg]
     header = [
         f"date: {datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"CPU: {cpu_model()} ({os.cpu_count()} logical cores)",
-        f"whisper cpu_threads: {args.threads}; IndicConformer threads: torch default",
-        f"language hint: {args.lang}; files: {len(clips)}; runs per variant: {args.runs}",
+        (
+            f"language: {args.lang}; files: {len(clips)}; runs per variant: {args.runs}; "
+            f"denoise column: {'yes' if args.denoise else 'no'}"
+        ),
         (
             f"faster-whisper {_version('faster_whisper')}, torch {_version('torch')}, "
             f"transformers {_version('transformers')}"
         ),
-        "cold = first inference after that model load; every other run is warm",
+        "cold = first inference after that model load; other runs are warm. "
+        + (
+            "p50/p90 over all runs."
+            if args.runs >= PERCENTILE_MIN_RUNS
+            else f"p50/p90 omitted: needs --runs >= {PERCENTILE_MIN_RUNS}."
+        ),
     ]
 
-    def flush(load_lines: list[str]) -> None:
-        write_csv(rows, args.out_dir / "results.csv")
-        write_markdown(rows, header + notes + load_lines, args.out_dir / "results.md")
-
-    load_lines: list[str] = []
     groups: list[tuple[str, Callable[[], list[LoadedEngine]]]] = []
-    for size in ("small", "medium"):
-        if f"whisper-{size}" in wanted:
-            groups.append(
-                (f"whisper-{size}", lambda s=size: [_load_whisper(s, args.lang, args.threads)])
-            )
     indic_modes = [m for m in ("ctc", "rnnt") if f"indic-{m}" in wanted]
     if indic_modes:
         groups.append(("indicconformer", lambda: _load_indic(indic_modes, args.lang)))
+    if "whisper-small" in wanted:
+        groups.append(("whisper-small", lambda: [_load_whisper("small", args.lang, args.threads)]))
 
+    results: list[Result] = []
+    load_lines: list[str] = []
     for label, loader in groups:
-        print(f"loading {label} ...")
+        _log(f"loading {label} ...")
         try:
             engines = loader()
-        except Exception as exc:  # noqa: BLE001 - report and continue with the next engine
+        except Exception as exc:  # noqa: BLE001 - report it and carry on with the next engine
             msg = f"{label}: SKIPPED, could not load ({type(exc).__name__}: {exc})"
-            print(msg)
+            _log(msg)
             load_lines.append(msg)
-            flush(load_lines)
             continue
         for eng in engines:
             load_lines.append(
                 f"{eng.name}{'/' + eng.mode if eng.mode != '-' else ''}: "
                 f"{eng.model_version}, model load {eng.load_s:.1f}s"
             )
-            print(f"running {eng.name} {eng.mode} ...")
-            run_engine(eng, clips, denoise_fn, args.runs, rows.append)
-            flush(load_lines)
+            _log(f"running {eng.name} {eng.mode} ...")
+            run_engine(eng, clips, denoise_fn, args.runs, args.lang, results.append)
         del engines
 
-    print(f"wrote {args.out_dir / 'results.csv'} and {args.out_dir / 'results.md'}")
+    table = render_markdown(results, header + load_lines, args.lang, args.runs)
+    print(table)
+    if args.out:
+        args.out.write_text(table, encoding="utf-8")
+        _log(f"wrote {args.out}")
     return 0
 
 

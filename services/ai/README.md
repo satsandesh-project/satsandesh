@@ -250,17 +250,19 @@ PYTHONPATH=../.. ./.venv/Scripts/python.exe tools/generate_fixtures.py
 
 ## ASR comparison tool
 
-`tools/asr_compare.py` runs a directory of mono WAVs through faster-whisper small and
-medium and IndicConformer (CTC and RNNT), one engine at a time, and writes a CSV and a
-Markdown table (wall-clock, real-time factor, transcript, detected script, cold/warm,
-an empty "my verdict" column). It has no ground truth and claims no accuracy. Output
-goes to `tools/asr_compare_out/` (gitignored). Needs `HF_TOKEN` for the IndicConformer rows.
+`tools/asr_compare.py` runs one or more audio files through IndicConformer CTC, IndicConformer
+RNNT and faster-whisper small (the reference, not the answer), one engine at a time, and prints
+a Markdown table: run times (cold/warm, p50/p90 only with `--runs >= 5`), RTF, the share of
+letters in the expected script vs Devanagari vs Latin, the transcript, and an empty `my verdict`
+column. `--denoise` adds a denoised row per engine. It has no ground truth and claims no
+accuracy. The output contains transcripts of real recordings: do not commit it.
 
 ```powershell
 cd services/ai
-$env:PYTHONPATH = "..\.."; $env:HF_TOKEN = "hf_..."
-.\.venv\Scripts\python.exe tools/asr_compare.py C:\path\to\wavs --lang te
+$env:PYTHONPATH = "..\.."; $env:HF_HUB_OFFLINE = "1"   # cached models; or set HF_TOKEN to download
+.\.venv\Scripts\python.exe tools/asr_compare.py a.wav b.opus --lang te --runs 3 --out cmp.md
 ```
+
 ## Development
 
 ```bash
