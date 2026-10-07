@@ -2,13 +2,17 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-CONTRACTS_VERSION = "0.1.0"
+CONTRACTS_VERSION = "0.2.0"
 """
 Schema-shape version for everything in contracts/ai/. Bump this when any field is
 added, renamed, retyped, or removed, so a downstream consumer can tell which shape
 it is looking at. Distinct from a model's own `model_version` (which model weights
 produced a value) and moderation's `policy_version` (which prompt/policy produced
 a decision) — those change independently and more often than the wire shape does.
+
+0.1.0 -> 0.2.0: AudioFormat gained `webm_opus` (additive; every 0.1.0 payload still
+parses). It is what a browser MediaRecorder produces, so the gateway no longer has
+to label WebM as `ogg_opus`.
 """
 
 
@@ -21,6 +25,7 @@ class VersionedModel(BaseModel):
 class AudioFormat(str, Enum):
     WAV_PCM16 = "wav_pcm16"
     OGG_OPUS = "ogg_opus"
+    WEBM_OPUS = "webm_opus"
     MP3 = "mp3"
 
 

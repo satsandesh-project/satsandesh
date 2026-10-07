@@ -52,7 +52,7 @@ speed only. Flip to `rnnt` to compare.
 
 ## Audio formats
 
-Same as faster-whisper: `wav_pcm16` (mono, 16 kHz, 16-bit; stdlib `wave`), and `ogg_opus` /
+Same as faster-whisper: `wav_pcm16` (mono, 16 kHz, 16-bit; stdlib `wave`), and `ogg_opus` / `webm_opus` /
 `mp3` via the `ffmpeg` binary (`FFMPEG_PATH` or `PATH`). The decode helpers are imported from
 `services/ai/speech/engine.py`, not copied. Consequence: importing them also imports
 `faster_whisper`, so this service is coupled to the fallback's module; if `speech/` is ever

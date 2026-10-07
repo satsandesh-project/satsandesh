@@ -129,11 +129,24 @@ def test_transcribe_wav_response_matches_contract(client: TestClient) -> None:
     assert parsed.degraded.active is False
 
 
-@pytest.mark.parametrize(("fmt", "fixture"), [("ogg_opus", "tone_2s.opus"), ("mp3", "tone_2s.mp3")])
+@pytest.mark.parametrize(
+    ("fmt", "fixture"),
+    [
+        ("ogg_opus", "tone_2s.opus"),
+        ("webm_opus", "tone_2s.webm"),
+        ("ogg_opus", "tone_2s.webm"),  # the label is not trusted; ffmpeg probes the bytes
+        ("mp3", "tone_2s.mp3"),
+    ],
+)
 def test_transcribe_ffmpeg_formats(client: TestClient, fmt: str, fixture: str) -> None:
     resp = client.post("/v1/transcribe", json=_payload(fmt=fmt, uri=_uri(fixture)))
     assert resp.status_code == 200
     TranscribeResponse.model_validate(resp.json())
+
+
+def test_transcribe_unknown_format_is_rejected(client: TestClient) -> None:
+    resp = client.post("/v1/transcribe", json=_payload(fmt="flac", uri=_uri("tone_2s.webm")))
+    assert resp.status_code == 422
 
 
 def test_transcribe_corrupt_file_is_pipeline_error(client: TestClient) -> None:

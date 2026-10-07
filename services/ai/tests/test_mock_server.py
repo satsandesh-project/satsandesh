@@ -78,6 +78,21 @@ def test_mock_server_rejects_malformed_request_with_422(client: TestClient) -> N
     assert resp.status_code == 422
 
 
+def test_transcribe_accepts_webm_opus_and_rejects_unknown_format(client: TestClient) -> None:
+    ok = client.post(
+        "/v1/transcribe",
+        json={"audio": {"uri": "file:///tmp/a.webm", "format": "webm_opus"}},
+    )
+    assert ok.status_code == 200
+    TranscribeResponse.model_validate(ok.json())
+
+    bad = client.post(
+        "/v1/transcribe",
+        json={"audio": {"uri": "file:///tmp/a.flac", "format": "flac"}},
+    )
+    assert bad.status_code == 422
+
+
 def test_transcribe_response_reports_degraded_mode_shape(client: TestClient) -> None:
     resp = client.post(
         "/v1/transcribe",

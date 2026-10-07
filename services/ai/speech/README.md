@@ -4,8 +4,8 @@ The real ASR service — not the mock. Loads `faster-whisper` (`small`, `int8`,
 CPU) once at startup and serves `POST /v1/transcribe` against the
 `contracts/ai/transcribe.py` contract.
 
-**All three `AudioFormat` values are supported**: `wav_pcm16` decodes via the
-stdlib `wave` module; `ogg_opus` and `mp3` decode via the `ffmpeg` binary,
+**All four `AudioFormat` values are supported**: `wav_pcm16` decodes via the
+stdlib `wave` module; `ogg_opus`, `webm_opus` and `mp3` decode via the `ffmpeg` binary,
 invoked as a subprocess (not a Python binding library, to keep the dependency
 surface small). Any decode failure — a corrupt/garbage file, an ffmpeg
 timeout, or ffmpeg not being installed at all — returns a real `PipelineError`
@@ -83,23 +83,11 @@ tone_2s.mp3`), exercising the real ffmpeg decode path. `tone_2s_corrupt.mp3`
 is 64 bytes of random data with a misleading `.mp3` extension, used to prove
 ffmpeg decode failures produce a clean `PipelineError` rather than a crash.
 
-## Known open question: webm vs. ogg container
+## WebM/Opus
 
-The browser's `MediaRecorder` API records `audio/webm;codecs=opus` — a WebM
-**container** carrying Opus-encoded audio. That is a different container
-format from Ogg, even though both can wrap Opus audio streams.
-
-`AudioFormat` (in `contracts/ai/common.py`) has no `webm_opus` value — only
-`wav_pcm16`, `ogg_opus`, and `mp3`. ffmpeg happily decodes a real WebM file
-even if it's labeled `ogg_opus` on the wire, because it inspects the actual
-bytes rather than trusting the extension or a declared format string. That
-leniency means a mislabeled webm-as-ogg_opus request will decode successfully
-today — but a successful decode is not evidence the contract is correct. It's
-ffmpeg papering over a mismatch between what the browser actually produces and
-what the enum can currently express.
-
-This question is still open and needs a decision from the team: either add a
-dedicated `webm_opus` value to `AudioFormat`, or have the gateway transcode
-real webm bytes into true Ogg/Opus before calling this service. Nothing in
-this phase resolves it — this decode path was built and tested against real
-Ogg/Opus and MP3 files, not webm.
+The browser's `MediaRecorder` records `audio/webm;codecs=opus` — a WebM
+container, not Ogg. `AudioFormat.WEBM_OPUS` (`webm_opus`, contract 0.2.0) now
+names it, and it takes the same ffmpeg path as `ogg_opus`/`mp3`. The decode
+never trusts the label: ffmpeg probes the actual bytes, so real WebM sent
+under an old `ogg_opus` label still decodes. Covered by
+`tests/fixtures/tone_2s.webm`.

@@ -94,7 +94,7 @@ curl -X POST http://localhost:8000/v1/transcribe \
 
 ```json
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "code": "AUDIO_FETCH_FAILED",
   "message": "mock-injected error via X-Mock-Error header (code=AUDIO_FETCH_FAILED)",
   "stage": "transcribe.mock_injected",
@@ -137,7 +137,7 @@ http POST :8000/v1/render pivot_text="Good morning" target_languages:='["hi", "t
 
 ```json
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "results": [
     {
       "language": "hi",

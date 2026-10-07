@@ -4,7 +4,7 @@ Owned by Student 3 (AI/GPU). This is the consumer-facing reference for the
 `contracts/ai/` Pydantic models and the mock server other members build against.
 You should not need to read the implementation to use this.
 
-Contract shape version: `CONTRACTS_VERSION = "0.1.0"` (`contracts/ai/common.py`).
+Contract shape version: `CONTRACTS_VERSION = "0.2.0"` (`contracts/ai/common.py`).
 Every request/response carries `contract_version` so you can tell which shape you
 are looking at as this evolves week to week.
 
@@ -73,7 +73,7 @@ the user (e.g. `tts_skipped` means show text, don't expect audio to arrive).
 Request (`TranscribeRequest`):
 ```json
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "audio": {
     "uri": "file:///tmp/sample.wav",
     "format": "wav_pcm16",
@@ -88,7 +88,7 @@ Request (`TranscribeRequest`):
 Response (`TranscribeResponse`):
 ```json
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "text": "నమస్తే, ఈ రోజు సత్సంగం ఎప్పుడు జరుగుతుంది?",
   "detected_language": "te",
   "model_version": "faster-whisper-small-int8@1",
@@ -106,7 +106,7 @@ Response (`TranscribeResponse`):
 
 Request (`PivotRequest`):
 ```json
-{ "contract_version": "0.1.0", "text": "నమస్తే...", "source_language": "te" }
+{ "contract_version": "0.2.0", "text": "నమస్తే...", "source_language": "te" }
 ```
 `source_language` may be `en` (identity pass) — some content may already be
 English.
@@ -114,7 +114,7 @@ English.
 Response (`PivotResponse`):
 ```json
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "pivot_text": "Namaste, what time is today's satsang?",
   "source_language": "te",
   "model_version": "indictrans2-distilled@1",
@@ -131,7 +131,7 @@ fans out to many receivers in one shot.
 Request (`RenderRequest`):
 ```json
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "pivot_text": "Namaste, what time is today's satsang?",
   "target_languages": ["hi", "te"]
 }
@@ -143,7 +143,7 @@ language back.
 Response (`RenderResponse`):
 ```json
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "results": [
     {
       "language": "hi",
@@ -189,13 +189,13 @@ is only a quick "did anything in this batch degrade" summary.
 
 Request (`ModerationRequest`):
 ```json
-{ "contract_version": "0.1.0", "text": "Namaste, what time is today's satsang?" }
+{ "contract_version": "0.2.0", "text": "Namaste, what time is today's satsang?" }
 ```
 
 Response (`ModerationDecision`):
 ```json
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "label": "D_DISPUTATIONAL",
   "confidence": 0.81,
   "action": "NUDGE",
@@ -223,7 +223,7 @@ Response (`ModerationDecision`):
 Any pipeline stage can fail with a `PipelineError`:
 ```json
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "code": "OUT_OF_MEMORY",
   "message": "Failed to allocate VRAM for Indic-TTS while ASR and moderation models were resident.",
   "stage": "render.tts",

@@ -114,6 +114,27 @@ def test_transcribe_ogg_opus_returns_well_formed_response(client: TestClient) ->
     assert parsed.degraded.active is False
 
 
+def test_transcribe_webm_opus_returns_well_formed_response(client: TestClient) -> None:
+    payload = _transcribe_payload(audio_format="webm_opus", uri=_fixture_uri("tone_2s.webm"))
+    resp = client.post("/v1/transcribe", json=payload)
+    assert resp.status_code == 200
+
+    parsed = TranscribeResponse.model_validate(resp.json())
+    assert [s.stage for s in parsed.stage_timings] == ["decode", "inference", "postprocess"]
+    assert parsed.degraded.active is False
+
+
+def test_transcribe_decode_does_not_trust_the_label(client: TestClient) -> None:
+    # Real WebM bytes under an ogg_opus label still decode: ffmpeg probes the bytes.
+    payload = _transcribe_payload(audio_format="ogg_opus", uri=_fixture_uri("tone_2s.webm"))
+    assert client.post("/v1/transcribe", json=payload).status_code == 200
+
+
+def test_transcribe_unknown_format_is_rejected(client: TestClient) -> None:
+    payload = _transcribe_payload(audio_format="flac", uri=_fixture_uri("tone_2s.webm"))
+    assert client.post("/v1/transcribe", json=payload).status_code == 422
+
+
 def test_transcribe_mp3_returns_well_formed_response(client: TestClient) -> None:
     payload = _transcribe_payload(audio_format="mp3", uri=_fixture_uri("tone_2s.mp3"))
     resp = client.post("/v1/transcribe", json=payload)
