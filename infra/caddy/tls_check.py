@@ -8,8 +8,8 @@ Proves four things about the HTTPS endpoint, and prints one line each:
   2. a client that trusts the exported root completes the handshake
   3. the certificate is valid for the address we connected to (a SAN match, checked by the
      TLS library, not by eye)
-  4. the same routes answer as on plain HTTP (/me/settings -> gateway, /moderation -> the
-     elder-app catch-all, i.e. still NOT exposed), proving the transform did not change routing
+  4. the same routes answer as on plain HTTP (/me/settings and /moderation -> gateway, everything
+     else -> the elder-app catch-all), proving the transform did not change routing
 Exits 0 only if every check passed.
 """
 
@@ -63,7 +63,16 @@ def get(path):
 
 
 try:
-    got = {p: get(p) for p in ("/me/settings", "/messages", "/moderation/queue", "/")}
+    got = {
+        p: get(p)
+        for p in (
+            "/me/settings",
+            "/messages",
+            "/moderation/queue",
+            "/moderation/messages/x/events",
+            "/",
+        )
+    }
     check(
         "/me/settings reaches the gateway",
         got["/me/settings"].startswith("GATEWAY"),
@@ -71,9 +80,14 @@ try:
     )
     check("/messages reaches the gateway", got["/messages"].startswith("GATEWAY"), got["/messages"])
     check(
-        "/moderation is still NOT routed to the gateway",
-        got["/moderation/queue"].startswith("ELDER-APP"),
+        "/moderation/queue reaches the gateway (which refuses unsigned callers itself)",
+        got["/moderation/queue"].startswith("GATEWAY"),
         got["/moderation/queue"],
+    )
+    check(
+        "/moderation/messages/<id>/events reaches the gateway",
+        got["/moderation/messages/x/events"].startswith("GATEWAY"),
+        got["/moderation/messages/x/events"],
     )
     check("everything else reaches the elder-app", got["/"].startswith("ELDER-APP"), got["/"])
 except Exception as e:  # noqa: BLE001
