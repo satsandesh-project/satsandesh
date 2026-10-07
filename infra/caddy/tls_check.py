@@ -56,14 +56,40 @@ except Exception as e:  # noqa: BLE001
 
 
 # 4. routing unchanged
-def get(path):
+def get(path, method="GET"):
     conn = http.client.HTTPSConnection(host, 443, context=ctx, timeout=10)
-    conn.request("GET", path)
+    conn.request(method, path)
     return conn.getresponse().read().decode()
 
 
 try:
-    got = {p: get(p) for p in ("/me/settings", "/messages", "/moderation/queue", "/")}
+    got = {
+        p: get(p)
+        for p in (
+            "/me/settings",
+            "/messages",
+            "/moderation/queue",
+            "/onboarding/qr/junk",
+            "/push/subscribe",
+            "/",
+        )
+    }
+    got_post = get("/onboarding/activate", "POST")
+    check(
+        "/onboarding/qr/<token> reaches the gateway (the gate got the elder app's 404)",
+        got["/onboarding/qr/junk"].startswith("GATEWAY"),
+        got["/onboarding/qr/junk"],
+    )
+    check(
+        "POST /onboarding/activate reaches the gateway (the gate got the elder app's 405)",
+        got_post.startswith("GATEWAY"),
+        got_post,
+    )
+    check(
+        "/push is still NOT routed (nothing calls it: a deliberate omission, see the Caddyfile)",
+        got["/push/subscribe"].startswith("ELDER-APP"),
+        got["/push/subscribe"],
+    )
     check(
         "/me/settings reaches the gateway",
         got["/me/settings"].startswith("GATEWAY"),

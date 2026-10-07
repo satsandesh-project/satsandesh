@@ -29,6 +29,7 @@ class H(h.BaseHTTPRequestHandler):
     def do_GET(self):
         b = ('$3 ' + self.path).encode()
         self.send_response(200); self.send_header('Content-Length', str(len(b))); self.end_headers(); self.wfile.write(b)
+    do_POST = do_GET
     def log_message(self, *a): pass
 h.HTTPServer(('0.0.0.0', $2), H).serve_forever()" >/dev/null
 }
