@@ -48,7 +48,12 @@ BASE=()
 if [ -n "$GW" ]; then
   LABEL=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$GW")
   IFS=, read -ra FILES <<<"$LABEL"
-  for f in "${FILES[@]}"; do BASE+=(-f "$f"); done
+  # NOT the AI file: after an --apply the gateway's label lists it too, and "the base" must be what
+  # the stack ran with BEFORE (a first version kept it, so --rollback re-created the gateway with the
+  # AI override still layered: pipeline on, real AI URLs, only the stopgap flipped).
+  for f in "${FILES[@]}"; do
+    [ "$(basename "$f")" = docker-compose.ai.yml ] || BASE+=(-f "$f")
+  done
 else
   echo "WARNING: no running gateway for project '$PROJECT'; assuming just docker-compose.yml" >&2
   BASE=(-f docker-compose.yml)
