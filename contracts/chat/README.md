@@ -8,7 +8,7 @@ mirrors their conventions (golden fixtures, mock latency headers,
 `CONTRACTS_VERSION`, `DECISIONS.md`/`OPEN_QUESTIONS.md`) so the two contract
 folders read as siblings, not as two different projects.
 
-Contract shape version: `CONTRACTS_VERSION = "0.6.0"`
+Contract shape version: `CONTRACTS_VERSION = "0.7.0"`
 (`contracts/chat/common.py`). Every request/response/frame-data payload
 carries `contract_version` so you can tell which shape you're looking at as
 this evolves week to week. Independent of `contracts/ai/`'s version counter
