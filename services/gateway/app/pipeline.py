@@ -58,6 +58,7 @@ from app.db.repository import (
 )
 from app.jobs import PermanentJobError
 from app.media_storage import get_media_storage
+from app.script_check import script_name, script_share
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +295,8 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
                 session.refresh(message)
             source_text = message.transcript
             source_language = message.transcript_language
+            if _hold_if_wrong_script(session, message):
+                return
         else:
             # Typed text has no second chance to detect its language, so an
             # undeclared one falls back to the author's stored language -- weak
@@ -349,6 +352,28 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
 
     # -- 5. finish -----------------------------------------------------------------------------
     _finish(session, message, event.action, state="complete")
+
+
+def _hold_if_wrong_script(session: Session, message: Message) -> bool:
+    """The script guard: a voice note's transcript that is mostly not in its language's script goes to a
+    person, with the transcript KEPT (the moderator needs to see what was heard) and nothing translated,
+    ruled on or rendered. Off unless PIPELINE_SCRIPT_CHECK_ENABLED. Checked wherever a transcript exists
+    (not only right after the ASR), so a run resumed after a crash is guarded too. True when held."""
+    settings = get_settings()
+    if not settings.PIPELINE_SCRIPT_CHECK_ENABLED or message.kind != "voice":
+        return False
+    language = message.transcript_language or ""
+    share = script_share(message.transcript or "", language)
+    if share is None or share >= settings.PIPELINE_SCRIPT_MIN_SHARE:
+        return False
+    _hold_for_pipeline(
+        session,
+        message,
+        f"The transcript is not written in the script of its language ({language}): only "
+        f"{round(100 * share)}% of its letters are {script_name(language)}.",
+        "complete",
+    )
+    return True
 
 
 def _target_languages(session: Session, message: Message, source_language: str | None) -> list[str]:

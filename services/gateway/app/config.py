@@ -171,6 +171,13 @@ class Settings(BaseSettings):
     # action -> status mapping open; this assumes a nudge records a notice and
     # still delivers. Set false to hold nudged messages for a human instead.
     PIPELINE_NUDGE_DELIVERS: bool = True
+    # The script guard (app/script_check.py; the Week 8 gate's finding): hold a voice note whose
+    # transcript is mostly NOT written in the script of its language (ASR labelled `te`, returned
+    # Devanagari) for a person, instead of translating and delivering nonsense. OFF by default: it
+    # would send a large share of today's Telugu notes to the moderator queue, so turning it on is a
+    # decision. The minimum is the share of the transcript's LETTERS that must be in the script.
+    PIPELINE_SCRIPT_CHECK_ENABLED: bool = False
+    PIPELINE_SCRIPT_MIN_SHARE: float = 0.5
     # The stuck-pipeline watchdog (app/pipeline_watchdog.py, OPEN_QUESTIONS #20): holds a message
     # whose pipeline is pending but which no queued or running job is working on, so it reaches
     # the moderator queue instead of waiting forever. Runs only with PIPELINE_ENABLED. The grace
