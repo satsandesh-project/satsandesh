@@ -378,8 +378,8 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     known. (b) A moderator is a global role (`users.role`); a circle's own
     moderators (`memberships.role`) cannot review their circle. (c)
     `ModerationQueueItem.original_text` is `null` for a voice note per M4's
-    contract; whether it should carry the transcript is M4's call (asked on
-    #86). (d) `contracts/chat/mock/` has no moderation routes, so the console
+    contract; M4 answered (0.6.0) with a separate `transcript` / `transcript_language`, which the
+    gateway now fills (Week 8), still `null` for a note held before it was transcribed. (d) `contracts/chat/mock/` has no moderation routes, so the console
     has no mock to build against; adding them is a small `contracts/chat/`
     change not made here. (e) `notice_sent` is always `false` (see #18).
 
