@@ -11,6 +11,7 @@ Written before app/script_check.py exists.
 """
 
 import pytest
+
 from app.script_check import script_share
 
 TELUGU = "అఆఇఈ"  # four Telugu letters
