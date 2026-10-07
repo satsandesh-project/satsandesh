@@ -106,9 +106,12 @@ def get_queue(
             target_id=message.target_circle_id
             if message.target_type == "circle"
             else message.target_user_id,
-            # M4's contract: null for a voice note (OPEN question on #86 --
-            # whether the transcript belongs here is theirs to decide).
+            # What the SENDER typed: null for a voice note. What a machine HEARD is `transcript`
+            # below (M4's contract 0.6.0 keeps the two apart on purpose, so ASR errors stay
+            # visible to the moderator at the moment they matter).
             original_text=message.text,
+            transcript=message.transcript,
+            transcript_language=message.transcript_language,
             original_language=(
                 message.transcript_language if message.kind == "voice" else message.source_lang
             ),

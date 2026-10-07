@@ -215,6 +215,51 @@ def test_a_held_voice_note_carries_its_audio_reference_and_no_original_text(
     assert item.original_language == "te"  # from the transcript
 
 
+def test_a_held_voice_note_shows_the_moderator_what_the_machine_heard(
+    client, db_session, login_as, moderator
+):
+    # M4's contract 0.6.0: `transcript` / `transcript_language`, "same field name and meaning as
+    # MessageOut.transcript", and deliberately NOT folded into `original_text` (that is what the
+    # sender typed; a transcript is what a machine heard, and it is the thing that can be wrong).
+    _held(db_session, kind="voice")
+    login_as(moderator)
+
+    (item,) = ModerationQueueOut.model_validate(_queue(client).json()).items
+
+    assert item.transcript == "ఈ రోజు సత్సంగం ఎప్పుడు?"
+    assert item.transcript_language == "te"
+    assert item.original_text is None, "the transcript is not passed off as what the sender typed"
+
+
+def test_a_held_text_message_has_no_transcript(client, db_session, login_as, moderator):
+    _held(db_session)
+    login_as(moderator)
+
+    (item,) = ModerationQueueOut.model_validate(_queue(client).json()).items
+
+    assert item.transcript is None and item.transcript_language is None
+    assert item.original_text == "ఈ రోజు సత్సంగం?"
+
+
+def test_a_voice_note_held_before_it_was_transcribed_has_no_transcript_not_an_empty_one(
+    client, db_session, login_as, moderator
+):
+    # E.g. a pipeline failure on the audio format (OPEN_QUESTIONS #2/#19): held, nothing heard yet.
+    message_id, _, _ = _held(db_session, kind="voice")
+    db_session.execute(
+        Message.__table__.update()
+        .where(Message.id == message_id)
+        .values(transcript=None, transcript_language=None)
+    )
+    db_session.commit()
+    login_as(moderator)
+
+    (item,) = ModerationQueueOut.model_validate(_queue(client).json()).items
+
+    assert item.transcript is None and item.transcript_language is None
+    assert item.original_media_ref is not None, "the recording is still there to listen to"
+
+
 def test_the_audio_the_queue_points_at_is_fetchable_by_the_moderator(
     client, db_session, login_as, moderator
 ):
