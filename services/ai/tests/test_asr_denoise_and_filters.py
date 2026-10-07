@@ -61,6 +61,13 @@ def test_rnnoise_without_the_extra_is_a_clear_error(monkeypatch: pytest.MonkeyPa
 
 
 # ---- RnnoiseDenoiser against a fake pyrnnoise ---------------------------------------
+#
+# The fake mirrors the real pyrnnoise 0.4.5 contract (read from its source), strictly
+# enough that a wrong call fails: int16 [channels, samples] input, a GENERATOR of
+# (speech_probs, denoised_frame[channels, 480] int16) per 10 ms frame, a zero-padded last
+# frame only when partial=True, and a ragged tail silently dropped when partial=False.
+
+_FRAME = 480  # 10 ms @ 48 kHz
 
 
 class _FakeRNNoise:
@@ -68,31 +75,52 @@ class _FakeRNNoise:
 
     def __init__(self, sample_rate: int) -> None:
         self.sample_rate = sample_rate
-        self.chunk_shape: tuple[int, ...] | None = None
+        self.calls: list[tuple[tuple[int, ...], np.dtype, bool]] = []
         _FakeRNNoise.instances.append(self)
 
-    def denoise_chunk(self, x: np.ndarray, partial: bool = False):
-        self.chunk_shape = x.shape
-        assert x.dtype == np.int16
-        frame = 480  # 10 ms @ 48 kHz
-        for start in range(0, x.shape[1] - frame + 1, frame):  # drops the ragged tail
-            yield 0.9, (x[:, start : start + frame] // 2)  # "denoise" = halve the level
+    def denoise_chunk(self, chunk: np.ndarray, partial: bool = False):
+        chunk = np.atleast_2d(chunk)
+        assert chunk.ndim == 2 and chunk.dtype == np.int16, "need int16 [channels, samples]"
+        self.calls.append((chunk.shape, chunk.dtype, partial))
+        n_frames = -(-chunk.shape[1] // _FRAME) if partial else chunk.shape[1] // _FRAME
+        for i in range(n_frames):
+            frame = chunk[:, i * _FRAME : (i + 1) * _FRAME]
+            if frame.shape[1] < _FRAME:
+                frame = np.pad(frame, ((0, 0), (0, _FRAME - frame.shape[1])))
+            yield np.array([0.9]), frame // 2  # "denoise" = halve the level
 
 
-def test_rnnoise_denoiser_uses_48k_and_keeps_the_length(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fake_is_a_generator_like_the_real_thing() -> None:
+    import inspect
+
+    assert inspect.isgeneratorfunction(_FakeRNNoise.denoise_chunk)
+
+
+def test_rnnoise_denoiser_follows_the_pyrnnoise_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeRNNoise.instances.clear()
     monkeypatch.setitem(sys.modules, "pyrnnoise", types.SimpleNamespace(RNNoise=_FakeRNNoise))
-    audio = _tone(1.0) + 0.0
-    audio = audio[:15990]  # not a multiple of the 160-sample 10 ms frame at 16 kHz
+    audio = _tone(1.0)[:15990]  # not a multiple of the 160-sample 10 ms frame at 16 kHz
     out = denoise.RnnoiseDenoiser()(audio)
 
-    rnn = _FakeRNNoise.instances[0]
+    (rnn,) = _FakeRNNoise.instances
     assert rnn.sample_rate == 48000
-    assert rnn.chunk_shape == (1, len(audio) * 3)
-    assert out.dtype == np.float32
+    assert rnn.calls == [((1, len(audio) * 3), np.dtype(np.int16), True)]  # one call, partial=True
+    assert out.dtype == np.float32 and out.ndim == 1
     assert len(out) == len(audio)
-    mid = slice(1000, -1000)
-    assert 0.3 < np.abs(out[mid]).max() / np.abs(audio[mid]).max() < 0.7  # halved
+    # Every yielded frame was concatenated, including the padded last one: both ends carry
+    # signal (halved), not just the first frame and not a zeroed tail.
+    mid, tail = slice(1000, -1000), slice(-1200, -400)
+    assert 0.3 < np.abs(out[mid]).max() / np.abs(audio[mid]).max() < 0.7
+    assert np.abs(out[tail]).max() > 0.05
+
+
+def test_rnnoise_denoiser_uses_a_fresh_stream_per_clip(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeRNNoise.instances.clear()
+    monkeypatch.setitem(sys.modules, "pyrnnoise", types.SimpleNamespace(RNNoise=_FakeRNNoise))
+    d = denoise.RnnoiseDenoiser()
+    d(_tone(0.5))
+    d(_tone(0.5))
+    assert len(_FakeRNNoise.instances) == 2
 
 
 def test_rnnoise_denoiser_handles_empty_audio(monkeypatch: pytest.MonkeyPatch) -> None:

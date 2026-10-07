@@ -53,7 +53,11 @@ pyrnnoise / RNNoise (optional ASR denoising)
 Used by: services/ai/speech/denoise.py (optional `denoise` extra, ASR_DENOISE=rnnoise;
 off by default)
 
-- pyrnnoise: Python bindings for RNNoise. License: Apache-2.0 (per the project;
-  confirm against the installed distribution's LICENSE before redistributing).
-- RNNoise (Xiph.Org / Mozilla, Jean-Marc Valin): BSD 3-clause. Bundled in the
-  pyrnnoise wheel; retain its copyright notice when redistributing.
+- pyrnnoise (https://pypi.org/project/pyrnnoise/): Python bindings for RNNoise.
+  License: Apache-2.0 (the wheel ships the full Apache-2.0 text as dist-info/licenses/LICENSE
+  and every module carries the Apache-2.0 header; copyright Zhendong Peng).
+- RNNoise (Xiph.Org / Mozilla, Jean-Marc Valin), the C library bundled in the pyrnnoise
+  wheel as a compiled library (rnnoise.dll / .so): BSD 3-clause upstream. NOT verified from
+  the package: the pyrnnoise 0.4.5 wheel contains no RNNoise license or copyright file, so
+  the BSD terms come from the upstream project, not from these files. Check upstream and
+  retain its copyright notice if the compiled library is redistributed.

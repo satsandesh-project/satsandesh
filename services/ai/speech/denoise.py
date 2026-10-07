@@ -14,7 +14,6 @@ drag in scipy/soxr.
 from __future__ import annotations
 
 import logging
-import threading
 from typing import Protocol
 
 import numpy as np
@@ -65,7 +64,14 @@ def downsample_48k_to_16k(audio: np.ndarray) -> np.ndarray:
 
 
 class RnnoiseDenoiser:
-    """float32 [-1, 1] @16 kHz in, float32 [-1, 1] @16 kHz out, same length."""
+    """float32 [-1, 1] @16 kHz in, float32 [-1, 1] @16 kHz out, same length.
+
+    pyrnnoise contract (checked against pyrnnoise 0.4.5's source): `RNNoise(sample_rate)`
+    is a per-stream object (recurrent state), and `denoise_chunk(chunk, partial)` takes a
+    `[channels, samples]` int16 array and is a GENERATOR yielding
+    `(speech_probs, denoised_frame)` per 10 ms frame, each frame `[channels, n]` int16.
+    `partial=True` marks the last chunk: it flushes the tail and resets the stream.
+    """
 
     def __init__(self) -> None:
         try:
@@ -76,23 +82,23 @@ class RnnoiseDenoiser:
                 'pip install "satsandesh-ai[denoise]"'
             ) from exc
         self._rnnoise_cls = RNNoise
-        # RNNoise carries recurrent state, so one instance must not be shared by
-        # concurrent requests; each call builds its own and this lock only guards init.
-        self._lock = threading.Lock()
 
     def __call__(self, audio: np.ndarray) -> np.ndarray:
         if audio.size == 0:
             return audio
         n_in = len(audio)
         up = upsample_16k_to_48k(audio)
+        # [channels=1, samples], int16: the shape/dtype denoise_chunk expects.
         pcm16 = np.clip(up * 32768.0, -32768, 32767).astype(np.int16)[np.newaxis, :]
 
-        with self._lock:
-            rnn = self._rnnoise_cls(sample_rate=RNNOISE_SAMPLE_RATE_HZ)
-        frames = [frame for _speech_prob, frame in rnn.denoise_chunk(pcm16, partial=True)]
+        # A new RNNoise per clip: it carries state across frames, so sharing one between
+        # requests would leak one caller's audio history into another's.
+        rnn = self._rnnoise_cls(sample_rate=RNNOISE_SAMPLE_RATE_HZ)
+        # Generator: it must be consumed, and every yielded frame kept.
+        frames = [np.atleast_2d(frame) for _speech_probs, frame in rnn.denoise_chunk(pcm16, True)]
         if not frames:
             return audio
-        denoised = np.concatenate([np.asarray(f).reshape(-1) for f in frames])
+        denoised = np.concatenate(frames, axis=1)[0]  # join in time, take channel 0 (mono)
         denoised = denoised.astype(np.float32) / 32768.0
 
         out = downsample_48k_to_16k(denoised)
