@@ -169,8 +169,12 @@ def test_the_database_role_decides_not_the_token(client, db_session):
     elder = _user(db_session, "Elder", role="elder")
     db_session.commit()
 
-    as_mod = client.get("/moderation/queue", headers={"Authorization": f"Bearer {issue_token(mod.id)}"})
-    as_elder = client.get("/moderation/queue", headers={"Authorization": f"Bearer {issue_token(elder.id)}"})
+    as_mod = client.get(
+        "/moderation/queue", headers={"Authorization": f"Bearer {issue_token(mod.id)}"}
+    )
+    as_elder = client.get(
+        "/moderation/queue", headers={"Authorization": f"Bearer {issue_token(elder.id)}"}
+    )
 
     assert as_mod.status_code == 200
     assert as_elder.status_code == 403
