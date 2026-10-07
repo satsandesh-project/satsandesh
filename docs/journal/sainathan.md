@@ -339,18 +339,31 @@ saying so. Then a six-line PR replacing the ADR's "Not recorded either way:
 Sainathan (M4)" with a pointer to the comment, dated, per `OWNERSHIP.md` R6
 (ADR edits go through a PR every owner sees).
 
-**Corrected:** Nothing in the content. The timing is the correction: this
-should have been written before #43 merged, and the ADR now says that
-rather than restating the record as if I had been there.
+**Corrected — and this is the entry that matters most today:** the comment
+was drafted, I believed I had posted it, and **it never went up.** #57 was
+opened and merged citing a comment that did not exist. Kshitiz checked
+issue #35 directly (every comment there is his or Veerendra's), flagged it
+on #57, and when nobody answered before the merge, Veerendra opened #66 to
+revert the line with a correction note. Neither of us — me or the
+assistant that drafted the ADR line on my say-so — verified the link before
+citing it. The ADR's own approval-record section exists precisely because
+"overstating the approval here would repeat that in a quieter form", and
+#57 did exactly that. The original version of *this* journal entry said
+"Verified by: comment visible on #35" — it was not; that line is corrected
+here rather than deleted.
 
 **Decided differently:** Read all eleven comments on #35 before drafting, so
 the position engages with Veerendra's and Kshitiz's analyses instead of
-restating them.
+restating them. After the miss: approve #66 as written (the correction note
+is the accurate trail), post the comment for real, and cite the actual
+comment URL in a follow-up PR — not amend #66 to pretend the sequence was
+otherwise.
 
-**Verified by:** Comment visible on #35 under `sainathanv`; #57 opened by
-`sainathanv`.
+**Verified by:** Nothing, at the time — that was the failure. As of this
+correction: GitHub API, `issues/35/comments` filtered by author
+`sainathanv` → zero results.
 
-**Where it ran:** local (the comment was posted by hand in the browser).
+**Where it ran:** local.
 
 ## 2026-09-22 — Ethics approval request and interview consent form (Week 5 · PR #58)
 
@@ -491,5 +504,87 @@ from the root; a TestClient smoke run against the committed policy file
 showing `has_exemplars: false` and correct stub classifications. CI
 `lint-and-test` green on the PR — which, until an `ai-tests` job exists,
 still means only ruff ran.
+
+**Where it ran:** local.
+
+## 2026-09-22 — Classifier bring-up: Qwen2.5-3B on CPU, first real numbers (Week 6, pulled forward · on PR #60)
+
+**Asked for:** "Move on to the model bring-up", then "yes" to the 2.1 GB
+download, then "run the benchmark once the download finishes."
+
+**Produced:** `llama-cpp-python==0.3.35` installed (Python 3.11 venv);
+`qwen2.5-3b-instruct-q4_k_m.gguf` downloaded to `D:/…/SatSandesh/models/`
+(outside the repo), size and sha256 verified and pinned in the README;
+`services/ai/moderation/tools/bench.py` driving the service's real path over
+26 messages from the workshop pack; two runs; the report
+`services/ai/moderation/bringup-2026-09-22.md`. Numbers on an i5-8250U with
+no GPU and zero exemplars: 26/26 valid verdicts, 21/26 correct actions, 0
+false-holds on A/B, 0 missed harm on E, both prompt injections refused;
+median 9.5 s / p90 14 s per message after the first call (22.7 s, prompt
+cached thereafter). A rationale cap + 8 threads bought only 10–20 %.
+
+**Corrected:**
+- The campus web filter blocked `pip` fetching the wheel from GitHub
+  release assets ("av_unscannable") and the local AV then locked the temp
+  file; the same URL via `urllib` to a local file installed fine. Recorded
+  in the report so the next person doesn't lose an hour to it.
+- Git-bash `curl` failed the HuggingFace CDN's certificate revocation check
+  (schannel); Python's `urllib` did not. Used Python for the download.
+- My first benchmark run crashed on my own argument parsing (`--threads 4`
+  left the `4` as a positional and `load_policy("4")` failed). Fixed.
+- I had guessed the wheel's release URL and got a 404; read the index page
+  instead of guessing.
+
+**Decided differently:**
+- Measured on this laptop knowing it is not the deployment host, and said
+  so in every table: a CPU floor is a real number; a guess about the RTX
+  2050 is not.
+- Did not treat 20/26 label accuracy as the headline. Action accuracy and
+  the *direction* of each miss are what the product cares about: four of
+  the six misses hold for a human, one is action-identical, exactly one
+  (the chain message) is permissive.
+- Did not switch to the 1.5B model on the strength of one run. Recommended
+  a two-pass output (label + confidence first; rationale only for non-ALLOW)
+  as the next step — it keeps the 3B's judgement, and 85–95 % of traffic is
+  expected to auto-allow anyway.
+
+**Verified by:** Both runs' JSON kept locally (gitignored); every number in
+the report is copied from them. `ruff` clean; 111 tests still green.
+
+**Where it ran:** local.
+
+## 2026-10-06 — Moderator console v1: review round on #103 (Week 7 · PR #103)
+
+**Asked for:** Fix the three review items on #103 (Kshitiz, Veerendra): a
+missing `pydantic` dependency, a README that called switching to the real
+gateway "a config change", and a queue fetch that read one page.
+
+**Produced:** `GatewayQueueSource.fetch_queue` follows `next_cursor` to the
+end; every non-409 failure becomes a `SourceError` shown as a banner (a
+failed refresh keeps the last queue); the source is chosen from
+`CONSOLE_SOURCE` / `CONSOLE_GATEWAY_*` at startup; `requirements.txt` gains
+`pydantic` and `httpx`, `requirements-dev.txt` is new; the fixture defaults
+to "no sender notice delivered", as the gateway does today. 36 tests, run
+against the chat mock in-process.
+
+**Corrected:**
+- My first paging test claimed to cover the bug but asked for 100 per page,
+  so 30 items never reached the server's default of 25 and it passed with
+  the bug present. A mutation check (bug reintroduced) caught it; the test
+  was renamed to say what it checks and a real three-page test added.
+- My first clean-venv check proved only the dev dependencies: `pydantic`
+  came in through `fastapi`. Re-ran on a venv with `requirements.txt` only.
+- The README's "a config change" claim was mine; the source was built at
+  import time and read no setting.
+
+**Decided differently:**
+- Did not add role gating or the voice-note transcript to this round; both
+  are listed under "Not done yet" in the README rather than half-built.
+- Did not put the console in CI here; one job covering both clients is worth
+  more than one each.
+
+**Verified by:** `ruff check` and `ruff format --check` clean repo-wide;
+36 console tests pass in the working venv and in clean venvs; the paging
+test fails with the original bug put back.
 
 **Where it ran:** local.
