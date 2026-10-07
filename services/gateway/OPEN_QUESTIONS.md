@@ -411,6 +411,12 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     still `AUTH_MODE=legacy` (a UUID is that user), because the elder app cannot obtain a
     signed token yet (#32), and no deployment runs `jwt`. It closes for a deployment when
     that deployment runs `jwt`. Until then `/moderation*` stays unrouted by Caddy.
+    **UPDATE (media):** the already-routed `GET /media/{id}` had the same hole, shown first in a test: a
+    moderator's or admin's **bare UUID** fetched a held or blocked message's audio (**200**) in the default
+    `legacy` mode. The moderator allowance in `user_can_fetch_media` now applies only when the caller
+    reports the token was SIGNED (default fails closed); authors and recipients are unchanged, so the
+    elder app, which still sends a bare UUID (#32), is unaffected, and a refused moderator still gets the
+    same 404 as a missing id. Not proven on a real stack with Caddy in front (the test is against the app).
 
 24. **Console scope decisions worth confirming with M4.** (a) The queue shows
     only `held` messages; `blocked` ones are not browsable (appeals are
