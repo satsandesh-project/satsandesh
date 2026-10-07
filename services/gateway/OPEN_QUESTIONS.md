@@ -485,10 +485,13 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     sends `source_lang` so typed messages are not all treated as Telugu, has since merged);
     M4's answers (#24) and a notice surface
     for a held sender (#18); and M3's ASR choice, `webm_opus` handling and the
-    hallucinated-transcript problem (#2, #11, #26). Also: Caddy now routes `/me/settings` and
-    `/audio-labels/*` to the gateway, but still not `/onboarding*` or `/push*` (the elder app
-    does not call them -- the first client to implement push or QR onboarding needs those
-    routes), and deliberately not `/moderation*`.
+    hallucinated-transcript problem (#2, #11, #26). Also: Caddy now routes `/me/settings`,
+    `/audio-labels/*` and (Week 8, after the gate found them falling through to the elder app's
+    404/405) `/onboarding*` to the gateway; it still does not route `/push*`, **deliberately**:
+    nothing calls it, so the first client to implement web push adds the route together with its
+    check in `infra/caddy/tls_check.py` (which asserts it is not routed today); and deliberately
+    not `/moderation*`. Routing `/onboarding*` is necessary, not sufficient: the elder app has no
+    call to it (#32).
 
 30. **The Week 7 task names a "denoise" stage that does not exist.** The plan
     (`docs/retro/month-1.md`, "Week 7 -- third layer") gives M2 "denoise -> transcribe ->
@@ -538,7 +541,8 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     (`crypto.randomUUID()`, `window.__satToken`) and sends it as the Bearer token; nothing
     server-side ever issued it. The only issuer is onboarding's `/activate` (a family member
     invites; the elder scans a QR), which now also returns a signed `access_token` -- but
-    the elder app does not call onboarding, and Caddy does not route `/onboarding*`. The 36
+    the elder app does not call onboarding (Caddy routes `/onboarding*` since Week 8, on a
+    deployment whose Caddy has the new Caddyfile). The 36
     users on staging hold client-made UUIDs, so a cutover also strands them. Options, a
     decision for M1 (client) and M4/the supervisor (is open self-registration acceptable?):
     (a) the elder app uses the QR onboarding flow; (b) a self-registration endpoint that
