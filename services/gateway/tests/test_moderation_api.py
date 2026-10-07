@@ -32,6 +32,7 @@ from app.db.moderation import list_moderation_events, record_moderation_event
 from app.db.renderings import set_message_transcript, upsert_rendering
 from app.db.repository import create_media_object, create_message, set_message_status
 from app.media_storage import get_media_storage
+from app.tokens import issue_token
 
 
 def _user(db_session, name, role="elder", language="te"):
@@ -267,7 +268,11 @@ def test_the_audio_the_queue_points_at_is_fetchable_by_the_moderator(
     login_as(moderator)
     (item,) = ModerationQueueOut.model_validate(_queue(client).json()).items
 
-    resp = client.get(f"/media/{item.original_media_ref.uri.removeprefix('media:')}")
+    media_id = item.original_media_ref.uri.removeprefix("media:")
+    # the moderator allowance needs a SIGNED token (tests/test_media_moderator_identity.py)
+    resp = client.get(
+        f"/media/{media_id}", headers={"Authorization": f"Bearer {issue_token(moderator.id)}"}
+    )
 
     assert resp.status_code == 200
 
