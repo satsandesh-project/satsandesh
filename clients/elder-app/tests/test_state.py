@@ -479,3 +479,11 @@ def test_a_pending_message_past_its_undo_window_is_processing_not_sent():
     assert "status_processing" in STATUS_TEXT_KEYS
     for lang in ("en", "te"):
         assert TEXTS[lang].get("status_processing")
+
+
+def test_the_status_poll_slows_down_but_never_gives_up():
+    # It used to stop after 5 minutes, leaving "Processing..." on screen until a reload even after
+    # the server had ruled on a message a person was holding.
+    assert "POLL_SLOW_EVERY_MS" in CHAT_CONNECT_JS_TEMPLATE
+    assert "POLL_FOR_MS" not in CHAT_CONNECT_JS_TEMPLATE
+    assert "quick ? POLL_EVERY_MS : POLL_SLOW_EVERY_MS" in CHAT_CONNECT_JS_TEMPLATE

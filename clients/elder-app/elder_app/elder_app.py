@@ -897,8 +897,13 @@ window.__satsandeshWsInit = true;
   // local 'Sent' told the sender something untrue. Polling GET /messages (the author sees their
   // own messages in every status) and merging only the status avoids replacing the whole thread,
   // which the sync frame does and which would drop messages still in flight.
+  // Quick while an answer is likely (a note is usually through the pipeline within a minute or
+  // two), then slow and never given up on: a message a person has to rule on can stay pending for
+  // hours, and stopping after a few minutes left 'Processing...' on screen until a reload even
+  // after the server had decided. One small request a minute per such message is cheap.
   const POLL_EVERY_MS = 5000;
-  const POLL_FOR_MS = 5 * 60 * 1000;
+  const POLL_QUICK_FOR_MS = 5 * 60 * 1000;
+  const POLL_SLOW_EVERY_MS = 60 * 1000;
 
   async function pollMessageStatus(contactId, messageId, startedAt) {
     const thread = threadFor(contactId);
@@ -924,12 +929,11 @@ window.__satsandeshWsInit = true;
     } catch (err) {
       // Offline or a blip: keep showing 'Processing' and try again.
     }
-    if (Date.now() - startedAt < POLL_FOR_MS) {
-      window.__satPendingTimers[messageId] = setTimeout(
-        () => pollMessageStatus(contactId, messageId, startedAt),
-        POLL_EVERY_MS
-      );
-    }
+    const quick = Date.now() - startedAt < POLL_QUICK_FOR_MS;
+    window.__satPendingTimers[messageId] = setTimeout(
+      () => pollMessageStatus(contactId, messageId, startedAt),
+      quick ? POLL_EVERY_MS : POLL_SLOW_EVERY_MS
+    );
   }
 
   function scheduleSentTransition(contactId, messageId) {
