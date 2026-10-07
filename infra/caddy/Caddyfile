@@ -53,6 +53,28 @@
 	handle /media* {
 		reverse_proxy gateway:8000
 	}
+	# QR onboarding (Week 8, services/gateway/app/onboarding.py): POST /invite,
+	# GET /qr/{token}, POST /activate. Missing until the Week 8 gate walked the
+	# "onboarded elder" clause (infra/ai/GATE_WEEK8.md): through Caddy, GET
+	# /onboarding/qr/junk was the elder app's own 404 PAGE and POST
+	# /onboarding/activate its 405, while the gateway answered the same calls
+	# correctly when called directly (invite 201, activate 200, a second activate
+	# 410). Same omission as /media* and /audio-labels/* above. ROUTING IS
+	# NECESSARY, NOT SUFFICIENT: the elder app has no call to /onboarding yet
+	# (only comments saying QR onboarding is not merged), so that half is M1's.
+	handle /onboarding* {
+		reverse_proxy gateway:8000
+	}
+	# /push* (POST /push/subscribe, /push/unsubscribe, services/gateway/app/push.py)
+	# is deliberately NOT routed. Nothing calls it (the elder app has no service
+	# worker or subscribe call), it needs VAPID keys and a client that does not
+	# exist, and an unrouted endpoint is one less surface to a request nobody
+	# makes. It is the same one-line omission as /onboarding* was: the first
+	# client to implement web push adds
+	#     handle /push* { reverse_proxy gateway:8000 }
+	# here AND the matching check in infra/caddy/tls_check.py (which today asserts
+	# it is NOT routed, so that a later change has to be deliberate).
+	# /moderation* is not routed either, on purpose (OPEN_QUESTIONS #23).
 
 	# Everything else -- both the elder-app frontend itself (compiled
 	# pages, JS bundles) AND Reflex's own internal backend paths (/ping,
