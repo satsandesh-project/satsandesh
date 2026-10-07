@@ -694,7 +694,13 @@ def resolve_owned_media_object(
     return media
 
 
-def user_can_fetch_media(session: Session, media: MediaObject, user_id: uuid.UUID) -> bool:
+def user_can_fetch_media(
+    session: Session,
+    media: MediaObject,
+    user_id: uuid.UUID,
+    *,
+    moderator_may_review: bool = False,
+) -> bool:
     """Who may download a stored voice note: its author always; otherwise
     only a recipient of a message that carries it and has actually been
     delivered (`sent`/`delivered`, not deleted). A DM's recipient is the
@@ -715,11 +721,17 @@ def user_can_fetch_media(session: Session, media: MediaObject, user_id: uuid.UUI
     (`messages.media_object_id`) or as one of its renderings'
     audio (`message_renderings.audio_media_object_id`). Without this the
     recipient a rendering was made for would be refused its audio. The
-    moderator allowance above stays original-audio only."""
+    moderator allowance above stays original-audio only.
+
+    The moderator allowance applies only when the CALLER says the identity was a signed token
+    (`moderator_may_review`, default False = fail closed): in the default `legacy` mode a bare UUID
+    is "that user" with no signature, so honouring `users.role` for it would let anyone who knows a
+    moderator's id download held voice notes (OPEN_QUESTIONS #23). Authors and recipients are
+    unaffected."""
     if media.author_id == user_id:
         return True
     role = session.scalar(select(User.role).where(User.id == user_id))
-    if role in ("moderator", "admin"):
+    if moderator_may_review and role in ("moderator", "admin"):
         under_review = (
             select(Message.id)
             .where(

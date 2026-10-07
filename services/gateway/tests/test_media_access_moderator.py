@@ -29,6 +29,7 @@ from app.db.repository import (
     set_message_status,
 )
 from app.media_storage import get_media_storage
+from app.tokens import issue_token
 
 
 def _user(db_session, name, role="elder"):
@@ -82,7 +83,10 @@ def test_a_moderator_or_admin_can_fetch_the_audio_of_a_held_or_blocked_message(
     media_id, _ = _held_voice(db_session, author=alice, target=bob, status=status)
     login_as(mod)
 
-    resp = client.get(f"/media/{media_id}")
+    # the moderator allowance needs a SIGNED token (tests/test_media_moderator_identity.py)
+    resp = client.get(
+        f"/media/{media_id}", headers={"Authorization": f"Bearer {issue_token(mod.id)}"}
+    )
 
     assert resp.status_code == 200
     assert resp.content == b"the-note"
