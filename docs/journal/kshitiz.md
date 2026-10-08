@@ -365,3 +365,28 @@ the Telugu word ("ప్రాసెస్ అవుతోంది...") needs a
 **Noticed, not mine:** the gateway lets a sender cancel a message that is still `pending` after the
 undo window if the pipeline is holding it (`DELETE /messages/{id}` only checks `status == pending`).
 The client no longer offers it, but the server still accepts it.
+
+## 2026-10-08 — The first live run, and a one-time language choice
+
+The pipeline went live on staging at 13:51 IST. Of 8 voice notes, 3 were held: the speech step
+guessed Norwegian, Sinhala and Urdu, the speech service refused a language outside en/hi/te, and
+the gateway held the note. The cause on my side: the app declared no language on a voice note
+(it did on text), so the speech step had to guess. Telugu above about 9 seconds also came out
+garbled; that is the speech model (issue #134), not the app.
+
+What I changed: a language screen shown once to anyone who has not chosen, after the name screen.
+Telugu, Hindi or English, each in its own script, a confirm step ("Is this right?") because the
+choice is fixed for now, and a read-only "Your language" line in settings instead of the old picker.
+The choice means both the language the person speaks and the one they read, so a voice note now
+declares it (`source_lang`, only once chosen: the unchosen default is not something they said),
+which is what #133's fallback and #130's per-language routing both key on.
+
+Reading: a Telugu or Hindi reader gets the message in their language with a button that swaps to
+the English version; an English reader gets the English text, no button, and a play button for the
+real recording. The English version has to come from the gateway as an `en` rendering; until it
+does, the button falls back to the sender's own words as before.
+
+**Verification:** 44 tests pass (10 new: confirm then fixed, a saved lock read back and not moved by
+the server, the lock kept across a prefs sync, voice declares the language only once chosen, reader
+behaviour per language); lint clean; the four page components build. **Not verified:** in a
+browser, and with a real note; the Telugu strings need a native reader.
