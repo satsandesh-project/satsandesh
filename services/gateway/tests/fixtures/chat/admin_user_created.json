@@ -1,0 +1,15 @@
+{
+  "access_token": "header.payload.signature",
+  "circle_ids_joined": [
+    "circle-satsang-evening"
+  ],
+  "contract_version": "0.7.0",
+  "user": {
+    "contract_version": "0.7.0",
+    "created_at": "2026-10-08T05:30:00Z",
+    "id": "user-kamala-1",
+    "name": "Kamala Devi",
+    "preferred_language": "hi",
+    "role": "elder"
+  }
+}
