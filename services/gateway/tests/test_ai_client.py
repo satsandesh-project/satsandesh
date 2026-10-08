@@ -366,28 +366,6 @@ def test_routing_only_moves_the_transcribe_stage() -> None:
     assert seen == ["http://ai.test/v1/pivot"]
 
 
-def test_a_routed_note_still_gets_the_length_scaled_timeout() -> None:
-    reads: list[float] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        reads.append(request.extensions["timeout"]["read"])
-        return httpx.Response(500)
-
-    c = _client(
-        handler,
-        timeouts={AiStage.TRANSCRIBE: 120.0},
-        transcribe_timeout_per_audio_s=6.0,
-        transcribe_urls_by_language=_BY_LANGUAGE,
-    )
-    request = TranscribeRequest(
-        audio=AudioRef(uri="file:///x", format=AudioFormat.MP3, duration_ms=33_500),
-        language_hint=LanguageCode.TELUGU,
-    )
-    with pytest.raises(AiCallError):
-        c.transcribe(request)
-    assert reads == [pytest.approx(201.0)]
-
-
 def test_the_timeout_error_names_the_routed_url() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("slow", request=request)

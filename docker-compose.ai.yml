@@ -23,6 +23,10 @@ services:
       # One URL per stage: the real services are four processes on four ports
       # (the mock answers all four on one -- see the `ai-mock` profile).
       AI_TRANSCRIBE_URL: ${AI_TRANSCRIBE_URL:-http://speech:8002}
+      # Per-language routing, OFF (empty). A JSON object keyed by the sender's declared language, e.g.
+      #   AI_TRANSCRIBE_URLS_BY_LANGUAGE='{"te": "http://speech-indic:8004", "hi": "http://speech-indic:8004"}'
+      # Needs the `indic` profile's speech-indic running. Do not set until M3 posts his measurements (#98).
+      AI_TRANSCRIBE_URLS_BY_LANGUAGE: ${AI_TRANSCRIBE_URLS_BY_LANGUAGE:-}
       AI_PIVOT_URL: ${AI_PIVOT_URL:-http://mt:8004}
       AI_MODERATION_URL: ${AI_MODERATION_URL:-http://moderation:8003}
       AI_RENDER_URL: ${AI_RENDER_URL:-http://render:8005}

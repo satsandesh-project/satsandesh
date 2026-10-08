@@ -163,6 +163,7 @@ class AiClient:
         *,
         urls: Mapping[AiStage, str],
         timeouts: Mapping[AiStage, float] | None = None,
+        transcribe_urls_by_language: Mapping[str, str] | None = None,
         http: httpx.Client | None = None,
     ) -> None:
         missing = set(AiStage) - set(urls)
@@ -170,6 +171,11 @@ class AiClient:
             raise ValueError(f"no URL for stage(s): {sorted(s.value for s in missing)}")
         self._urls = {stage: url.rstrip("/") for stage, url in urls.items()}
         self._timeouts = {**_DEFAULT_TIMEOUT_S, **(timeouts or {})}
+        # Which ASR service answers which DECLARED language. Empty (the default) = everything goes to
+        # the one transcribe URL, as it always did. See `transcribe_url_for`.
+        self._transcribe_urls_by_language = {
+            lang: url.rstrip("/") for lang, url in (transcribe_urls_by_language or {}).items()
+        }
         # trust_env=False: these are calls to our own services; a system proxy
         # setting must never be able to intercept them.
         self._http = http if http is not None else httpx.Client(trust_env=False)
@@ -189,7 +195,11 @@ class AiClient:
             AiStage.MODERATE: settings.AI_MODERATION_TIMEOUT_S,
             AiStage.RENDER: settings.AI_RENDER_TIMEOUT_S,
         }
-        return cls(urls=urls, timeouts=timeouts)
+        return cls(
+            urls=urls,
+            timeouts=timeouts,
+            transcribe_urls_by_language=settings.AI_TRANSCRIBE_URLS_BY_LANGUAGE,
+        )
 
     def url_for(self, stage: AiStage) -> str:
         return self._urls[stage]
@@ -197,13 +207,26 @@ class AiClient:
     def timeout_for(self, stage: AiStage) -> float:
         return self._timeouts[stage]
 
+    def transcribe_url_for(self, language_hint) -> str:
+        """The ASR service for a note's DECLARED language. IndicConformer takes an explicit language
+        and has no auto-detect, so an undeclared note (no hint) always stays on the default service,
+        which detects. No fallback to the default when a routed service is down: that is a retryable
+        error like any other (OPEN_QUESTIONS #31)."""
+        key = getattr(language_hint, "value", language_hint)
+        return self._transcribe_urls_by_language.get(key, self._urls[AiStage.TRANSCRIBE])
+
     def close(self) -> None:
         self._http.close()
 
     # -- the four stages ------------------------------------------------------
 
     def transcribe(self, request: TranscribeRequest) -> TranscribeResponse:
-        return self._call(AiStage.TRANSCRIBE, request, TranscribeResponse)
+        return self._call(
+            AiStage.TRANSCRIBE,
+            request,
+            TranscribeResponse,
+            base_url=self.transcribe_url_for(request.language_hint),
+        )
 
     def pivot(self, request: PivotRequest) -> PivotResponse:
         return self._call(AiStage.PIVOT, request, PivotResponse)
@@ -217,9 +240,14 @@ class AiClient:
     # -- plumbing -------------------------------------------------------------
 
     def _call(
-        self, stage: AiStage, request: BaseModel, response_model: type[ResponseT]
+        self,
+        stage: AiStage,
+        request: BaseModel,
+        response_model: type[ResponseT],
+        *,
+        base_url: str | None = None,
     ) -> ResponseT:
-        url = f"{self._urls[stage]}{_PATH_BY_STAGE[stage]}"
+        url = f"{base_url or self._urls[stage]}{_PATH_BY_STAGE[stage]}"
         try:
             response = self._http.post(
                 url, json=request.model_dump(mode="json"), timeout=self._timeouts[stage]

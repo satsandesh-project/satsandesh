@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 from typing import Annotated, Literal
 
@@ -12,6 +13,15 @@ def _split_csv(value: object) -> object:
     # the plain comma-separated form documented in .env.example instead.
     if isinstance(value, str):
         return [origin.strip() for origin in value.split(",") if origin.strip()]
+    return value
+
+
+def _json_map(value: object) -> object:
+    # A JSON object in the environment, where an EMPTY value (what docker-compose hands over for an
+    # unset `${VAR:-}`) means "none". NoDecode below skips pydantic-settings' own JSON step, which
+    # would reject the empty string before this runs.
+    if isinstance(value, str):
+        return json.loads(value) if value.strip() else {}
     return value
 
 
@@ -119,6 +129,14 @@ class Settings(BaseSettings):
     # therefore has its own optional URL, falling back to AI_SERVICE_URL when
     # unset -- so the mock (and today's single-host default) needs no change.
     AI_TRANSCRIBE_URL: str | None = None
+    # Per-language ASR routing, OFF by default (empty = every note goes to AI_TRANSCRIBE_URL, as it
+    # always did). M3's plan (#98): Telugu and Hindi to speech_indicconformer, English to speech.
+    # JSON in the environment, e.g. {"te": "http://speech-indic:8004", "hi": "http://speech-indic:8004"};
+    # the key is the language the SENDER declared (`source_lang`), never a detection. Do not set it
+    # until M3 posts his measurements. No automatic fallback if a routed service is down.
+    AI_TRANSCRIBE_URLS_BY_LANGUAGE: Annotated[
+        dict[str, str], NoDecode, BeforeValidator(_json_map)
+    ] = Field(default_factory=dict)
     AI_PIVOT_URL: str | None = None
     AI_MODERATION_URL: str | None = None
     AI_RENDER_URL: str | None = None
