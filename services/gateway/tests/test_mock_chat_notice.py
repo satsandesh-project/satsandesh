@@ -85,6 +85,15 @@ def test_a_normal_message_has_no_notice_for_anyone(client):
         assert message["moderation_notice"] is None
 
 
+def test_the_leak_check_is_not_fooled_by_a_timestamp_that_happens_to_contain_0_9():
+    """The first version searched the raw JSON for the substring "0.9" (the classifier's confidence).
+    A timestamp whose seconds are 00.9xx contains it, so CI failed about one run in ten at random."""
+    assert _classifier_leaks({"created_at": "2026-10-08T04:08:00.912Z"}) == []
+    assert _classifier_leaks({"confidence": 0.9}) != []
+    assert _classifier_leaks({"nested": [{"label": "D_DISPUTATIONAL"}]}) != []
+    assert _classifier_leaks({"moderation_notice": "Please be kind."}) == []
+
+
 def test_the_sender_is_shown_the_notice_and_nothing_of_the_classifier(client):
     _send(client, "block")
 
