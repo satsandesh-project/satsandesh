@@ -147,6 +147,11 @@ STYLESHEETS = [
 # Copy (bilingual)
 # ---------------------------------------------------------------------------
 
+# Each language in its own script. The choice screen shows these (not the translated names in
+# TEXTS), so a person who cannot read the app's current language can still find their own.
+LANGUAGE_NATIVE = {"te": "తెలుగు", "hi": "हिन्दी", "en": "English"}
+LANGUAGE_CODES = tuple(LANGUAGE_NATIVE)
+
 TEXTS = {
     "en": {
         "app_name": "SatSandesh",
@@ -227,11 +232,26 @@ TEXTS = {
         "lang_option_en": "English",
         "lang_option_hi": "Hindi",
         "lang_option_te": "Telugu",
+        "choose_language_title": "Choose your language",
+        "choose_language_hint": (
+            "Pick the language you speak and read. Messages you get are translated into it, "
+            "and your voice notes are understood in it. You choose once; for now it cannot be "
+            "changed."
+        ),
+        "confirm_language_title": "Is this right?",
+        "confirm_language_hint": "You will not be able to change this for now.",
+        "confirm_language_yes": "Yes, continue",
+        "confirm_language_back": "Go back",
+        "your_language_title": "Your language",
+        "your_language_locked_hint": (
+            "You chose this when you started. It cannot be changed here for now."
+        ),
         "tts_title": "Read messages aloud",
         "tts_on_label": "On",
         "tts_off_label": "Off",
         "autoplay_title": "Play new voice messages automatically",
         "recv_show_original": "Show original",
+        "recv_show_english": "Show original (English)",
         "recv_show_translation": "Show translation",
         "recv_audio_failed": "Could not load the audio. Tap to try again.",
         "recv_speed": "Speed",
@@ -317,11 +337,25 @@ TEXTS = {
         "lang_option_en": "ఇంగ్లీష్",
         "lang_option_hi": "హిందీ",
         "lang_option_te": "తెలుగు",
+        "choose_language_title": "మీ భాషను ఎంచుకోండి",
+        "choose_language_hint": (
+            "మీరు మాట్లాడే, చదివే భాషను ఎంచుకోండి. మీకు వచ్చే సందేశాలు ఈ "
+            "భాషలోకి అనువదించబడతాయి, మీ వాయిస్ నోట్స్ ఈ భాషలో "
+            "అర్థమవుతాయి. ఒక్కసారి మాత్రమే ఎంచుకోవచ్చు; ప్రస్తుతం "
+            "మార్చలేరు."
+        ),
+        "confirm_language_title": "ఇది సరైనదేనా?",
+        "confirm_language_hint": "ప్రస్తుతం దీన్ని మార్చలేరు.",
+        "confirm_language_yes": "అవును, కొనసాగించు",
+        "confirm_language_back": "వెనక్కి",
+        "your_language_title": "మీ భాష",
+        "your_language_locked_hint": "మీరు ప్రారంభంలో దీన్ని ఎంచుకున్నారు. ప్రస్తుతం ఇక్కడ మార్చలేరు.",
         "tts_title": "సందేశాలను చదివి వినిపించు",
         "tts_on_label": "ఆన్",
         "tts_off_label": "ఆఫ్",
         "autoplay_title": "కొత్త వాయిస్ సందేశాలను ఆటోమేటిక్‌గా ప్లే చేయి",
         "recv_show_original": "అసలు చూపించు",
+        "recv_show_english": "అసలు (ఇంగ్లీష్) చూపించు",
         "recv_show_translation": "అనువాదం చూపించు",
         "recv_audio_failed": "ఆడియో లోడ్ కాలేదు. మళ్లీ ప్రయత్నించడానికి నొక్కండి.",
         "recv_speed": "వేగం",
@@ -754,15 +788,27 @@ window.__satsandeshWsInit = true;
     return msg.renderings.find((r) => r.language === lang) || null;
   }
 
+  // The reader's chosen language L decides what they see:
+  //  - L is English: the English text, no 'show original' button, and for a voice note a play
+  //    button for the real recording (English has no synthesized voice).
+  //  - L is another language: the message in L, with a button that swaps to the English
+  //    version of what was said. If the gateway has not sent an English version, the button
+  //    shows the sender's own words instead (the real recording and its text), as before.
   function buildMessageBody(bubble, msg, isOwn, key, resume) {
     const prefs = window.__satPrefs || {};
     const t = recvText();
-    const rendering = isOwn ? null : findRendering(msg, prefs.lang || "en");
-    const showOriginal = !rendering || !!window.__satShowOriginal[key];
+    const lang = prefs.lang || "en";
+    const rendering = isOwn ? null : findRendering(msg, lang);
+    const english = rendering && lang !== "en" ? findRendering(msg, "en") : null;
+    const canToggle = !!rendering && lang !== "en";
+    const showOriginal = !rendering || (canToggle && !!window.__satShowOriginal[key]);
 
     if (rendering && !showOriginal) {
       bubble.appendChild(textBlock(rendering.text));
-      if (prefs.tts !== false) {
+      const playRealRecording = lang === "en" && msg.kind === "voice" && msg.media_ref;
+      if (playRealRecording) {
+        bubble.appendChild(audioPlayer(msg.media_ref, key + ":o", resume));
+      } else if (prefs.tts !== false) {
         if (rendering.audio) {
           bubble.appendChild(audioPlayer(rendering.audio, key + ":t", resume));
         } else if (
@@ -775,6 +821,8 @@ window.__satsandeshWsInit = true;
       if (rendering.degraded_reason === "model_fallback") {
         bubble.appendChild(noteLine(t.recv_approximate));
       }
+    } else if (rendering && english) {
+      bubble.appendChild(textBlock(english.text));
     } else if (msg.kind === "voice") {
       if (msg.media_ref) bubble.appendChild(audioPlayer(msg.media_ref, key + ":o", resume));
       else if (!msg.transcript) bubble.appendChild(noteLine(t.recv_no_audio));
@@ -786,9 +834,13 @@ window.__satsandeshWsInit = true;
       bubble.appendChild(textBlock(msg.text));
     }
 
-    if (rendering) {
+    if (canToggle) {
       const toggle = makeButton(
-        showOriginal ? t.recv_show_translation : t.recv_show_original,
+        showOriginal
+          ? t.recv_show_translation
+          : english
+            ? t.recv_show_english
+            : t.recv_show_original,
         () => {
           window.__satShowOriginal[key] = !showOriginal;
           renderCurrentThread();
@@ -1024,7 +1076,9 @@ window.__satsandeshWsInit = true;
         ) {
           const payload =
             msg.kind === "voice"
-              ? { kind: "voice", media_ref: msg.media_ref }
+              ? msg.source_lang
+                ? { kind: "voice", media_ref: msg.media_ref, source_lang: msg.source_lang }
+                : { kind: "voice", media_ref: msg.media_ref }
               : msg.source_lang
                 ? { kind: "text", text: msg.text, source_lang: msg.source_lang }
                 : { kind: "text", text: msg.text };
@@ -1450,6 +1504,13 @@ UPLOAD_AND_SEND_VOICE_JS_TEMPLATE = """
         format: uploaded.format,
         duration_ms: uploaded.duration_ms,
     };
+    // The language the person chose and spoke. Declared so the speech step does not have to
+    // guess (it guessed Norwegian, Sinhala and Urdu on staging, and the note was held), and
+    // so a per-language speech service can be picked. Only once they have chosen: the
+    // default before that is not something they said.
+    const prefsNow = window.__satPrefs || {};
+    const spoken = prefsNow.locked && ["en", "hi", "te"].indexOf(prefsNow.lang) !== -1
+        ? prefsNow.lang : null;
     if (!window.__satConversations[targetId]) window.__satConversations[targetId] = [];
     window.__satConversations[targetId].push({
         client_msg_id: clientMsgId,
@@ -1458,6 +1519,7 @@ UPLOAD_AND_SEND_VOICE_JS_TEMPLATE = """
         target_type: targetType,
         kind: "voice",
         media_ref: mediaRef,
+        source_lang: spoken,
         text: null,
         status: "pending",
     });
@@ -1465,7 +1527,11 @@ UPLOAD_AND_SEND_VOICE_JS_TEMPLATE = """
         window.__satRenderCurrentThread();
     }
     window.__satSendMessage(
-        targetId, { kind: "voice", media_ref: mediaRef }, clientMsgId, targetType
+        targetId,
+        spoken ? { kind: "voice", media_ref: mediaRef, source_lang: spoken }
+               : { kind: "voice", media_ref: mediaRef },
+        clientMsgId,
+        targetType
     );
     window.__satLastRecordingBlob = null;
     window.__satLastRecordingDurationMs = 0;
@@ -1491,8 +1557,15 @@ SYNC_PREFS_JS_TEMPLATE = """
     const prefs = %(prefs)s;
     window.__satPrefs = prefs;
     try {
+        // The language lock only ever turns on: a sync from before the saved prefs were read
+        // (locked still false) must not erase a lock stored earlier.
+        let wasLocked = false;
+        try {
+            wasLocked = !!JSON.parse(localStorage.getItem("sat_prefs") || "{}").locked;
+        } catch (e) {}
         localStorage.setItem("sat_prefs", JSON.stringify({
             lang: prefs.lang, tts: prefs.tts, autoplay: prefs.autoplay,
+            locked: !!prefs.locked || wasLocked,
         }));
     } catch (e) {}
     if (window.__satRenderCurrentThread) window.__satRenderCurrentThread();
@@ -1523,6 +1596,7 @@ STATUS_TEXT_KEYS = (
 
 RECEIVER_TEXT_KEYS = (
     "recv_show_original",
+    "recv_show_english",
     "recv_show_translation",
     "recv_audio_failed",
     "recv_speed",
@@ -1833,6 +1907,15 @@ class State(rx.State):
     # ever being forced to stay in lockstep afterward -- a receiver can
     # read the app in Telugu and still ask for English audio.
     preferred_language_input: str = "en"
+    # The one-time language choice. `lang_locked` turns on once, when the person confirms
+    # (and is kept in localStorage with the other prefs); nothing in the app turns it off, so the
+    # language is fixed for now. A settings control to change it is a later step.
+    # `prefs_loaded` stops the choice screen flashing for someone who already chose, before
+    # their saved prefs have been read. `pending_language` is a tapped-but-not-yet-confirmed
+    # choice: a wrong tap on a fixed setting would otherwise be permanent.
+    lang_locked: bool = False
+    prefs_loaded: bool = False
+    pending_language: str = ""
     tts_on_input: bool = True
     # Whether a newly arrived voice message plays by itself. Off by default: sound
     # nobody asked for is a worse surprise than a tap -- the elder opts in.
@@ -1844,6 +1927,14 @@ class State(rx.State):
     @rx.var
     def t(self) -> dict[str, str]:
         return TEXTS[self.language]
+
+    @rx.var
+    def chosen_language_name(self) -> str:
+        return LANGUAGE_NATIVE.get(self.preferred_language_input, "")
+
+    @rx.var
+    def pending_language_name(self) -> str:
+        return LANGUAGE_NATIVE.get(self.pending_language, "")
 
     @rx.var
     def current_contact(self) -> dict[str, str]:
@@ -1895,6 +1986,7 @@ class State(rx.State):
             "tts": self.tts_on_input,
             "autoplay": self.autoplay_input,
             "ui": self.language,
+            "locked": self.lang_locked,
         }
         return rx.call_script(SYNC_PREFS_JS_TEMPLATE % {"prefs": json.dumps(prefs)})
 
@@ -1909,6 +2001,9 @@ class State(rx.State):
             self.tts_on_input = saved["tts"]
         if isinstance(saved.get("autoplay"), bool):
             self.autoplay_input = saved["autoplay"]
+        if saved.get("locked") is True and saved.get("lang") in LANGUAGE_CODES:
+            self.lang_locked = True
+        self.prefs_loaded = True
         return self._sync_prefs()
 
     def set_active_tab(self, tab: str):
@@ -2219,6 +2314,7 @@ class State(rx.State):
         return rx.call_script(js, callback=State.on_settings_loaded)
 
     def on_settings_loaded(self, result: str):
+        resave = None
         if not result:
             return
         try:
@@ -2237,10 +2333,16 @@ class State(rx.State):
         # still not existing at all, per the note above) must leave
         # today's join-time default standing, not silently reset it.
         if "preferred_language" in parsed and parsed["preferred_language"]:
-            self.preferred_language_input = parsed["preferred_language"]
+            if self.lang_locked:
+                # Fixed for this person: the server must not move it. If it holds another
+                # value (an earlier save never arrived), send the chosen one again.
+                if parsed["preferred_language"] != self.preferred_language_input:
+                    resave = self._save_prefs("preferred_language")
+            else:
+                self.preferred_language_input = parsed["preferred_language"]
         if "tts_on" in parsed and parsed["tts_on"] is not None:
             self.tts_on_input = parsed["tts_on"]
-        return self._sync_prefs()
+        return [self._sync_prefs(), resave] if resave is not None else self._sync_prefs()
 
     def set_quiet_hours_start_input(self, value: str):
         self.quiet_hours_start_input = value
@@ -2253,6 +2355,29 @@ class State(rx.State):
     def set_preferred_language_input(self, value: str):
         self.preferred_language_input = value
         self.settings_saved = False
+        return [self._sync_prefs(), self._save_prefs("preferred_language")]
+
+    # -- The one-time language choice: tap, confirm, fixed. -----------------------------
+
+    def pick_language(self, code: str):
+        if self.lang_locked or code not in LANGUAGE_CODES:
+            return
+        self.pending_language = code
+
+    def cancel_pick_language(self):
+        self.pending_language = ""
+
+    def confirm_language(self):
+        code = self.pending_language
+        if self.lang_locked or code not in LANGUAGE_CODES:
+            return None
+        self.preferred_language_input = code
+        self.lang_locked = True
+        self.pending_language = ""
+        self.settings_saved = False
+        # Someone who chose Telugu should not have to read the app in English to carry on.
+        if code == "te":
+            self.language = "te"
         return [self._sync_prefs(), self._save_prefs("preferred_language")]
 
     def set_tts_on_input(self, value: bool):
@@ -2573,23 +2698,130 @@ def your_id_card() -> rx.Component:
     )
 
 
-def language_option_button(code: str, label_key: str) -> rx.Component:
-    """One pill in the Week 7 content-language picker. Three big buttons,
-    not a <select>, matching this app's own large-target design
-    principle -- same reasoning as bottom_tabs' tab buttons rather than
-    a dropdown."""
+def language_pick_button(code: str) -> rx.Component:
+    """One big button on the language choice screen, named in its own script."""
     return rx.button(
-        State.t[label_key],
-        on_click=lambda: State.set_preferred_language_input(code),
-        disabled=State.preferred_language_input == code,
+        LANGUAGE_NATIVE[code],
+        on_click=lambda: State.pick_language(code),
         style={
-            "flex": "1",
-            "min_height": "56px",
-            "border_radius": "14px",
+            "width": "100%",
+            "min_height": "76px",
+            "border_radius": "16px",
+            "font_size": "1.6rem",
             "font_weight": "700",
             "cursor": "pointer",
             **pill_button_style(False),
         },
+    )
+
+
+def language_screen() -> rx.Component:
+    """Shown once, to anyone who has not yet chosen. The choice is fixed afterwards (for now),
+    so a tap only selects; a second, clearly worded step confirms it."""
+    return rx.center(
+        rx.vstack(
+            rx.text(
+                State.t["app_name"],
+                style={
+                    "font_family": FONT_SERIF,
+                    "font_weight": "600",
+                    "font_size": "2rem",
+                    "color": COLOR["ink"],
+                },
+            ),
+            rx.cond(
+                State.pending_language == "",
+                rx.vstack(
+                    rx.text(
+                        State.t["choose_language_title"],
+                        style={
+                            "font_family": FONT_LATIN,
+                            "font_weight": "700",
+                            "font_size": "1.4rem",
+                            "color": COLOR["green_ink"],
+                            "text_align": "center",
+                        },
+                    ),
+                    rx.text(
+                        State.t["choose_language_hint"],
+                        style={
+                            "font_size": "1.05rem",
+                            "color": COLOR["muted_ink"],
+                            "text_align": "center",
+                        },
+                    ),
+                    language_pick_button("te"),
+                    language_pick_button("hi"),
+                    language_pick_button("en"),
+                    spacing="4",
+                    width="100%",
+                ),
+                rx.vstack(
+                    rx.text(
+                        State.t["confirm_language_title"],
+                        style={
+                            "font_family": FONT_LATIN,
+                            "font_weight": "700",
+                            "font_size": "1.4rem",
+                            "color": COLOR["green_ink"],
+                            "text_align": "center",
+                        },
+                    ),
+                    rx.text(
+                        State.pending_language_name,
+                        style={
+                            "font_size": "2.2rem",
+                            "font_weight": "700",
+                            "color": COLOR["ink"],
+                            "text_align": "center",
+                        },
+                    ),
+                    rx.text(
+                        State.t["confirm_language_hint"],
+                        style={
+                            "font_size": "1.05rem",
+                            "color": COLOR["muted_ink"],
+                            "text_align": "center",
+                        },
+                    ),
+                    rx.button(
+                        State.t["confirm_language_yes"],
+                        on_click=State.confirm_language,
+                        style={
+                            "width": "100%",
+                            "min_height": "76px",
+                            "border_radius": "16px",
+                            "font_size": "1.4rem",
+                            "font_weight": "700",
+                            "cursor": "pointer",
+                            "background": COLOR["deep_green"],
+                            "color": COLOR["card_cream"],
+                            "border": "none",
+                        },
+                    ),
+                    rx.button(
+                        State.t["confirm_language_back"],
+                        on_click=State.cancel_pick_language,
+                        style={
+                            "width": "100%",
+                            "min_height": "64px",
+                            "border_radius": "16px",
+                            "font_size": "1.2rem",
+                            "font_weight": "700",
+                            "cursor": "pointer",
+                            **pill_button_style(False),
+                        },
+                    ),
+                    spacing="4",
+                    width="100%",
+                ),
+            ),
+            spacing="5",
+            width="100%",
+            align="center",
+            style={"max_width": "420px", "padding": "24px"},
+        ),
+        style={"min_height": "100vh", "background": COLOR["cream_canvas"]},
     )
 
 
@@ -2605,7 +2837,7 @@ def settings_card() -> rx.Component:
     dedicated settings screen to attach to yet)."""
     return rx.vstack(
         rx.text(
-            State.t["content_language_title"],
+            State.t["your_language_title"],
             style={
                 "font_family": FONT_LATIN,
                 "font_weight": "700",
@@ -2614,15 +2846,12 @@ def settings_card() -> rx.Component:
             },
         ),
         rx.text(
-            State.t["content_language_hint"],
-            style={"font_size": "0.85rem", "color": COLOR["muted_ink"]},
+            State.chosen_language_name,
+            style={"font_size": "1.5rem", "font_weight": "700", "color": COLOR["ink"]},
         ),
-        rx.hstack(
-            language_option_button("en", "lang_option_en"),
-            language_option_button("hi", "lang_option_hi"),
-            language_option_button("te", "lang_option_te"),
-            spacing="2",
-            width="100%",
+        rx.text(
+            State.t["your_language_locked_hint"],
+            style={"font_size": "0.85rem", "color": COLOR["muted_ink"]},
         ),
         rx.hstack(
             rx.text(
@@ -3586,27 +3815,6 @@ def join_screen() -> rx.Component:
                     "width": "100%",
                 },
             ),
-            rx.vstack(
-                rx.text(
-                    State.t["content_language_title"],
-                    style={
-                        "font_family": FONT_LATIN,
-                        "font_weight": "700",
-                        "font_size": "0.95rem",
-                        "color": COLOR["green_ink"],
-                    },
-                ),
-                rx.hstack(
-                    language_option_button("en", "lang_option_en"),
-                    language_option_button("hi", "lang_option_hi"),
-                    language_option_button("te", "lang_option_te"),
-                    spacing="2",
-                    width="100%",
-                ),
-                spacing="2",
-                width="100%",
-                align_items="flex-start",
-            ),
             rx.button(
                 State.t["join_button"],
                 on_click=State.join_circle,
@@ -3787,10 +3995,16 @@ def index() -> rx.Component:
     return rx.box(
         rx.cond(
             State.joined,
+            # Until the saved prefs are read, show the app as before: flashing the choice
+            # screen at someone who already chose would invite a stray tap.
             rx.cond(
-                (State.current_contact_id == "") & (State.current_circle_id == ""),
-                home_screen(),
-                chat_screen(),
+                State.lang_locked | ~State.prefs_loaded,
+                rx.cond(
+                    (State.current_contact_id == "") & (State.current_circle_id == ""),
+                    home_screen(),
+                    chat_screen(),
+                ),
+                language_screen(),
             ),
             join_screen(),
         ),

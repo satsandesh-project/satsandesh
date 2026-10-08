@@ -36,10 +36,12 @@ from elder_app.elder_app import (
     CHAT_CONNECT_JS_TEMPLATE,
     CHAT_SEND_JS,
     COPY_ID_JS_TEMPLATE,
+    LANGUAGE_NATIVE,
     RECEIVER_TEXT_KEYS,
     SAVE_PREFS_JS_TEMPLATE,
     SAVE_SETTINGS_JS_TEMPLATE,
     STATUS_TEXT_KEYS,
+    SYNC_PREFS_JS_TEMPLATE,
     TEXTS,
     TOUCH_HOLD_SHIM_JS,
     UPLOAD_AND_SEND_VOICE_JS_TEMPLATE,
@@ -47,6 +49,8 @@ from elder_app.elder_app import (
     add_person_button,
     bottom_tabs,
     chat_screen,
+    join_screen,
+    language_screen,
     mic_button,
     settings_card,
 )
@@ -487,3 +491,126 @@ def test_the_status_poll_slows_down_but_never_gives_up():
     assert "POLL_SLOW_EVERY_MS" in CHAT_CONNECT_JS_TEMPLATE
     assert "POLL_FOR_MS" not in CHAT_CONNECT_JS_TEMPLATE
     assert "quick ? POLL_EVERY_MS : POLL_SLOW_EVERY_MS" in CHAT_CONNECT_JS_TEMPLATE
+
+
+# --- the one-time language choice ----------------------------------------------------------------
+
+
+def test_choosing_a_language_needs_a_confirm_and_then_it_is_fixed():
+    state = _fresh_state()
+    assert state.lang_locked is False
+
+    state.pick_language("hi")
+    assert state.pending_language == "hi"
+    assert state.lang_locked is False  # a tap only selects: a wrong tap must not be permanent
+
+    state.cancel_pick_language()
+    assert state.pending_language == "" and state.lang_locked is False
+
+    state.pick_language("te")
+    state.confirm_language()
+    assert state.lang_locked is True
+    assert state.preferred_language_input == "te"
+    assert state.language == "te"  # someone who chose Telugu carries on in Telugu
+
+    # Fixed: nothing the app offers changes it afterwards.
+    state.pick_language("hi")
+    assert state.pending_language == ""
+    assert state.confirm_language() is None
+    assert state.preferred_language_input == "te"
+
+
+def test_confirming_with_nothing_picked_does_nothing():
+    state = _fresh_state()
+    assert state.confirm_language() is None
+    assert state.lang_locked is False
+    state.pick_language("fr")  # not one of the pipeline's languages
+    assert state.pending_language == ""
+
+
+def test_hindi_or_english_do_not_change_the_app_language():
+    for code in ("hi", "en"):
+        state = _fresh_state()
+        state.pick_language(code)
+        state.confirm_language()
+        assert state.preferred_language_input == code
+        assert state.language == "en"
+
+
+def test_a_saved_lock_is_read_back_and_the_server_cannot_move_it():
+    state = _fresh_state()
+    state.on_prefs_loaded('{"lang": "hi", "tts": true, "autoplay": false, "locked": true}')
+    assert state.lang_locked is True and state.prefs_loaded is True
+    assert state.preferred_language_input == "hi"
+
+    # The gateway still says Telugu (an earlier save never arrived): the choice stands.
+    state.on_settings_loaded('{"preferred_language": "te", "tts_on": true}')
+    assert state.preferred_language_input == "hi"
+
+
+def test_a_lock_with_no_valid_language_is_ignored():
+    state = _fresh_state()
+    state.on_prefs_loaded('{"lang": "fr", "locked": true}')
+    assert state.lang_locked is False and state.prefs_loaded is True
+
+
+def test_without_a_lock_the_server_value_still_applies():
+    state = _fresh_state()
+    state.on_prefs_loaded("")
+    assert state.prefs_loaded is True and state.lang_locked is False
+    state.on_settings_loaded('{"preferred_language": "hi", "tts_on": true}')
+    assert state.preferred_language_input == "hi"
+
+
+def test_the_lock_is_kept_when_prefs_are_synced():
+    # A sync from before the saved prefs were read (locked still false) must not erase a lock.
+    assert "locked: !!prefs.locked || wasLocked" in SYNC_PREFS_JS_TEMPLATE
+
+
+def test_the_choice_screen_exists_and_the_settings_and_join_screens_no_longer_offer_it():
+    import inspect
+
+    assert "pick_language" in inspect.getsource(language_screen)
+    assert set(LANGUAGE_NATIVE) == {"te", "hi", "en"}
+    assert LANGUAGE_NATIVE["te"] == "తెలుగు"
+    for screen in (settings_card, join_screen):
+        assert "set_preferred_language_input" not in inspect.getsource(screen)
+        assert "language_option_button" not in inspect.getsource(screen)
+    for lang in ("en", "te"):
+        for key in (
+            "choose_language_title",
+            "choose_language_hint",
+            "confirm_language_title",
+            "confirm_language_hint",
+            "confirm_language_yes",
+            "confirm_language_back",
+            "your_language_title",
+            "your_language_locked_hint",
+            "recv_show_english",
+        ):
+            assert TEXTS[lang].get(key), (lang, key)
+    assert "recv_show_english" in RECEIVER_TEXT_KEYS
+
+
+def test_a_voice_note_declares_the_language_the_person_chose_but_only_once_chosen():
+    js = UPLOAD_AND_SEND_VOICE_JS_TEMPLATE
+    assert "prefsNow.locked" in js  # the unchosen default is not something they said
+    assert "source_lang: spoken" in js  # kept on the local copy, so a resend carries it
+    assert '{ kind: "voice", media_ref: mediaRef, source_lang: spoken }' in js
+    # The resend path (after a reconnect) must carry it too.
+    assert 'kind: "voice", media_ref: msg.media_ref, source_lang: msg.source_lang' in (
+        CHAT_CONNECT_JS_TEMPLATE
+    )
+
+
+def test_what_a_reader_sees_follows_the_language_they_chose():
+    js = CHAT_CONNECT_JS_TEMPLATE
+    # English: the text, no toggle, and the real recording to play for a voice note.
+    assert 'const canToggle = !!rendering && lang !== "en";' in js
+    assert "if (canToggle) {" in js
+    assert 'lang === "en" && msg.kind === "voice" && msg.media_ref' in js
+    # Anyone else: the toggle swaps to the English version when the gateway sent one, and to the
+    # sender's own words when it did not.
+    assert 'findRendering(msg, "en")' in js
+    assert "t.recv_show_english" in js
+    assert "t.recv_show_original" in js
