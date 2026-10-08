@@ -588,3 +588,9 @@ against the chat mock in-process.
 test fails with the original bug put back.
 
 **Where it ran:** local.
+
+---
+
+## 2026-10-08 — Organisation admin: contract, migration, API, console (Week 9 · PRs #127, #131, #132)
+
+One line: asked Claude for the full-stack admin feature (members, circles, announcements, `admin_actions` log) as four small stacked PRs; its mock logged a retried announcement twice, which only surfaced when one test suite ran over the mock *and* the console's sample data, and I held the API PR as unmerged because no Postgres was available to run its ~50 database tests.
