@@ -18,7 +18,28 @@ from fastapi.testclient import TestClient
 
 MOD = {"X-Mock-Role": "moderator"}
 AUTHOR, OTHER = "author-1", "other-1"
-SECRET_WORDS = ("rationale", "Mock classifier", "D_DISPUTATIONAL", "E_HARMFUL", "0.9")
+SECRET_WORDS = ("rationale", "Mock classifier", "D_DISPUTATIONAL", "E_HARMFUL")
+SECRET_NUMBER = 0.9  # the classifier's confidence: matched as a JSON NUMBER, never as text
+
+
+def _classifier_leaks(node) -> list:
+    """What of the classifier's verdict appears anywhere in a decoded response: a secret word inside
+    a string, a field named like one, or the confidence as a number. Comparing numbers, not
+    substrings, so a timestamp such as ...00.912Z is not mistaken for 0.9."""
+    found = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("rationale", "confidence", "label", "model_version", "policy_version"):
+                found.append(key)
+            found += _classifier_leaks(value)
+    elif isinstance(node, list):
+        for item in node:
+            found += _classifier_leaks(item)
+    elif isinstance(node, str):
+        found += [w for w in SECRET_WORDS if w in node]
+    elif isinstance(node, float) and node == SECRET_NUMBER:
+        found.append(node)
+    return found
 
 
 @pytest.fixture
@@ -97,10 +118,9 @@ def test_the_leak_check_is_not_fooled_by_a_timestamp_that_happens_to_contain_0_9
 def test_the_sender_is_shown_the_notice_and_nothing_of_the_classifier(client):
     _send(client, "block")
 
-    text = _read(client, AUTHOR).text
+    body = _read(client, AUTHOR).json()
 
-    for secret in SECRET_WORDS:
-        assert secret not in text, f"the sender must not be handed {secret!r}"
+    assert _classifier_leaks(body) == [], "the sender must not be handed any of the verdict"
 
 
 def test_a_moderator_ruling_leaves_no_stale_notice_on_the_senders_screen(client):
