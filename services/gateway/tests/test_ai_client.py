@@ -305,3 +305,133 @@ def test_default_timeouts_are_longer_than_the_services_own_limits() -> None:
     assert c.timeout_for(AiStage.MODERATE) > 20
     # CPU ASR on a cold model is slow (the demo console allows 120s).
     assert c.timeout_for(AiStage.TRANSCRIBE) >= 120
+
+
+# --- per-language ASR routing (off by default) ---------------------------------------------
+#
+# M3 (#98): Telugu and Hindi are expected to go to `speech_indicconformer`, English stays on
+# `speech`; IndicConformer has no English and no language auto-detect, so the declared hint decides.
+# NOTHING is routed until a deployment sets the map; with the map empty every note goes where it
+# always went.
+
+_INDIC = "http://speech-indic:8004"
+_BY_LANGUAGE = {"te": _INDIC, "hi": _INDIC}
+
+
+def _urls_seen(hint, **kwargs) -> list[str]:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(500)
+
+    c = _client(handler, **kwargs)
+    request = TranscribeRequest(
+        audio=AudioRef(uri="file:///data/x.bin", format=AudioFormat.MP3),
+        language_hint=hint,
+    )
+    with pytest.raises(AiCallError):
+        c.transcribe(request)
+    return seen
+
+
+def test_a_routed_language_goes_to_its_own_service() -> None:
+    for hint in (LanguageCode.TELUGU, LanguageCode.HINDI):
+        seen = _urls_seen(hint, transcribe_urls_by_language=_BY_LANGUAGE)
+        assert seen == [f"{_INDIC}/v1/transcribe"]
+
+
+def test_english_and_an_undeclared_language_stay_on_the_default_service() -> None:
+    for hint in (LanguageCode.ENGLISH, None):
+        seen = _urls_seen(hint, transcribe_urls_by_language=_BY_LANGUAGE)
+        assert seen == ["http://ai.test/v1/transcribe"]
+
+
+def test_with_no_map_every_language_goes_where_it_always_went() -> None:
+    for hint in (LanguageCode.TELUGU, LanguageCode.HINDI, LanguageCode.ENGLISH, None):
+        assert _urls_seen(hint) == ["http://ai.test/v1/transcribe"]
+        assert _urls_seen(hint, transcribe_urls_by_language={}) == ["http://ai.test/v1/transcribe"]
+
+
+def test_routing_only_moves_the_transcribe_stage() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(500)
+
+    c = _client(handler, transcribe_urls_by_language=_BY_LANGUAGE)
+    with pytest.raises(AiCallError):
+        c.pivot(_PIVOT)
+    assert seen == ["http://ai.test/v1/pivot"]
+
+
+def test_a_routed_note_still_gets_the_length_scaled_timeout() -> None:
+    reads: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        reads.append(request.extensions["timeout"]["read"])
+        return httpx.Response(500)
+
+    c = _client(
+        handler,
+        timeouts={AiStage.TRANSCRIBE: 120.0},
+        transcribe_timeout_per_audio_s=6.0,
+        transcribe_urls_by_language=_BY_LANGUAGE,
+    )
+    request = TranscribeRequest(
+        audio=AudioRef(uri="file:///x", format=AudioFormat.MP3, duration_ms=33_500),
+        language_hint=LanguageCode.TELUGU,
+    )
+    with pytest.raises(AiCallError):
+        c.transcribe(request)
+    assert reads == [pytest.approx(201.0)]
+
+
+def test_the_timeout_error_names_the_routed_url() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    c = _client(handler, transcribe_urls_by_language=_BY_LANGUAGE)
+    request = TranscribeRequest(
+        audio=AudioRef(uri="file:///x", format=AudioFormat.MP3), language_hint=LanguageCode.HINDI
+    )
+    with pytest.raises(AiCallError) as info:
+        c.transcribe(request)
+    assert _INDIC in str(info.value)
+
+
+def test_from_settings_wires_the_map_and_an_empty_one_means_no_routing(monkeypatch) -> None:
+    from app.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "AI_TRANSCRIBE_URL", "http://asr:8002")
+    monkeypatch.setattr(s, "AI_TRANSCRIBE_URLS_BY_LANGUAGE", {"te": _INDIC})
+    c = AiClient.from_settings(s)
+    try:
+        assert c.transcribe_url_for(LanguageCode.TELUGU) == _INDIC
+        assert c.transcribe_url_for(LanguageCode.HINDI) == "http://asr:8002"
+        assert c.transcribe_url_for(None) == "http://asr:8002"
+    finally:
+        c.close()
+    monkeypatch.setattr(s, "AI_TRANSCRIBE_URLS_BY_LANGUAGE", {})
+    c = AiClient.from_settings(s)
+    try:
+        assert c.transcribe_url_for(LanguageCode.TELUGU) == "http://asr:8002"
+    finally:
+        c.close()
+
+
+def test_the_setting_accepts_json_from_the_environment_and_empty_means_none(monkeypatch) -> None:
+    from app.config import Settings
+
+    base = {"DATABASE_URL": "postgresql://x", "JWT_SECRET": "s" * 32}
+    for k, v in base.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("VAPID_PRIVATE_KEY", "a")
+    monkeypatch.setenv("VAPID_PUBLIC_KEY", "b")
+    monkeypatch.setenv("MEDIA_STORAGE_ROOT", "/tmp/m")
+    monkeypatch.setenv("AI_TRANSCRIBE_URLS_BY_LANGUAGE", '{"te": "http://speech-indic:8004"}')
+    assert Settings().AI_TRANSCRIBE_URLS_BY_LANGUAGE == {"te": "http://speech-indic:8004"}
+    monkeypatch.setenv("AI_TRANSCRIBE_URLS_BY_LANGUAGE", "")
+    assert Settings().AI_TRANSCRIBE_URLS_BY_LANGUAGE == {}
