@@ -329,10 +329,11 @@ def publish_announcement(
             raise HTTPException(status_code=422, detail="That circle is not an announcement circle")
         targets = [circle]
 
-    message_ids = []
+    message_ids, fresh = [], False
     for circle in targets:
         key = (admin_id, body.client_msg_id, circle.id)
         if key not in _published:
+            fresh = True
             message = stores._store_message(
                 MessageIn(
                     client_msg_id=uuid.uuid5(body.client_msg_id, circle.id),
@@ -346,14 +347,15 @@ def publish_announcement(
             )
             _published[key] = message.id
         message_ids.append(_published[key])
-    _log(
-        admin_id,
-        AdminActionKind.ANNOUNCEMENT_PUBLISH,
-        "circle" if not body.all_circles else "all_circles",
-        None if body.all_circles else body.circle_id,
-        circle_ids=[c.id for c in targets],
-        length=len(body.text),
-    )
+    if fresh:  # a pure retry changes nothing, so it logs nothing (as the real route)
+        _log(
+            admin_id,
+            AdminActionKind.ANNOUNCEMENT_PUBLISH,
+            "circle" if not body.all_circles else "all_circles",
+            None if body.all_circles else body.circle_id,
+            circle_ids=[c.id for c in targets],
+            length=len(body.text),
+        )
     return AdminAnnouncementOut(circle_ids=[c.id for c in targets], message_ids=message_ids)
 
 

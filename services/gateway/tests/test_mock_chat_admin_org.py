@@ -199,6 +199,7 @@ def test_a_retried_announcement_posts_once(client) -> None:
     second = client.post("/admin/announcements", headers=ADMIN, json=body).json()
     assert first["message_ids"] == second["message_ids"]
     assert len(mock_app._messages[("circle", news.id)]) == 1
+    assert [a.action.value for a in _actions(client)] == ["announcement.publish", "circle.create"]
 
 
 def test_every_write_leaves_one_audit_row_newest_first_and_reads_leave_none(client) -> None:
