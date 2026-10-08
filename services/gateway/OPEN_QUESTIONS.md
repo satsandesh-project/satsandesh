@@ -539,6 +539,12 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     "denoise" stage exists as a service-side step that is currently off, not as an
     orchestrator stage.
 
+    **CORRECTED (2026-10-07, M3 on #98 -- the paragraph above is superseded):** denoise covers
+    **both** ASR services (faster-whisper `speech` and `speech_indicconformer`), not only
+    faster-whisper; order is denoise -> no-speech guard -> ASR; still **OFF by default** until
+    M3's A/B on real noisy recordings. His PR #121 carries the code; nothing in the gateway
+    changes. **Still not measured by anyone:** whether denoising helps at all.
+
 31. **The real ASR is not adequate for Telugu on current evidence, and the fix is not
     decided.** The real-services proof (`infra/ai/README.md`) gave the same synthetic Telugu
     sentence three different transcripts (two scripts, one in Devanagari), and the wrong
@@ -547,8 +553,8 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     the Telugu path with faster-whisper for Hindi/English, but is not deciding until he has
     compared small / medium / IndicConformer (CTC and RNNT) on real recordings with latency
     (his Week 8 tuning), and will check whether the latency spread is decoder fallback.
-    **At his request the orchestrator is NOT pointed at a per-language ASR split yet** (it
-    would need to choose the transcribe URL by declared language; not built). The size of
+    **At his request the orchestrator is NOT pointed at a per-language ASR split yet**
+    (*built since, off by default: see the 2026-10-08 update below*). The size of
     the risk is unmeasured: the test speech was synthetic and one sentence.
 
     **UPDATE (Week 8 load runs, `infra/ai/README.md` "Ten notes at once"):** the spread is
@@ -560,6 +566,15 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     unproven. `AI_TRANSCRIBE_TIMEOUT_S` is 120 s against a 60 s worst case for 5 s of audio. A
     30 s Telugu note was measured afterwards (`infra/ai/GATE_WEEK8.md`, #117): 74 to 120 s, three
     of eight within 2 s of that timeout, none over it. Still synthetic speech.
+
+    **BUILT, all off (2026-10-08, `feat/m2-indicconformer-image`):** (a) `infra/ai/Dockerfile.speech_indicconformer`
+    and a compose service `speech-indic` behind the `indic` profile (a plain `up` and `staging-ai.sh`
+    never start it); (b) `AI_TRANSCRIBE_URLS_BY_LANGUAGE`, a JSON map from the sender's DECLARED language
+    to an ASR base URL, empty by default so every note goes where it always did; an undeclared note and
+    English stay on the default service (IndicConformer has neither). **Not done, deliberately:** nothing
+    is routed (M3 posts measurements first); **no automatic fallback** to faster-whisper when a routed
+    service is down (a retryable error like any other; say so if you want one). The model cannot be
+    started with the token on my server until its terms are accepted (status 403 on 2026-10-07).
 
 32. **The elder app has no way to obtain a signed token, so `AUTH_MODE=jwt` cannot be
     switched on for staging yet.** The app mints its own random UUID in the browser
