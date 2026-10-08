@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.admin_org import router as admin_org_router
 from app.audio_labels import router as audio_labels_router
 from app.auth import get_current_user
 from app.circles import router as circles_router
@@ -104,6 +105,7 @@ app.include_router(audio_labels_router)
 app.include_router(media_router)
 app.include_router(moderation_router)
 app.include_router(users_router)
+app.include_router(admin_org_router)
 
 
 @app.get("/health")
