@@ -38,6 +38,19 @@ services:
       UNDO_WINDOW_SECONDS: ${UNDO_WINDOW_SECONDS:-30}
       JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
       JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-5}
+      # Per-call AI timeouts. These were NOT passed through before (the base compose has no env_file),
+      # so setting them in .env changed nothing. The defaults here are the code's own (app/config.py).
+      # The transcribe timeout scales with the note's length: max(floor, PER_AUDIO x seconds), capped.
+      AI_TRANSCRIBE_TIMEOUT_S: ${AI_TRANSCRIBE_TIMEOUT_S:-120}
+      AI_TRANSCRIBE_TIMEOUT_PER_AUDIO_S: ${AI_TRANSCRIBE_TIMEOUT_PER_AUDIO_S:-6}
+      AI_TRANSCRIBE_TIMEOUT_MAX_S: ${AI_TRANSCRIBE_TIMEOUT_MAX_S:-600}
+      AI_PIVOT_TIMEOUT_S: ${AI_PIVOT_TIMEOUT_S:-90}
+      AI_MODERATION_TIMEOUT_S: ${AI_MODERATION_TIMEOUT_S:-30}
+      AI_RENDER_TIMEOUT_S: ${AI_RENDER_TIMEOUT_S:-180}
+      # The wrong-script guard (#120): OFF by default, and it could not be switched on from here before.
+      # Turning it on sends many Telugu notes to the moderator queue (OPEN_QUESTIONS #27, #31).
+      PIPELINE_SCRIPT_CHECK_ENABLED: ${PIPELINE_SCRIPT_CHECK_ENABLED:-false}
+      PIPELINE_SCRIPT_MIN_SHARE: ${PIPELINE_SCRIPT_MIN_SHARE:-0.5}
     volumes:
       - render_output:/render-output:ro
     # Deliberately NO depends_on for the AI services: models take minutes to

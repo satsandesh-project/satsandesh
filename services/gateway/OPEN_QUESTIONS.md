@@ -339,12 +339,25 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
        SLA, and BLOCK's "may appeal" has no surface until Week 9.
     5. M1's client has to render it.
 
+    **Owners (re-checked 2026-10-08 against what is merged):** 1 and 2 and 4 are **M4's**
+    (@sainathanv said on #120 that the system-hold wording is going into his workshop pack); the
+    script-guard hold (#120, off by default) is a THIRD kind of SYSTEM hold with no notice, so it
+    adds to item 1 and the sender would again see `held` and nothing else; 3 is unobserved (the
+    real classifier has not run) and is M3's to say; 5 is **M1's**. Nothing in the gateway is
+    waiting on this beyond what is already served.
+
 19. **With the pipeline on, every real browser voice note is held until the
     `webm_opus` decision (#2).** Fail-closed, deliberately: a note that cannot
     be transcribed cannot be ruled on, so it goes to a human. The stopgap
     `AI_ACCEPT_WEBM_AS_OGG_OPUS=true` makes them flow. Worth knowing before
     switching the pipeline on for real users: with the default it would send
     every voice note to the moderators' queue.
+
+    **Still true on `main` (re-checked 2026-10-08), and not closed by anything merged:** the
+    staging switch planned for 8 Oct turns the stopgap ON, because a browser recording needs it.
+    That makes the demo flow, it is **not** the decision: #2 is M3's (add the enum value or
+    transcode), and until it is made every claim that a real browser note works end to end is
+    "with the stopgap".
 
 20. **Nothing detects a message stuck behind a dead pipeline.** The dead-letter
     hook holds (or releases) the message when its job dies, and recovery
@@ -503,10 +516,14 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     wrong hour with no error anywhere.
 
 29. **What still blocks switching the pipeline on for real users** (after this change,
-    `/me/settings` no longer does): real JWT verification **turned on** (the code exists since
-    Week 8 and is verified, `AUTH_MODE=jwt`, but it is off by default and no deployment runs it:
-    the moderator routes and held-audio access still rest on a stub identity until one does,
-    #23, and switching it on needs the elder app to obtain a signed token first, #32); M1's `timezone` on `/me/settings` (#28; #92, which
+    `/me/settings` no longer does): the **elder app's identity** is still a client-made UUID, so
+    `AUTH_MODE=jwt` (built and verified since Week 8, `app/tokens.py`) cannot be switched on for a
+    deployment yet: the app has no way to obtain a signed token (**#32, the live blocker; owner M1
+    for the client, with M4/the supervisor for the registration decision**). #23 no longer waits
+    for that: held-audio access (`/media/{id}`, #126, merged) and the moderator routes (#125; open
+    and approved when this was written, so check that it is merged) accept ONLY a signed token in
+    every `AUTH_MODE`, so a bare UUID, which is what `legacy` mode trusts, is not a moderator;
+    M1's `timezone` on `/me/settings` (#28; #92, which
     sends `source_lang` so typed messages are not all treated as Telugu, has since merged);
     M4's answers (#24) and a notice surface
     for a held sender (#18); and M3's ASR choice, `webm_opus` handling and the
@@ -561,6 +578,20 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     30 s Telugu note was measured afterwards (`infra/ai/GATE_WEEK8.md`, #117): 74 to 120 s, three
     of eight within 2 s of that timeout, none over it. Still synthetic speech.
 
+    **UPDATE (2026-10-08):** (1) the 74-120 s were whole-pipeline times; measured per stage, the
+    ASR call alone on a 33.5 s Telugu note took 130.3, 67.0, 114.5, 69.7, 75.9, 70.3, 83.8 and 121.5 s
+    (**2 of 8 over the 120 s timeout**; p50 79.9 s; Hindi 15.7-15.9 s), MT 1-13 s, render 2-43 s
+    (`infra/ai/GATE_WEEK8.md`, follow-up). The decoder's time scales with the audio and the text it
+    emits, which is `services/ai/speech` (**M3's**). **Gateway side, done:** the transcribe timeout is
+    now `max(120 s, 6 s per second of audio)` capped at 600 s (`AI_TRANSCRIBE_TIMEOUT_PER_AUDIO_S`,
+    `_MAX_S`), and `docker-compose.ai.yml` now actually passes the AI timeouts and the script-guard
+    switch to the gateway (before, `.env` settings for them were silently ignored). (2) **M3's
+    decision (#98):** Telugu and Hindi go to `speech_indicconformer`, English to `speech`, `language_hint`
+    always passed; **nothing is routed until M3 posts measurements**. **Mine, not started:** the
+    per-language routing setting (off by default), the IndicConformer image and compose entry, and a
+    check that the HF account behind the token accepted that model's terms (it had NOT, status 403, on
+    the token in my own server `.env`; staging's token was not checked).
+
 32. **The elder app has no way to obtain a signed token, so `AUTH_MODE=jwt` cannot be
     switched on for staging yet.** The app mints its own random UUID in the browser
     (`crypto.randomUUID()`, `window.__satToken`) and sends it as the Bearer token; nothing
@@ -576,6 +607,12 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     signed tokens only for moderators/admins (a role-based `AUTH_MODE`). Not built: no
     endpoint was added without that decision. A moderator today gets a token from an
     operator: `python -m app.tokens <user-uuid>`.
+    **Owner and state:** M1 (the client has to call onboarding or choose another way) with M4/the
+    supervisor (is open self-registration acceptable?). The gateway side is done: `/activate`
+    returns a signed `access_token`, Caddy routes `/onboarding*` (#124, merged), and the
+    moderator/held-audio surfaces no longer depend on this (#23). It is the live successor of #23
+    for everything about the elder's identity: until it is decided, `legacy` stays the default
+    and a bare UUID still is that user for every route that is not a moderator surface.
 
 33. **What a signed token still does not do.** No revocation (a stolen token works until it
     expires, 30 days by default, `AUTH_TOKEN_TTL_SECONDS`), no refresh, no secret rotation.

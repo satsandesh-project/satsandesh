@@ -163,6 +163,8 @@ class AiClient:
         *,
         urls: Mapping[AiStage, str],
         timeouts: Mapping[AiStage, float] | None = None,
+        transcribe_timeout_per_audio_s: float = 0.0,
+        transcribe_timeout_max_s: float = 600.0,
         http: httpx.Client | None = None,
     ) -> None:
         missing = set(AiStage) - set(urls)
@@ -170,6 +172,8 @@ class AiClient:
             raise ValueError(f"no URL for stage(s): {sorted(s.value for s in missing)}")
         self._urls = {stage: url.rstrip("/") for stage, url in urls.items()}
         self._timeouts = {**_DEFAULT_TIMEOUT_S, **(timeouts or {})}
+        self._transcribe_per_audio_s = transcribe_timeout_per_audio_s
+        self._transcribe_max_s = transcribe_timeout_max_s
         # trust_env=False: these are calls to our own services; a system proxy
         # setting must never be able to intercept them.
         self._http = http if http is not None else httpx.Client(trust_env=False)
@@ -189,7 +193,12 @@ class AiClient:
             AiStage.MODERATE: settings.AI_MODERATION_TIMEOUT_S,
             AiStage.RENDER: settings.AI_RENDER_TIMEOUT_S,
         }
-        return cls(urls=urls, timeouts=timeouts)
+        return cls(
+            urls=urls,
+            timeouts=timeouts,
+            transcribe_timeout_per_audio_s=settings.AI_TRANSCRIBE_TIMEOUT_PER_AUDIO_S,
+            transcribe_timeout_max_s=settings.AI_TRANSCRIBE_TIMEOUT_MAX_S,
+        )
 
     def url_for(self, stage: AiStage) -> str:
         return self._urls[stage]
@@ -197,13 +206,27 @@ class AiClient:
     def timeout_for(self, stage: AiStage) -> float:
         return self._timeouts[stage]
 
+    def transcribe_timeout_for(self, audio_duration_ms: int | None) -> float:
+        """The ASR decode time grows with the note's length (and with how much text it emits), so a
+        fixed timeout is right for one length only. The floor is `AI_TRANSCRIBE_TIMEOUT_S`; a note
+        gets `AI_TRANSCRIBE_TIMEOUT_PER_AUDIO_S` seconds per second of audio, up to
+        `AI_TRANSCRIBE_TIMEOUT_MAX_S`. The duration is the client's own declaration (it is not
+        measured), which is why the cap exists: a client cannot buy a longer wait than the cap. An
+        undeclared duration, or a per-audio factor of 0, gives the floor, as before."""
+        floor = self._timeouts[AiStage.TRANSCRIBE]
+        if not audio_duration_ms or self._transcribe_per_audio_s <= 0:
+            return floor
+        scaled = self._transcribe_per_audio_s * audio_duration_ms / 1000.0
+        return max(floor, min(scaled, self._transcribe_max_s))
+
     def close(self) -> None:
         self._http.close()
 
     # -- the four stages ------------------------------------------------------
 
     def transcribe(self, request: TranscribeRequest) -> TranscribeResponse:
-        return self._call(AiStage.TRANSCRIBE, request, TranscribeResponse)
+        timeout = self.transcribe_timeout_for(request.audio.duration_ms)
+        return self._call(AiStage.TRANSCRIBE, request, TranscribeResponse, timeout=timeout)
 
     def pivot(self, request: PivotRequest) -> PivotResponse:
         return self._call(AiStage.PIVOT, request, PivotResponse)
@@ -217,18 +240,22 @@ class AiClient:
     # -- plumbing -------------------------------------------------------------
 
     def _call(
-        self, stage: AiStage, request: BaseModel, response_model: type[ResponseT]
+        self,
+        stage: AiStage,
+        request: BaseModel,
+        response_model: type[ResponseT],
+        *,
+        timeout: float | None = None,
     ) -> ResponseT:
         url = f"{self._urls[stage]}{_PATH_BY_STAGE[stage]}"
+        timeout = self._timeouts[stage] if timeout is None else timeout
         try:
-            response = self._http.post(
-                url, json=request.model_dump(mode="json"), timeout=self._timeouts[stage]
-            )
+            response = self._http.post(url, json=request.model_dump(mode="json"), timeout=timeout)
         except httpx.TimeoutException as exc:
             raise AiCallError(
                 stage,
                 AiErrorKind.TIMEOUT,
-                f"no answer from {url} within {self._timeouts[stage]:g}s",
+                f"no answer from {url} within {timeout:g}s",
                 retryable=True,
             ) from exc
         except httpx.TransportError as exc:
