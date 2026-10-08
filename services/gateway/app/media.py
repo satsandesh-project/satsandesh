@@ -33,9 +33,10 @@ import uuid
 from contracts.chat.common import AudioFormat
 from contracts.chat.media import MediaUploadOut
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_user
+from app.auth import bearer, get_current_user
 from app.config import get_settings
 from app.db.base import get_db
 from app.db.repository import (
@@ -48,6 +49,7 @@ from app.db.repository import (
 from app.id import generate_uuid7
 from app.media_storage import get_media_storage
 from app.models import User
+from app.tokens import looks_like_jwt
 
 router = APIRouter()
 
@@ -170,6 +172,7 @@ async def upload_media(
 def fetch_media(
     media_id: str,
     user: User = Depends(get_current_user),
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> Response:
     try:
@@ -180,7 +183,12 @@ def fetch_media(
     media = get_media_object(db, media_uuid)
     # Not found and not-allowed-to-hear-it are deliberately one response:
     # a 403 would confirm the (guessable) id is a real voice note.
-    if media is None or not user_can_fetch_media(db, media, uuid.UUID(user.id)):
+    # A moderator's allowance (held/blocked audio) needs a SIGNED token: a bare UUID is "that user"
+    # in legacy mode, so it must not unlock review access (OPEN_QUESTIONS #23).
+    signed = creds is not None and looks_like_jwt(creds.credentials)
+    if media is None or not user_can_fetch_media(
+        db, media, uuid.UUID(user.id), moderator_may_review=signed
+    ):
         raise HTTPException(status_code=404, detail="media not found")
 
     storage = get_media_storage()

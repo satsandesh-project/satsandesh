@@ -272,7 +272,11 @@ def test_the_audio_the_queue_points_at_is_fetchable_by_the_moderator(
     login_as(moderator)
     (item,) = ModerationQueueOut.model_validate(_queue(client).json()).items
 
-    resp = client.get(f"/media/{item.original_media_ref.uri.removeprefix('media:')}")
+    media_id = item.original_media_ref.uri.removeprefix("media:")
+    # the moderator allowance needs a SIGNED token (tests/test_media_moderator_identity.py)
+    resp = client.get(
+        f"/media/{media_id}", headers={"Authorization": f"Bearer {issue_token(moderator.id)}"}
+    )
 
     assert resp.status_code == 200
 

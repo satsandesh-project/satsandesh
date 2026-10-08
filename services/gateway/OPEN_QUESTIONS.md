@@ -419,9 +419,13 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     role is read from `users.role` on each request (demote, same token, **403** on the next call), and
     identity is decided before any body, query or message lookup (a non-moderator gets 403 for a real
     and a made-up message id alike). Caddy routes `/moderation*`. A moderator token is minted by an
-    operator (`python -m app.tokens <uuid>`). **Not closed:** the already-routed `/media/{id}` still
-    lets `users.role` moderator/admin fetch a held message's audio, and in `legacy` that identity is
-    still a bare UUID; read from the code, **not run on a stack**.
+    operator (`python -m app.tokens <uuid>`). The held-audio route `/media/{id}` had the same hole; see the next update.
+    **UPDATE (media):** the already-routed `GET /media/{id}` had the same hole, shown first in a test: a
+    moderator's or admin's **bare UUID** fetched a held or blocked message's audio (**200**) in the default
+    `legacy` mode. The moderator allowance in `user_can_fetch_media` now applies only when the caller
+    reports the token was SIGNED (default fails closed); authors and recipients are unchanged, so the
+    elder app, which still sends a bare UUID (#32), is unaffected, and a refused moderator still gets the
+    same 404 as a missing id. Not proven on a real stack with Caddy in front (the test is against the app).
 
 24. **Console scope decisions worth confirming with M4.** (a) The queue shows
     only `held` messages; `blocked` ones are not browsable (appeals are
@@ -478,6 +482,25 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     to `pending`, so this needs a deliberate "reopen" path), or accept original-only for
     that case. Not decided.
 
+    **A second case (Week 8, the script guard, #120), traced against the code; the question
+    is harder than "re-run the stages".** A note held because its transcript is in the wrong
+    script keeps that transcript but was stopped before translation, so it has no
+    renderings. A moderator's release (`POST /moderation/messages/{id}/release`, `app/moderation.py`)
+    is a status flip `held` -> `sent`, one `moderator` event ("Released by a moderator."), and a
+    `message.new` broadcast carrying only the renderings that exist. So the receiver gets the
+    original audio and the **wrong-script transcript, with no translation and no rendered
+    audio**, and nothing in the event says it was a script hold. Two things make "re-run the
+    pipeline on release" insufficient for this case: the pipeline skips transcription when a
+    transcript is already stored, so re-running the missing stages would **translate the same
+    wrong-script text** (or, with the guard on, hold it again); and the ASR is not deterministic
+    (the same 30 s Telugu audio gave 8 different transcripts), so a real fix is a "reopen" that
+    **clears the transcript and re-transcribes**, or lets the moderator supply the text. Options:
+    (a) accept transcript-only on release (today's behaviour), at least with the release event
+    saying why it was held; (b) a reopen path that clears the transcript and re-runs the pipeline
+    (changes who may write to a non-`pending` message, see #21); (c) the moderator corrects the
+    transcript and the pipeline resumes from it. **Not decided; needed before the guard is
+    switched on** (raised by M1 on #120; the queue and sender wording are M4's, #18).
+
 28. **Quiet hours are saved but never enforced until the client sends a timezone.**
     `GET/PATCH /me/settings` now exists (`app/users.py`) and the elder app's existing
     PATCH (start, end, language, tts) works against it unchanged. But `is_quiet_hours`
@@ -496,10 +519,13 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     sends `source_lang` so typed messages are not all treated as Telugu, has since merged);
     M4's answers (#24) and a notice surface
     for a held sender (#18); and M3's ASR choice, `webm_opus` handling and the
-    hallucinated-transcript problem (#2, #11, #26). Also: Caddy now routes `/me/settings` and
-    `/audio-labels/*` to the gateway, but still not `/onboarding*` or `/push*` (the elder app
-    does not call them -- the first client to implement push or QR onboarding needs those
-    routes), and deliberately not `/moderation*`.
+    hallucinated-transcript problem (#2, #11, #26). Also: Caddy now routes `/me/settings`,
+    `/audio-labels/*` and (Week 8, after the gate found them falling through to the elder app's
+    404/405) `/onboarding*` to the gateway; it still does not route `/push*`, **deliberately**:
+    nothing calls it, so the first client to implement web push adds the route together with its
+    check in `infra/caddy/tls_check.py` (which asserts it is not routed today); and deliberately
+    not `/moderation*`. Routing `/onboarding*` is necessary, not sufficient: the elder app has no
+    call to it (#32).
 
 30. **The Week 7 task names a "denoise" stage that does not exist.** The plan
     (`docs/retro/month-1.md`, "Week 7 -- third layer") gives M2 "denoise -> transcribe ->
@@ -549,7 +575,8 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     (`crypto.randomUUID()`, `window.__satToken`) and sends it as the Bearer token; nothing
     server-side ever issued it. The only issuer is onboarding's `/activate` (a family member
     invites; the elder scans a QR), which now also returns a signed `access_token` -- but
-    the elder app does not call onboarding, and Caddy does not route `/onboarding*`. The 36
+    the elder app does not call onboarding (Caddy routes `/onboarding*` since Week 8, on a
+    deployment whose Caddy has the new Caddyfile). The 36
     users on staging hold client-made UUIDs, so a cutover also strands them. Options, a
     decision for M1 (client) and M4/the supervisor (is open self-registration acceptable?):
     (a) the elder app uses the QR onboarding flow; (b) a self-registration endpoint that
