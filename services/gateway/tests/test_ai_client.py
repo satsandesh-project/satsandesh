@@ -305,3 +305,120 @@ def test_default_timeouts_are_longer_than_the_services_own_limits() -> None:
     assert c.timeout_for(AiStage.MODERATE) > 20
     # CPU ASR on a cold model is slow (the demo console allows 120s).
     assert c.timeout_for(AiStage.TRANSCRIBE) >= 120
+
+
+# --- the transcribe timeout scales with the audio ---------------------------------------
+#
+# A fixed 120 s cannot fit a decoder whose time scales with how long the note is (and with how much
+# text it emits). Measured on a 33.5 s synthetic Telugu note, one at a time: 130.3, 67.0, 114.5, 69.7,
+# 75.9 s for the ASR call alone (infra/ai/GATE_WEEK8.md): one call already past 120 s. The floor stays
+# AI_TRANSCRIBE_TIMEOUT_S; a note gets `per_audio_s` seconds of decode per second of audio, up to a cap.
+
+
+def _audio_request(duration_ms: int | None) -> TranscribeRequest:
+    return TranscribeRequest(
+        audio=AudioRef(uri="file:///data/x.bin", format=AudioFormat.MP3, duration_ms=duration_ms)
+    )
+
+
+def _read_timeout_seen(duration_ms: int | None, **kwargs) -> float:
+    reads: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        reads.append(request.extensions["timeout"]["read"])
+        return httpx.Response(500)
+
+    c = _client(handler, timeouts={AiStage.TRANSCRIBE: 120.0}, **kwargs)
+    with pytest.raises(AiCallError):
+        c.transcribe(_audio_request(duration_ms))
+    return reads[0]
+
+
+def test_a_long_note_gets_a_timeout_proportional_to_its_length() -> None:
+    seen = _read_timeout_seen(
+        33_500, transcribe_timeout_per_audio_s=6.0, transcribe_timeout_max_s=600.0
+    )
+    assert seen == pytest.approx(201.0)
+
+
+def test_a_short_note_never_gets_less_than_the_floor() -> None:
+    seen = _read_timeout_seen(
+        5_000, transcribe_timeout_per_audio_s=6.0, transcribe_timeout_max_s=600.0
+    )
+    assert seen == 120.0
+
+
+def test_the_timeout_never_exceeds_the_cap_whatever_length_the_client_declared() -> None:
+    seen = _read_timeout_seen(
+        3_600_000, transcribe_timeout_per_audio_s=6.0, transcribe_timeout_max_s=600.0
+    )
+    assert seen == 600.0
+
+
+def test_an_undeclared_length_uses_the_floor() -> None:
+    seen = _read_timeout_seen(
+        None, transcribe_timeout_per_audio_s=6.0, transcribe_timeout_max_s=600.0
+    )
+    assert seen == 120.0
+
+
+def test_per_audio_zero_keeps_the_old_fixed_timeout() -> None:
+    assert _read_timeout_seen(33_500, transcribe_timeout_per_audio_s=0.0) == 120.0
+
+
+def test_a_cap_below_the_floor_does_not_shorten_the_floor() -> None:
+    seen = _read_timeout_seen(
+        33_500, transcribe_timeout_per_audio_s=6.0, transcribe_timeout_max_s=60.0
+    )
+    assert seen == 120.0
+
+
+def test_the_timeout_error_names_the_timeout_that_was_actually_used() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    c = _client(
+        handler,
+        timeouts={AiStage.TRANSCRIBE: 120.0},
+        transcribe_timeout_per_audio_s=6.0,
+        transcribe_timeout_max_s=600.0,
+    )
+    with pytest.raises(AiCallError) as info:
+        c.transcribe(_audio_request(33_500))
+    assert info.value.kind is AiErrorKind.TIMEOUT
+    assert info.value.retryable
+    assert "within 201s" in str(info.value)
+
+
+def test_the_other_stages_keep_their_fixed_timeouts() -> None:
+    reads: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        reads.append(request.extensions["timeout"]["read"])
+        return httpx.Response(500)
+
+    c = _client(
+        handler,
+        timeouts={AiStage.PIVOT: 22.0},
+        transcribe_timeout_per_audio_s=6.0,
+        transcribe_timeout_max_s=600.0,
+    )
+    with pytest.raises(AiCallError):
+        c.pivot(_PIVOT)
+    assert reads == [22.0]
+
+
+def test_from_settings_wires_the_scaling(monkeypatch) -> None:
+    from app.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "AI_TRANSCRIBE_TIMEOUT_S", 100.0)
+    monkeypatch.setattr(s, "AI_TRANSCRIBE_TIMEOUT_PER_AUDIO_S", 5.0)
+    monkeypatch.setattr(s, "AI_TRANSCRIBE_TIMEOUT_MAX_S", 400.0)
+
+    c = AiClient.from_settings(s)
+    try:
+        assert c.transcribe_timeout_for(_audio_request(40_000).audio.duration_ms) == 200.0
+        assert c.transcribe_timeout_for(10_000_000) == 400.0
+    finally:
+        c.close()
