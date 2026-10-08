@@ -171,6 +171,10 @@ class Settings(BaseSettings):
     # action -> status mapping open; this assumes a nudge records a notice and
     # still delivers. Set false to hold nudged messages for a human instead.
     PIPELINE_NUDGE_DELIVERS: bool = True
+    # One more ASR try with the author's stored language when the speech service answers
+    # UNSUPPORTED_LANGUAGE for an UNDECLARED voice note (its auto-detect guessed outside en/hi/te)
+    # instead of holding the note. See app/pipeline.py `_asr_language_fallback` for the risk.
+    PIPELINE_ASR_LANGUAGE_FALLBACK: bool = True
     # The script guard (app/script_check.py; the Week 8 gate's finding): hold a voice note whose
     # transcript is mostly NOT written in the script of its language (ASR labelled `te`, returned
     # Devanagari) for a person, instead of translating and delivering nonsense. OFF by default: it
