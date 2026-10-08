@@ -74,7 +74,18 @@
 	#     handle /push* { reverse_proxy gateway:8000 }
 	# here AND the matching check in infra/caddy/tls_check.py (which today asserts
 	# it is NOT routed, so that a later change has to be deliberate).
-	# /moderation* is not routed either, on purpose (OPEN_QUESTIONS #23).
+	# The moderator console's routes (services/gateway/app/moderation.py: queue, a message's event
+	# trail, release, block). They were deliberately unrouted while the gateway's identity was a
+	# stub (OPEN_QUESTIONS #23): any bare UUID was "that user", so a moderator's id alone read the
+	# queue and a held message's text (shown on a real stack, AUTH_MODE=legacy). That is closed AT
+	# THE GATEWAY, not here: Caddy cannot know the gateway's AUTH_MODE, so every /moderation* route
+	# accepts ONLY a signed token (401 for none, a bare UUID or a bad one; 403 for a valid
+	# non-moderator, whose role is read from users.role on every request). With that, routing is safe
+	# in every mode. Routing is necessary, not sufficient: nothing serves the console itself yet
+	# (clients/admin-console/ is in no compose file), so there is still no console to open here.
+	handle /moderation* {
+		reverse_proxy gateway:8000
+	}
 
 	# Everything else -- both the elder-app frontend itself (compiled
 	# pages, JS bundles) AND Reflex's own internal backend paths (/ping,
