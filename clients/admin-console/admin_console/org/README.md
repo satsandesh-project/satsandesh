@@ -3,7 +3,7 @@
 Routes `/members`, `/circles`, `/announce`; registered by one `register_org_pages(app)` call in `admin_console.py`.
 An admin adds a person, puts them in circles and sends announcements here, never via the database.
 Data comes from `/admin/*` (`contracts/chat/admin_org.py`) with `CONSOLE_SOURCE=gateway`; the default is in-memory sample data.
-Same `CONSOLE_GATEWAY_URL` / `_TOKEN` / `_HEADERS` as the review queue; the token must belong to a site admin (403 otherwise).
+Same `CONSOLE_GATEWAY_URL` / `_TOKEN` / `_HEADERS` as the review queue; the token must be a SIGNED one (`python -m app.tokens <admin id>`) of a site admin.
 A new person's sign-in code is shown once as a QR (optional `segno`) plus text, and is never stored.
 Removing and sending ask twice; a failed send keeps its request id, so a retry posts once.
 Test: `PYTHONPATH=../.. ./.venv/Scripts/python.exe -m pytest tests/ -q` (one suite runs over the sample data and the chat mock).

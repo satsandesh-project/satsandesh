@@ -217,7 +217,12 @@ def _code_card() -> rx.Component:
             ),
             rx.cond(
                 MembersState.issued_qr != "",
-                rx.image(src=MembersState.issued_qr, width="240px", height="240px"),
+                rx.image(
+                    src=MembersState.issued_qr,
+                    alt="QR code of the sign-in code below, for " + MembersState.issued_name,
+                    width="240px",
+                    height="240px",
+                ),
                 rx.fragment(),
             ),
             rx.text_area(
