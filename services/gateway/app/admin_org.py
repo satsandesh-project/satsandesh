@@ -2,7 +2,8 @@
 `contracts/chat/admin_org.py`). Registration is organisation-managed -- an admin
 runs it from the console, not from the database.
 
-Who may call it: a SITE admin, by the DATABASE role (`users.role == 'admin'`).
+Who may call it: a SITE admin holding a SIGNED token (app/tokens.py), by the DATABASE role
+(`users.role == 'admin'`); a legacy bare-UUID token is refused (401) in every AUTH_MODE.
 The token stub (app/auth.py) derives `role='elder'` for every legacy token, so
 `require_role("admin")` could never pass; the row is the authoritative record
 (the choice app/moderation.py's `require_moderator` makes too). A circle-level
@@ -58,11 +59,12 @@ from contracts.chat.admin_org import (
 )
 from contracts.chat.circles import CircleKind
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import undo
-from app.auth import get_current_user
+from app.auth import bearer, get_current_user
 from app.config import get_settings
 from app.db.admin_actions import list_admin_actions, record_admin_action
 from app.db.base import SessionLocal, get_db
@@ -73,13 +75,29 @@ from app.messages import _parse_uuid, fan_out_message
 from app.models import User
 from app.moderation import _decode_cursor, _encode_cursor
 from app.pipeline import start_pipeline
-from app.tokens import issue_token
+from app.tokens import issue_token, looks_like_jwt
 from app.users import _supported_languages
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-def require_admin(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> DbUser:
+def _signed_token_only(creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
+    """Runs BEFORE get_current_user (declared first below), so a refused legacy token never
+    reaches the stub that would provision a users row for it. No header at all is left to
+    get_current_user, which answers 401 "Not authenticated".
+
+    These routes make users, set roles and message everyone, so the legacy identity ("a bare
+    UUID is that user", the default AUTH_MODE) is refused: with it, anyone who knew an admin's
+    id could do all of that. Same rule, and same reason, as /moderation (OPEN_QUESTIONS #23)."""
+    if creds is not None and not looks_like_jwt(creds.credentials):
+        raise HTTPException(status_code=401, detail="Admin routes require a signed token")
+
+
+def require_admin(
+    _signed: None = Depends(_signed_token_only),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DbUser:
     try:
         row = db.get(DbUser, uuid.UUID(user.id))
     except ValueError:  # a non-UUID stub token has no row to be an admin

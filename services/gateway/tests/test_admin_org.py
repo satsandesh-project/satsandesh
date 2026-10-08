@@ -124,16 +124,31 @@ def test_a_circle_admin_is_not_a_site_admin(client, db_session):
     assert client.get("/admin/circles", headers=_as(caller)).status_code == 403
 
 
-def test_the_database_role_decides_not_the_token(client, db_session, admin):
-    """A legacy UUID token derives role='elder'; the admin's DB row must still
-    get in, and a demoted admin must be refused on the very next request."""
+def test_a_bare_uuid_token_is_refused_even_for_a_real_admin(client, db_session, admin):
+    """The default AUTH_MODE is `legacy`, where a bare UUID *is* that user. These
+    routes create users and message everyone, so knowing an admin's id must not
+    be enough: 401, before the stub that would provision a row for it."""
     legacy = {"Authorization": f"Bearer {admin.id}"}
-    assert client.get("/admin/users", headers=legacy).status_code == 200
+    for method, path, body in _every_route(uuid.uuid4()):
+        resp = client.request(method, path, headers=legacy, json=body)
+        assert resp.status_code == 401, (method, path)
+        assert resp.json()["detail"] == "Admin routes require a signed token"
+    stranger = uuid.uuid4()
+    resp = client.get("/admin/users", headers={"Authorization": f"Bearer {stranger}"})
+    assert resp.status_code == 401
+    assert db_session.get(DbUser, stranger) is None, "a refused token provisions no user"
+    assert db_session.query(DbUser).count() == 1 and _actions(db_session) == []
 
+
+def test_the_database_role_decides_and_a_demotion_applies_on_the_next_request(
+    client, db_session, admin
+):
     other = _user(db_session, "Second", role="admin")
+    assert client.get("/admin/users", headers=_as(admin)).status_code == 200
+
     resp = client.patch(f"/admin/users/{admin.id}/role", headers=_as(other), json={"role": "elder"})
     assert resp.status_code == 200
-    assert client.get("/admin/users", headers=legacy).status_code == 403
+    assert client.get("/admin/users", headers=_as(admin)).status_code == 403
 
 
 # --- users: the create flow -----------------------------------------------------------------
