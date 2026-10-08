@@ -23,11 +23,11 @@
 
 | Clause | Verdict | Evidence |
 |---|---|---|
-| an onboarded elder | **DOES NOT PASS on staging** | `/onboarding*` is not routed by Caddy: over HTTPS on staging `GET /onboarding/qr/junk` is **404** (HTML) and `POST /onboarding/activate` is **405**; the gateway itself answers the same call `400 malformed invite token` and `/moderation/queue` `401`. The elder app has **no call to `/onboarding`** (only comments saying QR onboarding is not merged). Onboarding works when the gateway is called directly: invite **201**, activate **200** (both token kinds), a second activate **410**. **Update (`fix/m2-caddy-route-onboarding`): the route now exists** in `infra/caddy/Caddyfile` (proved with the real gateway, Caddy and elder app on a throwaway stack, and in the Caddy harness). It reaches staging only when staging's Caddy is restarted with the new Caddyfile. **The clause still does NOT pass: routing is necessary, not sufficient.** The elder app has no call to `/onboarding` (only comments saying QR onboarding is not merged), so an elder still cannot be onboarded from the app. That half is M1's. |
+| an onboarded elder | **DOES NOT PASS on staging** | `/onboarding*` is not routed by Caddy: over HTTPS on staging `GET /onboarding/qr/junk` is **404** (HTML) and `POST /onboarding/activate` is **405**; the gateway itself answers the same call `400 malformed invite token` and `/moderation/queue` `401`. The elder app has **no call to `/onboarding`** (only comments saying QR onboarding is not merged). Onboarding works when the gateway is called directly: invite **201**, activate **200** (both token kinds), a second activate **410**. **Update (`fix/m2-caddy-route-onboarding`): the route now exists** in `infra/caddy/Caddyfile` (proved with the real gateway, Caddy and elder app on a throwaway stack, and in the Caddy harness). It reaches staging only when staging's Caddy is restarted with the new Caddyfile. **Re-walked 2026-10-08 through Caddy** on a throwaway stack from `main` (real gateway and Caddy, raw `curl`): invite **201**; the QR **200 `image/png`** (1,267 bytes); activate **200** (`user_id`, `display_name`, `language`, a legacy `token` and a 224-character JWT-shaped `access_token`); the same invite again **410** (`invite already used or not found`); and `GET /me` with that signed `access_token` **200** (`Telugu Elder`, `te`, `elder`). So the **gateway half works end to end through the routed path**. **The clause still does NOT pass: routing is necessary, not sufficient.** The elder app has no call to `/onboarding` (only comments saying QR onboarding is not merged), so an elder still cannot be onboarded from the app. That half is M1's. |
 | records a Telugu voice note | **PASSES ONLY WITH A STOPGAP** | Genuine Chrome WebM/Opus (EBML `1a45dfa3`, 90,134 bytes), uploaded as `webm_opus`. **Stopgap off (the default): the job dies on attempt 1** (`no contracts.ai AudioFormat for chat format 'webm_opus'`), the message is `held`, `pipeline_state=failed`, a SYSTEM `HOLD` event, the Hindi receiver sees nothing, **the Telugu sender sees `held` and no notice** (#18). **Stopgap on: `sent`, `pipeline_state=complete`, job done on attempt 1.** Real staging today: `PIPELINE_ENABLED False`, `AI_ACCEPT_WEBM_AS_OGG_OPUS False`, AI = the mock; its database holds **0 moderation events, 0 renderings, 0 voice notes with a transcript, every message `pipeline_state` NULL**: it has never run the pipeline. |
 | translated text plus natural audio | **PASSES ONLY ON A TECHNICALITY** | Hindi rendering with audio: `audio/wav`, 213,036 bytes, 4.83 s, **RMS 5990 (not silence)**. "Natural" is a human listening judgement that was **not made**. The text is wrong: see the finding below. |
 | the original one tap away | **Contract and gateway: yes. M1's client: NOT VERIFIED** | The receiver's view carries `media_ref` and `transcript`; the original WebM is fetched by the receiver in **one request** (200, `audio/webm`, 90,134 bytes). `clients/elder-app` implements a "Show original" toggle (`recv_show_original`, `__satShowOriginal`, `elder_app.py` ~l.747–779); **that was read, not exercised.** A search of the deployed staging bundles found nothing either way (Reflex ships logic in server state), so it proves neither. |
-| a stewardship check whose decision is visible in the moderator console's audit log | **DOES NOT PASS** | The decision is recorded and readable **through the gateway API as a moderator**: `classifier ALLOW, A_DEVOTIONAL, confidence 0.75, policy@2026-09-22, model stub-keywords@0, "[stub] No policy signal found; default devotional."` The elder gets **403**. But: **the check is the keyword stub**; **`/moderation*` is not routed** (502 through the gate's Caddy, 404 on staging); and **the console (M4's `clients/admin-console/`) is in the repo but deployed nowhere**: it is in no compose file or Caddy route, and no console container runs on the server. **Correction (2026-10-07):** this row first said the console was a README only, which was true until PR #103 merged. **I did not run the console**, so "the decision is visible in the console's audit log" is **not demonstrated**; what is shown is the same trail through the gateway's API. The held note's queue item has `transcript: null` and `pivot_text_en: null`, so a moderator sees no machine-read text. |
+| a stewardship check whose decision is visible in the moderator console's audit log | **DOES NOT PASS** | The decision is recorded and readable **through the gateway API as a moderator**: `classifier ALLOW, A_DEVOTIONAL, confidence 0.75, policy@2026-09-22, model stub-keywords@0, "[stub] No policy signal found; default devotional."` The elder gets **403**. But: **the check is the keyword stub**; **`/moderation*` was not routed** when this row was written (502 through the gate's Caddy, 404 on staging). **Update (phase 3a, PR open): it is routable now.** Before routing, the gateway was found to let a moderator's bare UUID read the queue and a held message's text in the default `AUTH_MODE=legacy`, so the moderator routes now accept ONLY a signed token in every mode; through a real Caddy, in both `legacy` and `jwt`: no token **401**, junk **401**, a bare UUID **401**, a signed non-moderator **403**, a signed moderator **200**. That reaches staging only when its Caddy restarts with the new Caddyfile and its gateway is rebuilt (M1's stack, not touched); and **the console (M4's `clients/admin-console/`) is in the repo but deployed nowhere**: it is in no compose file or Caddy route, and no console container runs on the server. **Correction (2026-10-07):** this row first said the console was a README only, which was true until PR #103 merged. **I did not run the console**, so "the decision is visible in the console's audit log" is **still NOT DEMONSTRATED**: routing is necessary, not sufficient, and does not upgrade this verdict; what is shown is the same trail through the gateway's API. The held note's queue item has `transcript: null` and `pivot_text_en: null`, so a moderator sees no machine-read text. |
 | circles and announcements on the Postgres backbone | **PASSES** | An announcement circle created through Caddy; the admin posts (200); **a plain member's post is refused 403** ("Only a moderator or admin can post to an announcement circle"); the rows are in Postgres. Staging's own database (counts only): 33 circles (3 announcement), 47 memberships, 62 messages, schema `b9d4f1a27c3e`. |
 | the measured p90 | **WRITTEN DOWN, WITH CAVEATS** | Below. |
 
@@ -47,8 +47,12 @@ still true, and a gate that says "translated text plus natural audio" passes ove
 - 30 s Telugu notes (below): **8 different transcripts of identical audio**, 84 to 339 characters,
   27–100% Telugu script.
 - Caveat: synthetic Piper speech, one sentence per file, a few synthesized files.
-- A cheap guard exists in the gateway's own lane (a transcript whose letters are mostly not in the
-  claimed language's script is held, not delivered). **Not built; it needs a decision.**
+- A cheap guard in the gateway's own lane (a transcript whose letters are mostly not in the claimed
+  language's script is held, not delivered) is **now built (#120, merged) and OFF by default**, and
+  nothing turns it on: M4 said (#120) that the queue and the sender's wording are not ready for the
+  roughly 70% of Telugu notes it would hold, and a release of such a hold delivers the wrong-script
+  transcript with no translation (OPEN_QUESTIONS #27). Not re-run against the real ASR here: it is
+  covered by unit tests and a sabotage check only, so **the finding above is unchanged in practice**.
 
 ## The p90
 
@@ -76,13 +80,60 @@ classifier `ALLOW`.
   traffic at 30 s (see "Ten notes at once" in `README.md`: the queue is serial, so the wait for the
   10th note is about ten times these).
 
+### Follow-up (2026-10-08): the margin, measured by stage, and what was done about it
+
+The numbers above are **whole-pipeline** times, not the ASR call alone, so "119.9 s against a 120 s
+ASR timeout" was an inference. It is now measured per stage on a throwaway stack (`speech`, `mt`,
+`render` built from `main`, no gateway; synthetic 33.5 s Telugu and 31.7 s Hindi notes from
+`gate/make_long_speech.py`, one request at a time, stage calls timed with a client-side clock):
+
+| 33.5 s Telugu note, n=8 | ASR call alone (s) | MT pivot (s) | render hi+te (s) | sum of the three (s) |
+|---|---|---|---|---|
+| 1 | **130.3** | 1.9 | 5.0 | 137.2 |
+| 2 | 67.0 | 1.1 | 3.4 | 71.5 |
+| 3 | 114.5 | 3.4 | 8.1 | 126.0 |
+| 4 | 69.7 | 12.8 | 33.6 | 116.1 |
+| 5 | 75.9 | 0.8 | 2.0 | 78.7 |
+| 6 | 70.3 | 5.9 | 22.9 | 99.1 |
+| 7 | 83.8 | 8.7 | 32.7 | 125.2 |
+| 8 | **121.5** | 11.9 | 42.8 | 176.2 |
+
+- **ASR alone: p50 79.9 s, worst 130.3 s; 2 of 8 calls were over the 120 s timeout** (a timed-out call
+  is a retryable error and is redone). Worst real-time factor 3.9. Hindi (31.7 s, n=3): 15.8, 15.7,
+  15.9 s, and the same 352-character transcript every time.
+- The ASR is 60-96% of the summed Telugu time (lowest when the transcript is long); MT is 1-13 s; render is 2-43 s and grows with the
+  length of the text (the long transcripts are the slow ones here too). The render column asked for
+  both `hi` and `te`; a real note renders only the receivers' languages, so the sum is an upper
+  bound, not a prediction.
+- **Precondition notes (the record has voided runs before):** a first run of this script computed the
+  elapsed time before the request, so every figure in it was 0.0 and it was discarded; this table is
+  from the corrected re-run, in two batches. The host is shared (load average about 3-5 from other
+  stacks, 16 CPUs, `ASR_CPU_THREADS=4`), and my gateway test suite ran on it during the first three
+  rows of the second batch, so treat these as noisy, not as a benchmark. Synthetic speech, one voice.
+- **Abandoned call, n=2, NOT conclusive:** a client that gives up after 5 s and asks again at once
+  got 125.7 s and 144.4 s for the second call (solo runs: 67-130 s). That is suggestive of an abandoned
+  decode still running, but the spread of the solo runs is as large as the effect. It was **not**
+  used to justify anything below.
+
+**What was changed (gateway, `app/ai_client.py`):** the transcribe timeout is no longer one fixed
+number. It is `max(AI_TRANSCRIBE_TIMEOUT_S = 120, 6 s x seconds of audio)`, capped at 600 s, from the
+duration the client declared (undeclared: 120 s). A 33.5 s note now waits up to 201 s, which is 1.5x
+the worst call measured above. **Why this and not fewer retries:** the cause is a fixed number against
+a cost that grows with length, and the 5-attempt retry budget did not cause the timeouts; capping
+attempts would make a note that is merely slow end up held sooner. **What it costs:** the job worker
+is a single loop, so a call that is really stuck now holds it for 201 s instead of 120 s per attempt
+(about 18 minutes over 5 attempts with backoff, instead of about 11 for a 33 s note), and a client
+that declares a long duration can buy a wait of up to the 600 s cap. The retry count was **not**
+changed. Not shown: that the new timeout removes the retries on a real stack; the figures above
+are the evidence for its size, not a re-run of the gate with it on.
+
 ## What this does not show
 
 - A real microphone, a real elder, the real elder-app UI, real staging with the pipeline on.
 - Whether the Hindi audio is "natural".
 - That "Show original" works in M1's client.
 - A real stewardship classifier: none has run.
-- `/onboarding` through staging's Caddy (now routed in the Caddyfile; staging needs its Caddy restarted to get it) and `/moderation` through any public route (still unrouted on purpose).
+- `/onboarding` and `/moderation` on **real staging**: both are routed in the Caddyfile (`/onboarding*` on `main`, `/moderation*` by PR #125), but staging's Caddy has not been restarted with either.
 - The moderator console itself (M4's, merged in #103: queue, side-by-side review, release/block and an audit trail, on fixtures by default, or the chat mock or the gateway by configuration): not run, not deployed.
 
 ## Re-running (the scripts in `e2e/gate/`)

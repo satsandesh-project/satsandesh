@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import struct
 import sys
 import unicodedata
@@ -27,6 +28,9 @@ GATEWAY = "http://gateway:8000"  # direct: the unrouted paths live here
 CADDY = "http://caddy:80"  # what a browser reaches
 FAMILY = "00000000-0000-4000-8000-0000000000f1"
 MODERATOR = "00000000-0000-4000-8000-0000000000a1"
+# /moderation/* accepts only a SIGNED token: inspect.sh mints one and passes it in. With none
+# in the environment this falls back to the bare UUID, which the gateway now refuses (401).
+MODERATOR_TOKEN = os.environ.get("MODERATOR_TOKEN", MODERATOR)
 STATE = "/state/gate_state.json"
 
 
@@ -187,7 +191,7 @@ def cmd_inspect(message_id, viewer):
 
 
 def cmd_moderation(message_id):
-    q = httpx.get(f"{GATEWAY}/moderation/queue", headers=auth(MODERATOR), timeout=30)
+    q = httpx.get(f"{GATEWAY}/moderation/queue", headers=auth(MODERATOR_TOKEN), timeout=30)
     body = q.json()
     show(
         f"GET /moderation/queue (direct) -> {q.status_code}",
@@ -207,7 +211,9 @@ def cmd_moderation(message_id):
         ],
     )
     ev = httpx.get(
-        f"{GATEWAY}/moderation/messages/{message_id}/events", headers=auth(MODERATOR), timeout=30
+        f"{GATEWAY}/moderation/messages/{message_id}/events",
+        headers=auth(MODERATOR_TOKEN),
+        timeout=30,
     )
     show(
         f"GET /moderation/messages/{message_id[:8]}../events (direct) -> {ev.status_code}",
@@ -229,7 +235,7 @@ def cmd_moderation(message_id):
             for e in ev.json().get("events", [])
         ],
     )
-    via_caddy = httpx.get(f"{CADDY}/moderation/queue", headers=auth(MODERATOR), timeout=15)
+    via_caddy = httpx.get(f"{CADDY}/moderation/queue", headers=auth(MODERATOR_TOKEN), timeout=15)
     show(
         f"GET {CADDY}/moderation/queue (what a browser reaches) -> {via_caddy.status_code}",
         via_caddy.text[:50],

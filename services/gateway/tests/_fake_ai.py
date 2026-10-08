@@ -45,6 +45,12 @@ class FakeAi:
         self.write_audio_files = True
         # stage -> (status_code, json body) or an Exception to raise
         self.errors: dict[str, object] = {}
+        # What the real speech service does with an undeclared note: it auto-detects, and answers 422
+        # UNSUPPORTED_LANGUAGE when it guesses a language outside en/hi/te (staging, 2026-10-08: 'nn',
+        # 'si', 'ur'). Set to the guessed code to reproduce; a request WITH a language_hint is fine,
+        # unless `reject_even_with_hint` is also set.
+        self.guess_unsupported: str | None = None
+        self.reject_even_with_hint = False
         # called with the stage name at the moment a request arrives -- lets a test look at the
         # world (e.g. whether a database transaction is open) while "the service" is busy
         self.on_call: Callable[[str], None] | None = None
@@ -70,6 +76,19 @@ class FakeAi:
         self.calls.append((stage, body))
         if self.on_call is not None:
             self.on_call(stage)
+        if (
+            stage == "transcribe"
+            and self.guess_unsupported is not None
+            and (body.get("language_hint") is None or self.reject_even_with_hint)
+        ):
+            return httpx.Response(
+                422,
+                json={
+                    "code": "UNSUPPORTED_LANGUAGE",
+                    "message": f"detected language {self.guess_unsupported!r} is not one of the "
+                    "LanguageCode values this contract supports (en/hi/te)",
+                },
+            )
         scripted = self.errors.get(stage)
         if isinstance(scripted, Exception):
             raise scripted

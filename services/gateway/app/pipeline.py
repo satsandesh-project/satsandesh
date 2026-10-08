@@ -30,6 +30,7 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn, TypeVar
 from urllib.parse import unquote, urlparse
 
+from contracts.ai.errors import ErrorCode
 from contracts.ai.language import LanguageCode
 from contracts.ai.moderation import ModerationAction, ModerationDecision, ModerationRequest
 from contracts.ai.pivot import PivotRequest
@@ -242,6 +243,28 @@ def _ai(session: Session, call: Callable[[_Request], _Response], request: _Reque
     return call(request)
 
 
+def _asr_language_fallback(
+    exc: AiCallError, hint: LanguageCode | None, author: User | None
+) -> LanguageCode | None:
+    """What to try after the ASR answered UNSUPPORTED_LANGUAGE, or None to fail as before.
+
+    The elder app declares no language for a voice note, so the speech service auto-detects, and
+    Whisper's guess can be anything ('nn', 'si', 'ur' on staging, 2026-10-08): a permanent error,
+    which held the note. The proper fix is the speech service choosing only among en/hi/te (M3's).
+    Until then ONE more try with the author's stored language as the hint. Deliberately narrow:
+    only that error code, only when no hint was sent (a declared language is never second-guessed),
+    only if the stored language is one the pipeline supports, once. The risk is real: the stored
+    language is what the author wants to RECEIVE, not necessarily what they spoke, so a note spoken
+    in another language is forced through the wrong decoder (the wrong-script guard is the net for
+    that, and it is off by default). Switch off with PIPELINE_ASR_LANGUAGE_FALLBACK=false."""
+    if not get_settings().PIPELINE_ASR_LANGUAGE_FALLBACK or hint is not None:
+        return None
+    if exc.code is not ErrorCode.UNSUPPORTED_LANGUAGE:
+        return None
+    stored = _primary_subtag(author.preferred_language) if author is not None else None
+    return LanguageCode(stored) if stored in SUPPORTED_LANGUAGES else None
+
+
 def _fail_or_retry(exc: AiCallError) -> NoReturn:
     """Retryable -> let the worker back off; anything else cannot be fixed by
     retrying the identical request."""
@@ -294,7 +317,23 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
                         TranscribeRequest(audio=audio, language_hint=hint),
                     )
                 except AiCallError as exc:
-                    _fail_or_retry(exc)
+                    fallback = _asr_language_fallback(exc, hint, author)
+                    if fallback is None:
+                        _fail_or_retry(exc)
+                    logger.warning(
+                        "message %s: the ASR could not place the language of an undeclared note; "
+                        "retrying once with the author's stored language %s",
+                        message_id,
+                        fallback.value,
+                    )
+                    try:
+                        transcribed = _ai(
+                            session,
+                            client.transcribe,
+                            TranscribeRequest(audio=audio, language_hint=fallback),
+                        )
+                    except AiCallError as second:
+                        _fail_or_retry(second)
                 transcript = transcribed.text.strip()
                 if not transcript:
                     # Nothing to translate or rule on. A person decides --

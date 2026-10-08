@@ -147,6 +147,15 @@ class Settings(BaseSettings):
     # ASR on a cold model is slow (the demo console allows 120s); render does
     # one MT + one TTS pass per target language.
     AI_TRANSCRIBE_TIMEOUT_S: float = 120.0
+    # The ASR's decode time grows with the note's length, so 120 s fits one length only: a 33.5 s
+    # Telugu note took 67-130 s for the ASR call alone, one of five runs past 120 s (GATE_WEEK8.md).
+    # A note gets this many seconds of decode per second of AUDIO (observed worst ~3.9, so 6 leaves
+    # about 1.5x), never less than AI_TRANSCRIBE_TIMEOUT_S above and never more than the cap. 0 turns
+    # the scaling off. The length is what the client declared, hence the cap. The price of a longer
+    # timeout is a longer wait when a call is really stuck, and the job worker is a single loop:
+    # a stuck 33 s note holds it ~200 s per attempt instead of 120 s.
+    AI_TRANSCRIBE_TIMEOUT_PER_AUDIO_S: float = 6.0
+    AI_TRANSCRIBE_TIMEOUT_MAX_S: float = 600.0
     AI_PIVOT_TIMEOUT_S: float = 90.0
     AI_MODERATION_TIMEOUT_S: float = 30.0
     AI_RENDER_TIMEOUT_S: float = 180.0
@@ -189,6 +198,10 @@ class Settings(BaseSettings):
     # action -> status mapping open; this assumes a nudge records a notice and
     # still delivers. Set false to hold nudged messages for a human instead.
     PIPELINE_NUDGE_DELIVERS: bool = True
+    # One more ASR try with the author's stored language when the speech service answers
+    # UNSUPPORTED_LANGUAGE for an UNDECLARED voice note (its auto-detect guessed outside en/hi/te)
+    # instead of holding the note. See app/pipeline.py `_asr_language_fallback` for the risk.
+    PIPELINE_ASR_LANGUAGE_FALLBACK: bool = True
     # The script guard (app/script_check.py; the Week 8 gate's finding): hold a voice note whose
     # transcript is mostly NOT written in the script of its language (ASR labelled `te`, returned
     # Devanagari) for a person, instead of translating and delivering nonsense. OFF by default: it

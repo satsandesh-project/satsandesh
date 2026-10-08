@@ -871,6 +871,92 @@ def test_a_request_the_asr_rejects_is_permanent(db_session, fake, outbox):
         pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
 
 
+# --- the ASR guesses a language outside en/hi/te --------------------------------------------------
+#
+# Staging, 2026-10-08: three real voice notes were HELD because the speech service, left to detect the
+# language of an UNDECLARED note, guessed 'nn', 'si' and 'ur' and answered 422 UNSUPPORTED_LANGUAGE (a
+# permanent error). The elder app declares no language for voice notes, so every note is exposed to this.
+# The fix that belongs in the speech service (M3's) is to pick only among en/hi/te; this is the gateway's
+# half: such a note gets ONE more try with the author's stored language as the hint instead of a hold.
+
+
+def test_an_undeclared_note_the_asr_cannot_place_is_retried_with_the_authors_language_not_held(
+    db_session, fake, outbox
+):
+    fake.guess_unsupported = "nn"
+    message_id = _dm(db_session, author_lang="hi", kind="voice", source_lang=None, due=True)
+
+    _run(db_session, message_id)
+
+    first, second = fake.requests("transcribe")
+    assert first["language_hint"] is None
+    assert second["language_hint"] == "hi"
+    message = _msg(db_session, message_id)
+    assert (message.status, message.pipeline_state) != ("held", "failed")
+    assert message.pipeline_state == "complete"
+    assert message.transcript is not None
+
+
+def test_the_fallback_is_a_single_extra_attempt_and_a_second_rejection_still_holds(
+    db_session, fake, outbox
+):
+    fake.guess_unsupported = "ur"
+    fake.reject_even_with_hint = True
+    message_id = _dm(db_session, author_lang="te", kind="voice", source_lang=None)
+
+    with pytest.raises(PermanentJobError):
+        pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+    assert len(fake.requests("transcribe")) == 2
+
+
+def test_a_declared_note_the_asr_rejects_is_not_retried_with_another_language(
+    db_session, fake, outbox
+):
+    """A declared note already carries a hint; second-guessing the sender would be wrong."""
+    fake.guess_unsupported = "nn"
+    fake.reject_even_with_hint = True
+    message_id = _dm(db_session, author_lang="hi", kind="voice", source_lang="te")
+
+    with pytest.raises(PermanentJobError):
+        pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+    assert len(fake.requests("transcribe")) == 1
+
+
+def test_no_fallback_when_the_authors_stored_language_is_not_one_the_pipeline_supports(
+    db_session, fake, outbox
+):
+    fake.guess_unsupported = "nn"
+    message_id = _dm(db_session, author_lang="ta", kind="voice", source_lang=None)
+
+    with pytest.raises(PermanentJobError):
+        pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+    assert len(fake.requests("transcribe")) == 1
+
+
+def test_other_permanent_asr_errors_are_never_retried_with_a_hint(db_session, fake, outbox):
+    fake.errors["transcribe"] = (422, {"code": "AUDIO_FETCH_FAILED", "message": "no file"})
+    message_id = _dm(db_session, author_lang="hi", kind="voice", source_lang=None)
+
+    with pytest.raises(PermanentJobError):
+        pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+    assert len(fake.requests("transcribe")) == 1
+
+
+def test_the_fallback_can_be_switched_off(db_session, fake, outbox, monkeypatch):
+    monkeypatch.setattr(get_settings(), "PIPELINE_ASR_LANGUAGE_FALLBACK", False)
+    fake.guess_unsupported = "nn"
+    message_id = _dm(db_session, author_lang="hi", kind="voice", source_lang=None)
+
+    with pytest.raises(PermanentJobError):
+        pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+    assert len(fake.requests("transcribe")) == 1
+
+
 def test_a_silent_note_is_held_for_a_human_not_delivered_unclassified(db_session, fake, outbox):
     fake.transcript = ("   ", "te")
     message_id = _dm(db_session, kind="voice", source_lang=None, due=True)

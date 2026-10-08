@@ -3,6 +3,10 @@ issue #65): the review queue, one message's event trail, and release / block.
 
 Everything that contract says "the gateway enforces" is enforced here:
 
+- only a SIGNED token (app/tokens.py) identifies the caller, in every AUTH_MODE: the legacy
+  "a bare UUID is that user" identity is refused here (401), because with it anyone who knows
+  a moderator's id could read the queue and release or block (OPEN_QUESTIONS #23). Caddy cannot
+  know the gateway's mode, so the refusal lives here and does not depend on `AUTH_MODE=jwt`;
 - only a moderator or admin may use any of it -- by the DATABASE role
   (`users.role`). The token stub (app/auth.py) derives `role='elder'` for
   every token, so `require_role("moderator")` could never pass; the row is
@@ -41,9 +45,10 @@ from contracts.chat.moderation import (
     ModerationReviewOut,
 )
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_user
+from app.auth import bearer, get_current_user
 from app.db.base import get_db
 from app.db.models import User as DbUser
 from app.db.moderation import (
@@ -58,12 +63,23 @@ from app.db.repository import get_message_by_id, set_message_status
 from app.messages import _fan_out_recipients, _parse_uuid, message_to_out
 from app.models import User
 from app.push import maybe_push_for_message
+from app.tokens import looks_like_jwt
 
 router = APIRouter(prefix="/moderation", tags=["moderation"])
 
 
+def _signed_token_only(creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
+    """Runs BEFORE get_current_user (declared first below), so a refused legacy token never
+    reaches the stub that would provision a users row for it. No header at all is left to
+    get_current_user, which answers 401 "Not authenticated"."""
+    if creds is not None and not looks_like_jwt(creds.credentials):
+        raise HTTPException(status_code=401, detail="Moderation requires a signed token")
+
+
 def require_moderator(
-    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    _signed: None = Depends(_signed_token_only),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> DbUser:
     try:
         row = db.get(DbUser, uuid.UUID(user.id))

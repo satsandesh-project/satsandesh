@@ -1,0 +1,13 @@
+{
+  "action": "member.add",
+  "admin_id": "user-admin-1",
+  "contract_version": "0.7.0",
+  "created_at": "2026-10-08T05:31:00Z",
+  "details": {
+    "role": "member",
+    "user_id": "user-kamala-1"
+  },
+  "id": "action-1",
+  "target_id": "circle-satsang-evening",
+  "target_type": "circle"
+}

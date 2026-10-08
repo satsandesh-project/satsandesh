@@ -163,14 +163,18 @@ def test_a_moderator_or_admin_may_read_the_queue(client, db_session, login_as, r
 
 
 def test_the_database_role_decides_not_the_token(client, db_session):
-    """Stub auth derives role='elder' from any token. A user whose DB row says
-    moderator must still get in, and a DB elder must not."""
+    """The token carries no role. A user whose DB row says moderator gets in (with a SIGNED
+    token: a bare UUID is refused, tests/test_moderation_identity.py), and a DB elder does not."""
     mod = _user(db_session, "Mod", role="moderator")
     elder = _user(db_session, "Elder", role="elder")
     db_session.commit()
 
-    as_mod = client.get("/moderation/queue", headers={"Authorization": f"Bearer {mod.id}"})
-    as_elder = client.get("/moderation/queue", headers={"Authorization": f"Bearer {elder.id}"})
+    as_mod = client.get(
+        "/moderation/queue", headers={"Authorization": f"Bearer {issue_token(mod.id)}"}
+    )
+    as_elder = client.get(
+        "/moderation/queue", headers={"Authorization": f"Bearer {issue_token(elder.id)}"}
+    )
 
     assert as_mod.status_code == 200
     assert as_elder.status_code == 403
