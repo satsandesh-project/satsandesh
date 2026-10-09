@@ -179,3 +179,15 @@ full table is in the PR description.
 
 **Not decided:** whether `rnnoise` should become the default. That needs a Telugu/Hindi
 A/B on real noisy recordings, which this change does not have.
+
+
+## 14. Demo console records in the browser as a 16 kHz PCM16 WAV, not MediaRecorder
+
+**Context:** the demo console needs the audience-facing laptop's own microphone, not the console PC's. `MediaRecorder` is the obvious browser API, but it produces webm/opus, and `contracts/ai/common.py` `AudioFormat` carries only `wav_pcm16`, `ogg_opus` and `mp3`. There is no `webm_opus`.
+
+**Decisions:**
+- The page captures raw samples (`getUserMedia` + AudioWorklet, ScriptProcessor fallback), downsamples to 16 kHz mono and encodes a PCM16 WAV in JavaScript. The console validates the header and writes it where the existing `/pipeline/transcribe` already reads, so the ASR contract and services are unchanged.
+- The console has its own render port (`DEMO_RENDER_PORT`, default 8006) and never imports render's `Settings` (it raises without `HF_TOKEN`). Demo ports: ASR 8002, MT 8004, console 8005, render 8006. The launcher sets `ASR_PORT=8002` because IndicConformer defaults to 8004 (MT) and render to 8005 (console).
+- Rendered audio is served only for names matching `^render-[0-9a-f]{32}-(te|hi)\.wav$` that resolve inside the render output directory.
+
+**Not decided:** adding `webm_opus` to the contract (would let the gateway accept browser recordings directly, but needs an ffmpeg decode path and is outside this change).

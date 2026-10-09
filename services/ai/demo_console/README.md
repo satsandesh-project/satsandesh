@@ -3,104 +3,165 @@
 A small local web page that runs the **real** AI pipeline end to end, for live
 demos and manual testing:
 
-    microphone  ->  real ASR (services/ai/speech/, :8002)  ->  real MT pivot (services/ai/mt/, :8004)
+```
+Part 1   browser mic -> WAV -> console -> ASR (IndicConformer, :8002) -> MT (IndicTrans2 indic->en, :8004) -> English text
+Part 2   English text -> render (IndicTrans2 en->indic + Piper TTS, :8006) -> Telugu/Hindi text + spoken audio
+```
 
 **This is a demo/testing harness, not the product UI.** The real user-facing app
-is `clients/elder-app/` (owned by M1). The console talks to the ASR and MT
-services only over their public HTTP APIs (`POST /v1/transcribe`, `POST /v1/pivot`),
-the same way the gateway eventually will. It never imports their engines.
+is `clients/elder-app/` (owned by M1). The console talks to the ASR, MT and
+render services only over their public HTTP APIs (`POST /v1/transcribe`,
+`POST /v1/pivot`, `POST /v1/render`). It never imports their engines.
 
 ## Run it (the one command)
 
-From the repo root:
+From the repo root, in a PowerShell window where `HF_TOKEN` is set:
 
 ```powershell
+$env:HF_TOKEN = "hf_..."          # your read token; never printed or stored by the demo
 services\ai\.venv\Scripts\python.exe services\ai\demo_console\start_demo.py
 ```
 
-This starts the ASR service, the MT service and the console, waits for all three
-to report ready, prints `DEMO READY: http://127.0.0.1:8005/` and opens the
-browser. Leave that window open. Ctrl+C stops only the processes this command
-started.
+It starts ASR, MT, render and the console (in that order), waits until all four
+report ready, prints `DEMO READY: http://127.0.0.1:8005/` and opens the browser.
+Leave the window open. Ctrl+C stops only the processes this command started.
 
-- A service already running on its port is **reused**, not restarted. If one
-  service dies mid-demo, run the same command again and only the missing one
-  is started.
-- Logs for each process go to `demo_console/_logs/` (gitignored).
-- `--no-browser` prints the URL without opening it.
-- Children run with `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`, so models
-  load only from the local Hugging Face cache. If the stack comes up ready, the
-  demo needs no network. Required cache entries:
-  `models--Systran--faster-whisper-small` and
-  `models--ai4bharat--indictrans2-indic-en-dist-200M`.
-- Needs the `tools` (sounddevice/soundfile) and `mt` extras installed in
-  `services/ai/.venv`.
+- `--asr whisper` runs the faster-whisper service instead of IndicConformer
+  (fallback only; when last measured on 2026-09-24, before its VAD change, it took 84-97 s per 7 s Telugu clip and returned empty or garbled text. Not re-measured since). `--no-browser` prints the URL without opening it.
+- A service already running on its port is **reused**, not restarted, and the
+  model version it reports is printed. If the ASR on :8002 is not the one you
+  asked for, a loud `!! WARNING` line says so. Nothing is killed.
+- If one service dies mid-demo, run the same command again; only the missing one starts.
+- The wait for readiness is finite (`DEMO_READY_TIMEOUT_S`, default 900 s) and
+  names the service that is not ready. Progress is printed every 15 s.
+- Logs go to `demo_console/_logs/` (gitignored).
+
+## Ports
+
+| Port | Service | Why this port |
+|---|---|---|
+| 8002 | ASR (IndicConformer, or faster-whisper with `--asr whisper`) | Launcher sets `ASR_PORT=8002`. IndicConformer's own default is 8004. |
+| 8004 | MT (indic -> English) | MT's default. |
+| 8005 | Demo console | `DEMO_CONSOLE_PORT`. |
+| 8006 | Render (English -> text + audio) | Launcher sets `RENDER_PORT=8006`. Render's own default is 8005, which is the console's. The console reads `DEMO_RENDER_PORT` (default 8006) and never imports render's settings. |
+
+## What must be on this machine (children run offline)
+
+Children run with `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`, so models load
+from the local Hugging Face cache only.
+
+- HF cache entries: `models--ai4bharat--indic-conformer-600m-multilingual`,
+  `models--ai4bharat--indictrans2-indic-en-dist-200M`,
+  `models--ai4bharat--indictrans2-en-indic-dist-200M`
+  (`models--Systran--faster-whisper-small` only for `--asr whisper`).
+- Piper voices `te_IN-maya-medium` and `hi_IN-rohan-medium` (`.onnx` + `.onnx.json`)
+  in `services/ai/render/voices/` (or the folder in `RENDER_VOICE_DIR`).
+- `piper-tts` installed in `services/ai/.venv`.
+- **`HF_TOKEN` in the environment.** IndicConformer and render both refuse to
+  start without it, even though the models load from cache. The launcher warns
+  before starting if it is missing. The token is passed to the children and is
+  never printed or logged.
+- The en->indic translation model (render) and IndicConformer are gated on Hugging Face: accept the terms once, online, with the account the token belongs to.
+
+**Offline status: not yet verified.** Render's `TtsEngine._fetch()` calls
+`hf_hub_download(..., local_dir=voices)` for both voices on every start. Whether
+that call succeeds with `HF_HUB_OFFLINE=1` when the files are already on disk has
+**not** been tested on this machine (render could not be started: no token, no
+`piper-tts`). Until it is, do not promise "no network needed". If render fails
+to start offline, the smallest launcher-only change is to run the render child
+without `HF_HUB_OFFLINE` (keeping `TRANSFORMERS_OFFLINE=1`), which means render
+contacts huggingface.co for the voice files at start-up.
 
 ## What the page shows
 
-1. Language toggle: Telugu (default) / Hindi, sent as the ASR `language_hint`
-   and the MT `source_language`.
-2. **Record (7s)** with a live countdown. The button stays disabled until the
-   run finishes, so a double click can't start a second run.
-3. Step-by-step status (Record -> Transcribe -> Translate) with a live
-   elapsed-seconds counter, so a slow CPU inference never looks frozen.
-4. Panels: **Transcript** (source language), **English translation**, and
-   **Latency per stage**. The latency figures come from the services' own
-   responses (ASR `stage_timings` and `duration_ms`, MT `duration_ms`) plus the
-   console-measured round trip. Nothing is estimated.
-5. A status line showing whether ASR and MT are ready, warming up or not running.
+**Part 1 - Speak -> English**
+1. Language toggle: Telugu (default) / Hindi.
+2. **Start recording / Stop recording**, a live elapsed counter, and a live
+   input-level meter (a dead microphone is visible within a second or two).
+   Hard cap `DEMO_MAX_RECORD_SECONDS` (default 20 s); it stops by itself.
+3. Step status (Upload -> Transcribe -> Translate) with elapsed seconds.
+4. Panels: transcript, English translation, latency per stage. The ASR/MT/render
+   figures come from the services' own responses plus the console-measured round
+   trip. The upload figure is measured in the browser. Nothing is estimated.
+5. A typed-text box that goes straight to MT (fallback when the mic or ASR is unavailable).
+6. "Advanced: record on the console PC's own microphone" - the old server-side
+   7 s recording, kept but no longer the default.
 
-On any failure (no microphone, silent recording, a service not running, a model
-still warming up, a timeout, no speech recognised), the page shows a short,
-specific message and a **Try again** button. No page reload or restart is needed.
+**Part 2 - Family reply -> spoken**
+1. English box, pre-filled with the Part 1 translation when there is one;
+   editable, and usable on its own.
+2. Target language (defaults to the Part 1 language), **Translate and speak**.
+3. Shows the translated text, an audio player (autoplay tried once; the play
+   button is the fallback), a **Replay** button, the audio length, and latency.
+   The last audio stays on screen until the next successful run.
+4. If render reports a degraded result (text only / TTS skipped), the text is
+   shown with "Audio is not available for this one". That is not treated as a failure.
+5. Render reports one duration for translate + speak together; the console shows that
+   one number plus the round trip and does not invent a split.
+
+The status line shows each service's state and the model version it reports.
+Every failure shows a short message and **Try again**; no stack traces.
+
+## Browser microphone notes
+
+- Open the page as **`http://127.0.0.1:8005/`**, not a LAN IP or computer name.
+  Browsers only allow the microphone on secure origins and `127.0.0.1` counts as one.
+  The page shows a warning if it was opened another way.
+- Click **Allow** when the browser asks. If it was blocked, use the icon in the
+  address bar to allow it, then Try again. With no microphone the page says so and
+  typing still works.
+- The page records raw samples, downsamples to 16 kHz mono and builds a 16-bit WAV
+  in JavaScript. It does **not** use `MediaRecorder` (webm/opus is not in the
+  contract's `AudioFormat`). See `services/ai/DECISIONS.md` #14.
 
 ## How it's built
 
-- `app.py` is FastAPI on port **8005** (8001 mock, 8002 speech, 8003
-  moderation and 8004 MT were taken). It reads the ASR/MT ports from
-  `speech/settings.py` and `mt/settings.py`, so env overrides there are
-  honoured. Endpoints:
-  - `GET /health` is liveness. `GET /health/deps` reports ASR/MT readiness.
-  - `POST /pipeline/record` records 7s with
-    `services/ai/tools/record_sample.py`'s `record_to_file()` (the same code path
-    as the bake-off CLI) to `_last_recording.wav` (overwritten, gitignored).
-  - `POST /pipeline/transcribe` sends `{source_language}` to the ASR service.
-  - `POST /pipeline/translate` sends `{text, source_language}` to the MT service.
-  - Every error is returned as `{"error": {"stage", "title", "message"}}`.
-  - On startup, the console polls ASR/MT readiness and logs the result to its
-    terminal/log without blocking startup.
-- `static/index.html` is plain HTML and vanilla JS with no build step and no
-  external fonts or scripts. Besides the mic flow, it has a "type text directly"
-  box that sends typed/pasted text straight to `/pipeline/translate` (no
-  recording or ASR), as a fallback when the mic or ASR is unavailable.
-- `start_demo.py` is the launcher described above.
+- `app.py` (FastAPI, port 8005). Endpoints:
+  - `GET /health`, `GET /health/deps` (ASR/MT/render state and model versions).
+  - `POST /pipeline/upload` (browser WAV, `audio/wav`): checks RIFF header, 16 kHz,
+    mono, 16-bit, non-empty, size cap, duration cap and the silence threshold, then
+    writes `_last_recording.wav`. Returns `{duration_s, peak}`.
+  - `POST /pipeline/record` (server mic), `/pipeline/transcribe`, `/pipeline/translate`.
+  - `POST /pipeline/render` `{text, target_language}`.
+  - `GET /pipeline/audio/{name}`: serves only `^render-[0-9a-f]{32}-(te|hi)\.wav$`
+    that resolves inside the render output directory (`RENDER_OUTPUT_DIR`, default
+    `services/ai/render/output/`). Render and the console must use the same directory;
+    the launcher passes the environment through to both.
+  - Every error is `{"error": {"stage", "title", "message"}}`.
+- `static/index.html`: plain HTML and vanilla JS, no build step, no external fonts or scripts.
+- `start_demo.py`: the launcher. `build_services()` and `child_env()` are unit-tested.
 
-Tests (no models or microphone needed):
+Tests (no models, microphone or network needed):
 
 ```bash
 cd services/ai && ./.venv/Scripts/python.exe -m pytest demo_console/tests
 ```
 
-## Extending it (Week 7 TTS, later moderation)
+## Presenting
 
-Future stages should extend this console, not replace it. The pipeline is a
-plain ordered list on both sides:
+1. **Start it 10 minutes early.** Cold-start time on the demo machine has **not
+   been measured yet** (see the PR). Run it once the day before and note the number.
+2. Wait for `DEMO READY`, then open `http://127.0.0.1:8005/` and check all three
+   status dots are green. Do one practice sentence in Telugu and one in Hindi.
+3. Say: "I speak in Telugu; the system writes it down, turns it into English, and
+   then a family reply in English comes back spoken in Telugu."
+4. If something fails:
+   - **Mic blocked / no mic:** allow it in the address bar, or use the typed-text box.
+   - **Recording silent:** check the meter moves while you speak; check the mic is not muted.
+   - **ASR not running / too slow:** run the start command again (it restarts only the missing
+     service); fall back to the typed-text box; as a last resort restart with `--asr whisper`.
+   - **MT not running:** run the start command again; Part 1 stops after the transcript.
+   - **Render not running or no audio:** run the start command again; if the page says
+     "audio is not available", the translated text is still shown.
+5. Transcript and audio correctness have **not** been checked by a Telugu/Hindi speaker.
+   Do that before presenting.
+
+## Extending it (later: moderation badge)
+
+Future stages extend this console, not replace it. The pipeline is a plain ordered list on both sides:
 
 - backend: `PIPELINE_STAGES` in `app.py`. Add a stage function and one
   `PipelineStage(...)` entry, and `POST /pipeline/<id>` is registered automatically.
-- frontend: the `STAGES` array in `static/index.html`. Add one entry with the
-  same shape and a matching panel.
+- frontend: `STAGE_DEFS` in `static/index.html`. Add one entry and a panel.
 
-A TTS playback panel (Week 7) and a moderation badge (later) each fit this pattern.
-
-## Known limitation (found while building this, 2026-09-24)
-
-The real ASR service (faster-whisper `small`, int8, CPU) was run on real
-Telugu speech here for the first time, using 7s slices of the bake-off
-recordings in `bakeoff/samples/`. It took **84–97s** of inference per 7s clip
-and returned an empty string or garbled mixed-script text. The console reports
-this correctly (as "took too long" or "No speech recognised"), but it is not
-demo-quality on Telugu until the ASR model or config changes in
-`services/ai/speech/`. That is out of scope for this directory. MT on correct
-Telugu text works (for example, "నేను ఈ రోజు మా అమ్మతో మార్కెట్‌కి వెళ్తున్నాను."
--> "I am going to the market today with my mother." in about 1.4s).
+A moderation badge fits this pattern.

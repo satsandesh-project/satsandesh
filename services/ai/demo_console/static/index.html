@@ -36,8 +36,14 @@
   .dep[data-state="warming_up"]::before { background: var(--warn); }
   .dep[data-state="down"]::before { background: var(--err); }
 
+  .banner { display: none; background: var(--warn-soft); border: 1px solid var(--warn); color: var(--ink);
+    border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; }
+  .banner.show { display: block; }
+
   .controls { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
     padding: 20px; display: grid; gap: 18px; }
+  .controls + .controls { margin-top: 22px; }
+  .controls h2 { margin: 0; font-size: 1.15rem; }
   .row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   .label { font-weight: 600; min-width: 90px; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -49,10 +55,18 @@
 
   button { font: inherit; border: 0; border-radius: 12px; cursor: pointer; }
   button:disabled { cursor: not-allowed; opacity: .55; }
-  #record { background: var(--accent); color: var(--accent-ink); font-size: 1.25rem; font-weight: 600;
+  #mic { background: var(--accent); color: var(--accent-ink); font-size: 1.25rem; font-weight: 600;
     padding: 16px 34px; min-width: 240px; }
-  #record.recording { background: var(--rec); opacity: 1; }
-  #retry { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 10px 20px; }
+  #mic.recording { background: var(--rec); opacity: 1; }
+  #record { background: var(--accent); color: var(--accent-ink); font-weight: 600; padding: 10px 24px; }
+  .ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 10px 20px; }
+
+  .meter-wrap { display: none; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .meter-wrap.show { display: flex; }
+  .meter { width: 220px; height: 12px; border-radius: 6px; background: var(--line); overflow: hidden; }
+  .meter > div { height: 100%; width: 0; background: var(--ok); transition: width .08s linear; }
+  #elapsed { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .hint { color: var(--warn); font-size: .92rem; min-height: 1.3em; }
 
   .status { font-size: 1.1rem; font-weight: 600; min-height: 1.6em; }
   .steps { display: flex; gap: 8px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
@@ -66,17 +80,19 @@
   .error { display: none; background: var(--err-soft); color: var(--ink); border: 1px solid var(--err);
     border-radius: 12px; padding: 14px 16px; }
   .error.show { display: block; }
-  .error h2 { margin: 0 0 4px; font-size: 1.05rem; color: var(--err); }
+  .error h2, .error h3 { margin: 0 0 4px; font-size: 1.05rem; color: var(--err); }
   .error p { margin: 0 0 12px; overflow-wrap: anywhere; }
 
   .divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .85rem; margin: 2px 0; }
   .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
   .text-flow { display: flex; flex-direction: column; gap: 10px; }
-  #text-input { width: 100%; min-height: 90px; resize: vertical; font: inherit; padding: 10px 12px;
+  textarea { width: 100%; min-height: 90px; resize: vertical; font: inherit; padding: 10px 12px;
     border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); }
-  #text-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  #text-translate { background: var(--accent); color: var(--accent-ink); font-size: 1rem; font-weight: 600;
+  textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .primary { background: var(--accent); color: var(--accent-ink); font-size: 1rem; font-weight: 600;
     padding: 10px 26px; align-self: flex-start; }
+  details.legacy summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+  details.legacy .row { margin-top: 10px; }
 
   .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
   .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; min-height: 130px; }
@@ -88,22 +104,35 @@
   table.lat { width: 100%; border-collapse: collapse; font-size: .92rem; font-variant-numeric: tabular-nums; }
   table.lat td { padding: 5px 4px; border-top: 1px solid var(--line); }
   table.lat td:last-child { text-align: right; }
-  @media (max-width: 640px) { .panels { grid-template-columns: 1fr; } #record { width: 100%; } }
+
+  #reply-result { display: none; gap: 12px; }
+  #reply-result.show { display: grid; }
+  #reply-text-out { font-size: 1.35rem; line-height: 1.55; overflow-wrap: anywhere; }
+  #reply-audio-wrap { display: none; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #reply-audio-wrap.show { display: flex; }
+  #reply-audio { max-width: 100%; }
+  .note { background: var(--warn-soft); border: 1px solid var(--warn); border-radius: 10px; padding: 8px 12px; }
+  .small { font-size: .8rem; color: var(--muted); overflow-wrap: anywhere; }
+  @media (max-width: 640px) { .panels { grid-template-columns: 1fr; } #mic { width: 100%; } }
 </style>
 </head>
 <body>
 <main>
   <header>
     <h1>SatSandesh — AI pipeline demo</h1>
-    <p>Microphone → real speech recognition (ASR) → real translation to English (MT). Runs fully offline.</p>
+    <p>Part 1: microphone → speech recognition (ASR) → English (MT). Part 2: English reply → target language → spoken audio. All local.</p>
   </header>
+
+  <div class="banner" id="host-banner" role="alert"></div>
 
   <div class="deps" aria-live="polite">
     <span class="dep" id="dep-asr" data-state="unknown">ASR: checking…</span>
     <span class="dep" id="dep-mt" data-state="unknown">MT: checking…</span>
+    <span class="dep" id="dep-render" data-state="unknown">Render: checking…</span>
   </div>
 
   <section class="controls">
+    <h2>Part 1 — Speak → English</h2>
     <div class="row">
       <span class="label">Language</span>
       <div class="seg" role="radiogroup" aria-label="Spoken language">
@@ -112,23 +141,36 @@
       </div>
     </div>
     <div class="row">
-      <button id="record" type="button">Record (7s)</button>
+      <button id="mic" type="button">Start recording</button>
       <div>
-        <div class="status" id="status" aria-live="polite">Ready. Press Record and speak one sentence.</div>
+        <div class="status" id="status" aria-live="polite">Ready. Press Start recording, speak one sentence, then Stop.</div>
         <ol class="steps" id="steps"></ol>
       </div>
     </div>
+    <div class="meter-wrap" id="meter-wrap">
+      <span id="elapsed">0.0 s</span>
+      <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
+      <span class="small" id="meter-label">input level</span>
+    </div>
+    <div class="hint" id="mic-hint" aria-live="polite"></div>
     <div class="divider">— or type text directly —</div>
     <div class="text-flow">
       <textarea id="text-input" placeholder="Type or paste a Telugu or Hindi sentence…"
         aria-label="Text to translate"></textarea>
-      <button id="text-translate" type="button" disabled>Translate</button>
+      <button id="text-translate" class="primary" type="button" disabled>Translate</button>
     </div>
+    <details class="legacy">
+      <summary>Advanced: record on the console PC's own microphone</summary>
+      <div class="row">
+        <button id="record" type="button">Record (7s)</button>
+        <span class="small">Server-side recording; the browser microphone above is the normal path.</span>
+      </div>
+    </details>
 
     <div class="error" id="error" role="alert">
       <h2 id="error-title"></h2>
       <p id="error-msg"></p>
-      <button id="retry" type="button">Try again</button>
+      <button id="retry" class="ghost" type="button">Try again</button>
     </div>
   </section>
 
@@ -148,27 +190,71 @@
       <div class="body empty">No run yet.</div>
     </div>
   </section>
+
+  <section class="controls" id="reply" style="margin-top:22px">
+    <h2>Part 2 — Family reply → spoken</h2>
+    <textarea id="reply-input" placeholder="English reply to translate and speak…"
+      aria-label="English reply"></textarea>
+    <div class="row">
+      <span class="label">Speak in</span>
+      <div class="seg" role="radiogroup" aria-label="Target language">
+        <label><input type="radio" name="tlang" value="te" checked><span>Telugu</span></label>
+        <label><input type="radio" name="tlang" value="hi"><span>Hindi</span></label>
+      </div>
+      <button id="reply-go" class="primary" type="button" disabled>Translate and speak</button>
+    </div>
+    <div class="status" id="reply-status" aria-live="polite"></div>
+    <div class="error" id="reply-error" role="alert">
+      <h3 id="reply-error-title"></h3>
+      <p id="reply-error-msg"></p>
+      <button id="reply-retry" class="ghost" type="button">Try again</button>
+    </div>
+    <div id="reply-result">
+      <div class="small" id="reply-lang-label"></div>
+      <div id="reply-text-out"></div>
+      <div class="note" id="reply-degraded" hidden></div>
+      <div id="reply-audio-wrap">
+        <audio id="reply-audio" controls preload="auto"></audio>
+        <button id="reply-replay" class="ghost" type="button">Replay</button>
+        <span class="small" id="reply-length"></span>
+      </div>
+      <div class="small" id="reply-autoplay-hint" hidden>Your browser blocked autoplay — press play above.</div>
+      <div class="small" id="reply-models"></div>
+      <div id="reply-latency"></div>
+    </div>
+  </section>
 </main>
 
 <script>
 "use strict";
 const LANG_NAMES = { te: "Telugu", hi: "Hindi" };
-let RECORD_SECONDS = 7;
+const TARGET_RATE = 16000;
+let RECORD_SECONDS = 7;      // legacy server-side recording only
+let MAX_RECORD_SECONDS = 20; // browser recording hard cap (overridden from /health/deps)
 
-// Pipeline stages, run in order; each maps 1:1 to POST /pipeline/<id> in app.py.
-// To add a stage (e.g. Week 7 TTS playback): add a panel in the HTML above, a
-// PipelineStage in app.py, and one entry here with the same shape.
-const STAGES = [
-  {
+// Part 1 stages. Each maps 1:1 to POST /pipeline/<id> in app.py. "record" is the
+// legacy server-microphone path; "upload" is the browser-microphone path.
+// A new stage = a PipelineStage in app.py plus one entry here.
+const STAGE_DEFS = {
+  record: {
     id: "record", step: "Record",
     running: () => `Recording — speak now… ${RECORD_SECONDS}s`,
     timeoutMs: () => (RECORD_SECONDS + 20) * 1000,
     body: () => ({}),
     render: (r, ctx) => { ctx.latency.push(["Record (microphone, wall clock)", r.latency_ms.record_wall]); },
   },
-  {
+  upload: {
+    id: "upload", step: "Upload",
+    running: () => "Sending the recording to the console…",
+    timeoutMs: () => 30000,
+    raw: (ctx) => ctx.wav,
+    render: (r, ctx) => {
+      ctx.latency.push(["Upload (browser → console, wall clock)", ctx.uploadMs]);
+    },
+  },
+  transcribe: {
     id: "transcribe", step: "Transcribe",
-    running: () => "Transcribing… (ASR, faster-whisper)",
+    running: () => "Transcribing… (ASR)",
     timeoutMs: () => 130000,
     body: (ctx) => ({ source_language: ctx.lang }),
     render: (r, ctx) => {
@@ -180,7 +266,7 @@ const STAGES = [
         ["ASR — round trip (console → service)", l.round_trip]);
     },
   },
-  {
+  translate: {
     id: "translate", step: "Translate",
     running: () => "Translating to English… (MT, IndicTrans2)",
     timeoutMs: () => 100000,
@@ -189,17 +275,24 @@ const STAGES = [
       fillPanel("panel-translation", r.text || "(empty translation)", `model: ${r.model_version}`);
       ctx.latency.push(["MT — service total", r.latency_ms.service_total],
         ["MT — round trip (console → service)", r.latency_ms.round_trip]);
+      offerReply(r.text, ctx.lang);
     },
   },
-];
+};
+const MIC_STAGES = [STAGE_DEFS.upload, STAGE_DEFS.transcribe, STAGE_DEFS.translate];
+const SERVER_STAGES = [STAGE_DEFS.record, STAGE_DEFS.transcribe, STAGE_DEFS.translate];
 
 const $ = (id) => document.getElementById(id);
-const recordBtn = $("record"), statusEl = $("status"), stepsEl = $("steps");
+const micBtn = $("mic"), recordBtn = $("record"), statusEl = $("status"), stepsEl = $("steps");
 const textInput = $("text-input"), textTranslateBtn = $("text-translate");
-let busy = false, countdownTimer = null, elapsedTimer = null;
+let busy = false, recording = false, replyBusy = false;
+let elapsedTimer = null, countdownTimer = null;
+let currentSteps = MIC_STAGES;
 
 function selectedLang() { return document.querySelector('input[name="lang"]:checked').value; }
+function targetLang() { return document.querySelector('input[name="tlang"]:checked').value; }
 function setLangInputsDisabled(d) { document.querySelectorAll('input[name="lang"]').forEach(i => i.disabled = d); }
+function anyBusy() { return busy || recording || replyBusy; }
 
 function fillPanel(id, text, meta) {
   const p = $(id), b = p.querySelector(".body");
@@ -211,10 +304,7 @@ function resetPanel(id, placeholder) {
   b.textContent = placeholder; b.classList.add("empty");
   const m = p.querySelector(".meta"); if (m) m.textContent = "";
 }
-function renderLatency(rows) {
-  const b = $("panel-latency").querySelector(".body");
-  if (!rows.length) { b.textContent = "No run yet."; b.classList.add("empty"); return; }
-  b.classList.remove("empty"); b.textContent = "";
+function latencyTable(rows) {
   const t = document.createElement("table"); t.className = "lat";
   for (const [name, ms] of rows) {
     if (ms === undefined || ms === null) continue;
@@ -222,11 +312,17 @@ function renderLatency(rows) {
     tr.insertCell().textContent = name;
     tr.insertCell().textContent = Number(ms).toLocaleString(undefined, { maximumFractionDigits: 0 });
   }
-  b.appendChild(t);
+  return t;
+}
+function renderLatency(rows) {
+  const b = $("panel-latency").querySelector(".body");
+  if (!rows.length) { b.textContent = "No run yet."; b.classList.add("empty"); return; }
+  b.classList.remove("empty"); b.textContent = "";
+  b.appendChild(latencyTable(rows));
 }
 function renderSteps(states) {
   stepsEl.textContent = "";
-  STAGES.forEach((s, i) => {
+  currentSteps.forEach((s, i) => {
     const li = document.createElement("li");
     li.textContent = s.step; li.dataset.state = states[i] || "pending";
     stepsEl.appendChild(li);
@@ -242,36 +338,25 @@ function hideError() { $("error").classList.remove("show"); }
 
 function resetAll() {
   hideError();
+  $("mic-hint").textContent = "";
   const lang = selectedLang();
   $("transcript-title").textContent = `Transcript (${LANG_NAMES[lang]})`;
   resetPanel("panel-transcript", "Waiting for a recording…");
   resetPanel("panel-translation", "Waiting for a transcript…");
   renderLatency([]);
+  currentSteps = MIC_STAGES;
   renderSteps([]);
-  statusEl.textContent = "Ready. Press Record and speak one sentence.";
+  statusEl.textContent = "Ready. Press Start recording, speak one sentence, then Stop.";
 }
 
-function startCountdown() {
-  let left = RECORD_SECONDS;
-  recordBtn.textContent = `● Recording… ${left}s`;
-  recordBtn.classList.add("recording");
-  statusEl.textContent = `Recording — speak now… ${left}s left`;
-  countdownTimer = setInterval(() => {
-    left -= 1;
-    if (left > 0) {
-      recordBtn.textContent = `● Recording… ${left}s`;
-      statusEl.textContent = `Recording — speak now… ${left}s left`;
-    } else {
-      stopCountdown();
-      recordBtn.textContent = "Working…";
-      statusEl.textContent = "Finishing the recording…";
-    }
-  }, 1000);
-}
-function stopCountdown() {
-  if (countdownTimer) clearInterval(countdownTimer);
-  countdownTimer = null;
-  recordBtn.classList.remove("recording");
+function setControls() {
+  const working = busy || recording || replyBusy;
+  micBtn.disabled = busy || replyBusy;
+  recordBtn.disabled = working;
+  textInput.disabled = busy || recording;
+  setLangInputsDisabled(busy || recording);
+  updateTextTranslateDisabled();
+  updateReplyDisabled();
 }
 
 // Live elapsed-seconds readout so a slow CPU inference never looks like a hang.
@@ -282,23 +367,22 @@ function startElapsed(stage) {
     statusEl.textContent = `${stage.running()} ${Math.floor((Date.now() - t0) / 1000)}s`;
   }, 1000);
 }
-function stopElapsed() {
-  if (elapsedTimer) clearInterval(elapsedTimer);
-  elapsedTimer = null;
+function stopElapsed() { if (elapsedTimer) clearInterval(elapsedTimer); elapsedTimer = null; }
+
+function asError(e, fallbackTitle) {
+  return { title: (e && e.title) || fallbackTitle || "Something went wrong",
+           message: (e && e.message) || String(e) };
 }
 
-async function callStage(stage, ctx) {
+async function post(url, init, timeoutMs, stepName) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), stage.timeoutMs());
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let resp;
   try {
-    resp = await fetch(`/pipeline/${stage.id}`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(stage.body(ctx)), signal: ctrl.signal,
-    });
+    resp = await fetch(url, { method: "POST", ...init, signal: ctrl.signal });
   } catch (e) {
     if (e.name === "AbortError") {
-      throw { title: `${stage.step} step timed out`,
+      throw { title: `${stepName} step timed out`,
               message: "No response in time. Check the service terminals/logs, then press Try again." };
     }
     throw { title: "The demo console is not responding",
@@ -309,125 +393,387 @@ async function callStage(stage, ctx) {
   try { data = await resp.json(); } catch (_) { /* non-JSON body */ }
   if (!resp.ok) {
     const err = data && data.error;
-    throw { title: (err && err.title) || `${stage.step} step failed`,
+    throw { title: (err && err.title) || `${stepName} step failed`,
             message: (err && err.message) || `Unexpected HTTP ${resp.status} from the demo console.` };
   }
   return data;
 }
 
-async function runPipeline() {
+function callStage(stage, ctx) {
+  if (stage.raw) {
+    return post(`/pipeline/${stage.id}`,
+      { headers: { "Content-Type": "audio/wav" }, body: stage.raw(ctx) }, stage.timeoutMs(), stage.step);
+  }
+  return post(`/pipeline/${stage.id}`,
+    { headers: { "Content-Type": "application/json" }, body: JSON.stringify(stage.body(ctx)) },
+    stage.timeoutMs(), stage.step);
+}
+
+async function runPipeline(stages, ctx) {
   if (busy) return;
-  busy = true;
-  resetAll();
-  recordBtn.disabled = true; setLangInputsDisabled(true);
-  textInput.disabled = true; textTranslateBtn.disabled = true;
-  const ctx = { lang: selectedLang(), latency: [] };
-  const states = STAGES.map(() => "pending");
+  busy = true; currentSteps = stages;
+  hideError(); setControls();
+  const lang = ctx.lang;
+  $("transcript-title").textContent = `Transcript (${LANG_NAMES[lang]})`;
+  resetPanel("panel-transcript", "Waiting for a recording…");
+  resetPanel("panel-translation", "Waiting for a transcript…");
+  renderLatency([]);
+  const states = stages.map(() => "pending");
   let i = 0;
   try {
-    for (i = 0; i < STAGES.length; i++) {
-      const stage = STAGES[i];
+    for (i = 0; i < stages.length; i++) {
+      const stage = stages[i];
       states[i] = "running"; renderSteps(states);
-      if (stage.id === "record") startCountdown(); else startElapsed(stage);
+      if (stage.id === "record") startServerCountdown(); else startElapsed(stage);
+      const t0 = performance.now();
       const result = await callStage(stage, ctx);
-      stopCountdown(); stopElapsed();
+      if (stage.id === "upload") ctx.uploadMs = performance.now() - t0;
+      stopServerCountdown(); stopElapsed();
       stage.render(result, ctx);
       renderLatency(ctx.latency);
       states[i] = "done"; renderSteps(states);
     }
-    statusEl.textContent = "Done. Press Record to try another sentence.";
+    statusEl.textContent = "Done. Press Start recording to try another sentence.";
   } catch (e) {
-    stopCountdown(); stopElapsed();
+    stopServerCountdown(); stopElapsed();
     states[i] = "failed"; renderSteps(states);
-    statusEl.textContent = `Stopped at the ${STAGES[i] ? STAGES[i].step : "pipeline"} step.`;
-    const title = (e && e.title) || "Something went wrong";
-    const message = (e && e.message) || String(e);
-    showError(title, message);
+    statusEl.textContent = `Stopped at the ${stages[i] ? stages[i].step : "pipeline"} step.`;
+    const err = asError(e);
+    showError(err.title, err.message);
   } finally {
-    busy = false;
-    recordBtn.disabled = false; setLangInputsDisabled(false);
-    recordBtn.textContent = `Record (${RECORD_SECONDS}s)`;
-    textInput.disabled = false; updateTextTranslateDisabled();
+    busy = false; recordBtn.textContent = `Record (${RECORD_SECONDS}s)`; setControls();
   }
 }
 
-// Standalone fallback path: typed/pasted text straight to MT, skipping record+transcribe
-// entirely. Reuses the existing "translate" stage definition (same request shape, same
-// render-into-panel-translation logic, same latency-row labels) — the only difference is
-// ctx.transcript comes from the textarea instead of a prior ASR call.
-const translateStageDef = STAGES.find((s) => s.id === "translate");
+// ---- legacy server-side recording (fixed timer) ----
+function startServerCountdown() {
+  let left = RECORD_SECONDS;
+  recordBtn.textContent = `● Recording… ${left}s`;
+  statusEl.textContent = `Recording on the console PC — speak now… ${left}s left`;
+  countdownTimer = setInterval(() => {
+    left -= 1;
+    if (left > 0) {
+      recordBtn.textContent = `● Recording… ${left}s`;
+      statusEl.textContent = `Recording on the console PC — speak now… ${left}s left`;
+    } else { stopServerCountdown(); recordBtn.textContent = "Working…"; }
+  }, 1000);
+}
+function stopServerCountdown() { if (countdownTimer) clearInterval(countdownTimer); countdownTimer = null; }
+recordBtn.addEventListener("click", () =>
+  runPipeline(SERVER_STAGES, { lang: selectedLang(), latency: [] }));
 
-function updateTextTranslateDisabled() {
-  textTranslateBtn.disabled = busy || !textInput.value.trim();
+// ---- browser microphone: getUserMedia -> Float32 -> 16 kHz mono PCM16 WAV (no MediaRecorder) ----
+const WORKLET_SRC = `
+class Tap extends AudioWorkletProcessor {
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch && ch.length) this.port.postMessage(ch.slice(0));
+    return true;
+  }
+}
+registerProcessor("tap", Tap);`;
+
+let cap = null; // { stream, ctx, chunks, sampleRate, t0, timer, cleanup, peakSeen }
+
+function micProblem(e) {
+  const name = e && e.name;
+  if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") {
+    return { title: "Microphone access is blocked",
+             message: "Allow microphone access in the browser address bar, then press Try again. " +
+                      "You can still type text below." };
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError" || name === "DevicesNotFoundError") {
+    return { title: "No microphone found",
+             message: "No input device was found. Plug in or enable a microphone, then press Try again. " +
+                      "You can still type text below." };
+  }
+  if (name === "NotReadableError" || name === "AbortError") {
+    return { title: "The microphone is busy",
+             message: "Another app may be using the microphone. Close it, then press Try again." };
+  }
+  return { title: "Could not start the microphone",
+           message: `${name || "Error"}: ${(e && e.message) || e}. Press Try again, or type text below.` };
 }
 
-async function runTextTranslate() {
-  if (busy) return;
-  busy = true;
+async function startCapture() {
   hideError();
-  recordBtn.disabled = true; setLangInputsDisabled(true);
-  textInput.disabled = true; textTranslateBtn.disabled = true;
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showError("The browser blocks the microphone on this address",
+      "Open this page as http://127.0.0.1:" + (location.port || "8005") +
+      "/ (not a LAN IP or computer name) so the browser treats it as secure. You can still type text below.");
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+  } catch (e) {
+    const p = micProblem(e); showError(p.title, p.message); return;
+  }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AC();
+  try { await ctx.resume(); } catch (_) { /* started by the click gesture anyway */ }
+  const chunks = [];
+  const state = { stream, ctx, chunks, sampleRate: ctx.sampleRate, t0: performance.now(),
+                  timer: null, cleanup: () => {}, peakSeen: 0 };
+  const onChunk = (f32) => {
+    chunks.push(f32);
+    let peak = 0;
+    for (let i = 0; i < f32.length; i++) { const a = Math.abs(f32[i]); if (a > peak) peak = a; }
+    if (peak > state.peakSeen) state.peakSeen = peak;
+    // sqrt curve so quiet speech still moves the bar
+    $("meter-bar").style.width = Math.min(100, Math.sqrt(peak) * 100) + "%";
+  };
+  try {
+    const source = ctx.createMediaStreamSource(stream);
+    const mute = ctx.createGain(); mute.gain.value = 0; mute.connect(ctx.destination);
+    if (ctx.audioWorklet && window.AudioWorkletNode) {
+      const url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: "text/javascript" }));
+      await ctx.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+      const node = new AudioWorkletNode(ctx, "tap");
+      node.port.onmessage = (ev) => onChunk(ev.data);
+      source.connect(node); node.connect(mute);
+      state.cleanup = () => { node.port.onmessage = null; source.disconnect(); node.disconnect(); };
+    } else {
+      const node = ctx.createScriptProcessor(4096, 1, 1); // fallback for older browsers
+      node.onaudioprocess = (ev) => onChunk(new Float32Array(ev.inputBuffer.getChannelData(0)));
+      source.connect(node); node.connect(mute);
+      state.cleanup = () => { node.onaudioprocess = null; source.disconnect(); node.disconnect(); };
+    }
+  } catch (e) {
+    stream.getTracks().forEach(t => t.stop()); ctx.close();
+    showError("Could not start recording", `${(e && e.message) || e}. Press Try again, or type text below.`);
+    return;
+  }
+  cap = state; recording = true; setControls();
+  micBtn.textContent = "■ Stop recording"; micBtn.classList.add("recording");
+  $("meter-wrap").classList.add("show");
+  statusEl.textContent = "Recording — speak now, then press Stop.";
+  state.timer = setInterval(() => {
+    const s = (performance.now() - state.t0) / 1000;
+    $("elapsed").textContent = `${s.toFixed(1)} s / ${MAX_RECORD_SECONDS} s`;
+    if (s > 1.5 && state.peakSeen < 0.003) {
+      $("mic-hint").textContent = "No sound is reaching the microphone — check it is not muted.";
+    } else if (state.peakSeen >= 0.003) { $("mic-hint").textContent = ""; }
+    if (s >= MAX_RECORD_SECONDS) stopCapture(true);
+  }, 100);
+}
+
+function downsampleTo16k(chunks, inRate) {
+  let n = 0; for (const c of chunks) n += c.length;
+  const all = new Float32Array(n); let o = 0;
+  for (const c of chunks) { all.set(c, o); o += c.length; }
+  if (inRate === TARGET_RATE) return all;
+  const ratio = inRate / TARGET_RATE, outLen = Math.floor(n / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) { // box filter over each output sample's input span
+    const a = Math.floor(i * ratio), b = Math.min(n, Math.max(a + 1, Math.floor((i + 1) * ratio)));
+    let sum = 0; for (let j = a; j < b; j++) sum += all[j];
+    out[i] = sum / (b - a);
+  }
+  return out;
+}
+
+function encodeWav(f32) {
+  const buf = new ArrayBuffer(44 + f32.length * 2), v = new DataView(buf);
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + f32.length * 2, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, TARGET_RATE, true); v.setUint32(28, TARGET_RATE * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, f32.length * 2, true);
+  for (let i = 0; i < f32.length; i++) {
+    const s = Math.max(-1, Math.min(1, f32[i]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+async function stopCapture(auto) {
+  if (!cap) return;
+  const c = cap; cap = null;
+  clearInterval(c.timer); c.cleanup();
+  c.stream.getTracks().forEach(t => t.stop());
+  try { await c.ctx.close(); } catch (_) { /* already closed */ }
+  recording = false;
+  micBtn.textContent = "Start recording"; micBtn.classList.remove("recording");
+  $("meter-wrap").classList.remove("show"); $("meter-bar").style.width = "0";
+  const pcm = downsampleTo16k(c.chunks, c.sampleRate);
+  if (pcm.length < TARGET_RATE * 0.3) {
+    setControls();
+    showError("Recording was too short", "Speak for a second or two before pressing Stop, then press Try again.");
+    return;
+  }
+  const lang = selectedLang();
+  if (auto) $("mic-hint").textContent = `Stopped automatically at ${MAX_RECORD_SECONDS} s.`;
+  await runPipeline(MIC_STAGES, { lang, latency: [], wav: encodeWav(pcm) });
+}
+
+micBtn.addEventListener("click", () => { if (recording) stopCapture(false); else if (!busy) startCapture(); });
+
+// ---- typed text -> MT fallback ----
+function updateTextTranslateDisabled() {
+  textTranslateBtn.disabled = anyBusy() || !textInput.value.trim();
+}
+async function runTextTranslate() {
+  if (busy || recording) return;
+  busy = true; hideError(); setControls();
   resetPanel("panel-translation", "Translating…");
   renderLatency([]);
-  renderSteps([]);
+  currentSteps = []; renderSteps([]);
   const ctx = { transcript: textInput.value.trim(), lang: selectedLang(), latency: [] };
   $("transcript-title").textContent = `Input text (${LANG_NAMES[ctx.lang]})`;
   fillPanel("panel-transcript", ctx.transcript, "typed text — ASR skipped");
   try {
-    startElapsed(translateStageDef);
-    const result = await callStage(translateStageDef, ctx);
+    startElapsed(STAGE_DEFS.translate);
+    const result = await callStage(STAGE_DEFS.translate, ctx);
     stopElapsed();
-    translateStageDef.render(result, ctx);
+    STAGE_DEFS.translate.render(result, ctx);
     renderLatency(ctx.latency);
-    statusEl.textContent = "Done. Type another sentence, or press Record to use the microphone.";
+    statusEl.textContent = "Done. Type another sentence, or press Start recording.";
   } catch (e) {
     stopElapsed();
     statusEl.textContent = "Stopped at the Translate step.";
-    const title = (e && e.title) || "Something went wrong";
-    const message = (e && e.message) || String(e);
-    showError(title, message);
-  } finally {
-    busy = false;
-    recordBtn.disabled = false; setLangInputsDisabled(false);
-    textInput.disabled = false; updateTextTranslateDisabled();
-  }
+    const err = asError(e); showError(err.title, err.message);
+  } finally { busy = false; setControls(); }
+}
+textTranslateBtn.addEventListener("click", runTextTranslate);
+textInput.addEventListener("input", updateTextTranslateDisabled);
+
+// ---- Part 2: English reply -> target text -> audio ----
+const replyInput = $("reply-input"), replyGo = $("reply-go"), audioEl = $("reply-audio");
+
+function updateReplyDisabled() { replyGo.disabled = anyBusy() || !replyInput.value.trim(); }
+
+// Called after every successful Part 1 translation: prefill the editable box and
+// default the target language to the language the speaker used.
+function offerReply(englishText, sourceLang) {
+  if (englishText) replyInput.value = englishText;
+  const radio = document.querySelector(`input[name="tlang"][value="${sourceLang}"]`);
+  if (radio) radio.checked = true;
+  updateReplyDisabled();
 }
 
+function hideReplyError() { $("reply-error").classList.remove("show"); }
+function showReplyError(title, message) {
+  $("reply-error-title").textContent = title;
+  $("reply-error-msg").textContent = message;
+  $("reply-error").classList.add("show");
+  $("reply-retry").focus();
+}
+
+async function runReply() {
+  if (anyBusy()) return;
+  const text = replyInput.value.trim(), lang = targetLang();
+  if (!text) return;
+  replyBusy = true; hideReplyError(); setControls();
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    $("reply-status").textContent =
+      `Translating and speaking in ${LANG_NAMES[lang]}… ${Math.floor((Date.now() - t0) / 1000)}s`;
+  }, 1000);
+  $("reply-status").textContent = `Translating and speaking in ${LANG_NAMES[lang]}…`;
+  try {
+    const r = await post("/pipeline/render",
+      { headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, target_language: lang }) }, 190000, "Spoken reply");
+    showReply(r);
+    $("reply-status").textContent = r.degraded.active
+      ? "Done — text only this time." : "Done.";
+  } catch (e) {
+    $("reply-status").textContent = "Stopped at the spoken-reply step.";
+    const err = asError(e); showReplyError(err.title, err.message);
+  } finally { clearInterval(tick); replyBusy = false; setControls(); }
+}
+
+function showReply(r) {
+  $("reply-result").classList.add("show");
+  $("reply-lang-label").textContent = `${LANG_NAMES[r.language]} (translated text)`;
+  $("reply-text-out").textContent = r.text;
+  const note = $("reply-degraded"), wrap = $("reply-audio-wrap");
+  $("reply-autoplay-hint").hidden = true;
+  if (r.degraded.active || !r.audio_url) {
+    note.hidden = false;
+    note.textContent = "Audio is not available for this one — showing the translated text only." +
+      (r.degraded.detail ? ` (${r.degraded.detail})` : "");
+    // The previous audio stays on screen until a new one arrives; hide it only if it is stale.
+    audioEl.pause(); wrap.classList.remove("show");
+  } else {
+    note.hidden = true; note.textContent = "";
+    audioEl.src = r.audio_url;
+    wrap.classList.add("show");
+    $("reply-length").textContent = `audio length ${(r.audio_duration_ms / 1000).toFixed(1)} s`;
+    audioEl.play().catch(() => { $("reply-autoplay-hint").hidden = false; }); // autoplay may be blocked
+  }
+  $("reply-models").textContent =
+    `translate model: ${r.model_version_translate} · voice: ${r.model_version_tts}`;
+  const l = $("reply-latency"); l.textContent = "";
+  l.appendChild(latencyTable([
+    ["Render — service total (translate + speak)", r.latency_ms.service_total],
+    ["Render — round trip (console → service)", r.latency_ms.round_trip]]));
+}
+
+replyGo.addEventListener("click", runReply);
+replyInput.addEventListener("input", updateReplyDisabled);
+$("reply-replay").addEventListener("click", () => {
+  audioEl.currentTime = 0; audioEl.play().catch(() => { $("reply-autoplay-hint").hidden = false; });
+});
+$("reply-retry").addEventListener("click", () => { hideReplyError(); $("reply-status").textContent = ""; replyGo.focus(); });
+
+// ---- status line + host check ----
 async function refreshDeps() {
-  // Skip while a run is in progress: the ASR/MT services answer health checks
-  // slowly (or not at all) mid-inference, which would flash a false "not running".
-  if (busy) return;
+  // Skip while a run is in progress: the services answer health checks slowly (or not
+  // at all) mid-inference, which would flash a false "not running".
+  if (anyBusy()) return;
   const label = { ready: "ready", warming_up: "warming up…", down: "not running" };
   try {
     const r = await fetch("/health/deps", { cache: "no-store" });
     const d = await r.json();
-    if (d.record_seconds && !busy) {
+    if (d.record_seconds && !anyBusy()) {
       RECORD_SECONDS = Math.round(d.record_seconds);
       recordBtn.textContent = `Record (${RECORD_SECONDS}s)`;
     }
-    for (const [key, name] of [["asr", "ASR"], ["mt", "MT"]]) {
+    if (d.max_record_seconds) MAX_RECORD_SECONDS = Math.round(d.max_record_seconds);
+    for (const [key, name] of [["asr", "ASR"], ["mt", "MT"], ["render", "Render"]]) {
+      const dep = d[key]; if (!dep) continue;
       const el = $(`dep-${key}`);
-      el.dataset.state = d[key].state;
-      el.textContent = `${name}: ${label[d[key].state] || d[key].state}`;
-      el.title = d[key].model ? `${d[key].url} — ${d[key].model}` : d[key].url;
+      el.dataset.state = dep.state;
+      let text = `${name}: ${label[dep.state] || dep.state}`;
+      el.title = dep.url;
+      if (dep.state === "ready" && dep.model) {
+        text += ` · ${dep.model}`; el.title = `${dep.url} — ${dep.model}`;
+        if (dep.tts_voices) {
+          const v = Object.values(dep.tts_voices).join(", "); text += ` · ${v}`;
+        }
+      }
+      el.textContent = text;
     }
   } catch (_) {
-    for (const key of ["asr", "mt"]) {
+    for (const key of ["asr", "mt", "render"]) {
       $(`dep-${key}`).dataset.state = "down";
       $(`dep-${key}`).textContent = `${key.toUpperCase()}: unknown (console not responding)`;
     }
   }
 }
 
-recordBtn.addEventListener("click", runPipeline);
-textTranslateBtn.addEventListener("click", runTextTranslate);
-textInput.addEventListener("input", updateTextTranslateDisabled);
-$("retry").addEventListener("click", () => { resetAll(); recordBtn.focus(); refreshDeps(); });
+function checkHost() {
+  const h = location.hostname;
+  if (!window.isSecureContext || (h !== "127.0.0.1" && h !== "localhost")) {
+    const b = $("host-banner");
+    b.textContent = "The microphone only works when this page is opened as http://127.0.0.1:" +
+      (location.port || "8005") + "/ — not through a LAN IP or computer name. Typing text still works.";
+    b.classList.add("show");
+  }
+}
+
+$("retry").addEventListener("click", () => { resetAll(); micBtn.focus(); refreshDeps(); });
 document.querySelectorAll('input[name="lang"]').forEach(i => i.addEventListener("change", () => {
-  if (!busy) $("transcript-title").textContent = `Transcript (${LANG_NAMES[selectedLang()]})`;
+  if (!anyBusy()) $("transcript-title").textContent = `Transcript (${LANG_NAMES[selectedLang()]})`;
 }));
+window.addEventListener("beforeunload", () => { if (cap) cap.stream.getTracks().forEach(t => t.stop()); });
 resetAll();
-updateTextTranslateDisabled();
+checkHost();
+setControls();
 refreshDeps();
 setInterval(refreshDeps, 5000);
 </script>

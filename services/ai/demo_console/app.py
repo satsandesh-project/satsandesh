@@ -23,16 +23,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+import sys
 import threading
 import time
+import wave
+from array import array
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -62,6 +69,24 @@ DEMO_PORT = int(os.environ.get("DEMO_CONSOLE_PORT", "8005"))
 ASR_BASE_URL = f"http://127.0.0.1:{SpeechSettings.from_env().port}"
 MT_BASE_URL = f"http://127.0.0.1:{MtSettings.from_env().port}"
 
+# The console has its own render port (render's own default, 8005, is the console's).
+# It must not import render's Settings: that raises without HF_TOKEN.
+RENDER_PORT = int(os.environ.get("DEMO_RENDER_PORT", "8006"))
+RENDER_BASE_URL = f"http://127.0.0.1:{RENDER_PORT}"
+# Where render writes its WAVs: same variable and default as render/settings.py.
+RENDER_OUTPUT_DIR = Path(
+    os.environ.get("RENDER_OUTPUT_DIR", str(_HERE.parent / "render" / "output"))
+)
+# The only file names GET /pipeline/audio/ will serve (what render's _render_one writes).
+AUDIO_NAME_PATTERN = r"^render-[0-9a-f]{32}-(te|hi)\.wav$"
+_AUDIO_NAME_RE = re.compile(AUDIO_NAME_PATTERN)
+
+# Browser recording: hard cap, and the upload limits derived from it.
+MAX_RECORD_SECONDS = float(os.environ.get("DEMO_MAX_RECORD_SECONDS", "20"))
+MAX_UPLOAD_BYTES = int(os.environ.get("DEMO_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024)))
+UPLOAD_GRACE_S = 1.0  # the page's auto-stop can overshoot the cap by a timer tick
+EXPECTED_RATE_HZ = 16000
+
 RECORD_SECONDS = float(os.environ.get("DEMO_RECORD_SECONDS", "7"))
 # Peak |sample| (int16) below which a recording counts as silent. A quiet room
 # on the dev headset mic measured peak ~12; normal speech peaks in the
@@ -72,6 +97,7 @@ SILENCE_PEAK_THRESHOLD = int(os.environ.get("DEMO_SILENCE_PEAK", "150"))
 # much slower. Generous, but finite — the page must never hang forever.
 ASR_TIMEOUT_S = 120.0
 MT_TIMEOUT_S = 90.0
+RENDER_TIMEOUT_S = 180.0  # translate + synthesize on a cold CPU
 HEALTH_TIMEOUT_S = 3.0
 
 SUPPORTED_LANGUAGES = {"te": "Telugu", "hi": "Hindi"}
@@ -110,6 +136,11 @@ MT = Upstream(
     start_hint="Start it with start_demo.py, or: cd services/ai && "
     "PYTHONPATH=../.. .venv/Scripts/python.exe -m uvicorn mt.app:app --port "
     f"{MT_BASE_URL.rsplit(':', 1)[1]}",
+)
+RENDER = Upstream(
+    name="Spoken reply (render)",
+    base_url=RENDER_BASE_URL,
+    start_hint="Start it with start_demo.py (needs HF_TOKEN and the Piper voices)",
 )
 
 
@@ -165,15 +196,29 @@ async def _call_upstream(
 
 
 async def _check_ready(upstream: Upstream) -> dict[str, Any]:
+    base = {"name": upstream.name, "url": upstream.base_url}
     try:
         async with httpx.AsyncClient(timeout=HEALTH_TIMEOUT_S, trust_env=False) as client:
             resp = await client.get(f"{upstream.base_url}/health/ready")
     except httpx.HTTPError:
-        return {"name": upstream.name, "url": upstream.base_url, "state": "down"}
-    if resp.status_code == 200:
-        model = resp.json().get("model_version")
-        return {"name": upstream.name, "url": upstream.base_url, "state": "ready", "model": model}
-    return {"name": upstream.name, "url": upstream.base_url, "state": "warming_up"}
+        return {**base, "state": "down"}
+    if resp.status_code != 200:
+        return {**base, "state": "warming_up"}
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    # ASR and MT report model_version; render reports mt_model_version + tts_voices.
+    out = {
+        **base,
+        "state": "ready",
+        "model": body.get("model_version") or body.get("mt_model_version"),
+    }
+    if "tts_voices" in body:
+        out["tts_voices"] = body["tts_voices"]
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -346,6 +391,81 @@ async def stage_translate(body: TranslateBody) -> dict[str, Any]:
     }
 
 
+class RenderBody(BaseModel):
+    text: str
+    target_language: str
+
+
+def _audio_path_from_uri(uri: str) -> Path | None:
+    """Resolve render's file:// URI to a file inside RENDER_OUTPUT_DIR, or None."""
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        return None
+    try:
+        path = Path(url2pathname(unquote(parsed.path))).resolve()
+        root = RENDER_OUTPUT_DIR.resolve()
+    except (OSError, ValueError):
+        return None
+    if path.parent != root or not _AUDIO_NAME_RE.fullmatch(path.name):
+        return None
+    return path
+
+
+async def stage_render(body: RenderBody) -> dict[str, Any]:
+    lang = _require_language(body.target_language)
+    if not body.text.strip():
+        raise DemoError("Nothing to say", "The English text is empty.", status_code=422)
+    start = time.perf_counter()
+    data = await _call_upstream(
+        RENDER,
+        "/v1/render",
+        {"pivot_text": body.text, "target_languages": [lang]},
+        RENDER_TIMEOUT_S,
+    )
+    round_trip_ms = (time.perf_counter() - start) * 1000
+    results = data.get("results") or []
+    result = next((r for r in results if r.get("language") == lang), None)
+    if result is None:
+        raise DemoError(
+            "Spoken reply service returned an error",
+            f"The render service did not return a {SUPPORTED_LANGUAGES[lang]} result.",
+        )
+    degraded = result.get("degraded") or {}
+    audio = result.get("audio") or {}
+    audio_url = None
+    if not degraded.get("active"):
+        path = _audio_path_from_uri(audio.get("uri") or "")
+        if path is None:
+            raise DemoError(
+                "Spoken reply service returned an error",
+                "Render produced audio in an unexpected location. Check that RENDER_OUTPUT_DIR "
+                "is the same for the render service and the console, then press Try again.",
+            )
+        if not path.is_file():
+            raise DemoError(
+                "Spoken reply audio not found",
+                "Render reported audio but the file is not there. Press Try again.",
+            )
+        audio_url = f"/pipeline/audio/{path.name}"
+    return {
+        "text": result.get("text", ""),
+        "language": lang,
+        "audio_url": audio_url,
+        "audio_duration_ms": audio.get("duration_ms") if audio_url else None,
+        "model_version_translate": result.get("model_version_translate"),
+        "model_version_tts": result.get("model_version_tts"),
+        "degraded": {
+            "active": bool(degraded.get("active")),
+            "reason": degraded.get("reason"),
+            "detail": degraded.get("detail"),
+        },
+        "latency_ms": {
+            "service_total": result.get("duration_ms"),
+            "round_trip": round(round_trip_ms, 1),
+        },
+    }
+
+
 def _require_language(code: str) -> str:
     if code not in SUPPORTED_LANGUAGES:
         raise DemoError(
@@ -363,11 +483,13 @@ class PipelineStage:
     run: Callable[[Any], Any]
 
 
-# Run in this order by the page. Week 7: append a "speak" (TTS) stage here.
+# Run in this order by the page. "render" is Part 2 (English -> spoken target language);
+# the page runs it from its own section, not as part of the Part 1 chain.
 PIPELINE_STAGES: list[PipelineStage] = [
     PipelineStage("record", RecordBody, stage_record),
     PipelineStage("transcribe", TranscribeBody, stage_transcribe),
     PipelineStage("translate", TranslateBody, stage_translate),
+    PipelineStage("render", RenderBody, stage_render),
 ]
 
 
@@ -390,7 +512,7 @@ async def _startup_check() -> None:
     last: dict[str, str] = {}
     deadline = time.monotonic() + STARTUP_CHECK_WINDOW_S
     while True:
-        statuses = await asyncio.gather(_check_ready(ASR), _check_ready(MT))
+        statuses = await asyncio.gather(_check_ready(ASR), _check_ready(MT), _check_ready(RENDER))
         for st in statuses:
             if last.get(st["name"]) == st["state"]:
                 continue
@@ -481,8 +603,16 @@ async def health() -> dict[str, str]:
 @app.get("/health/deps")
 async def health_deps() -> dict[str, Any]:
     """Readiness of the real services, for the page's status line."""
-    asr, mt = await asyncio.gather(_check_ready(ASR), _check_ready(MT))
-    return {"asr": asr, "mt": mt, "record_seconds": RECORD_SECONDS}
+    asr, mt, render = await asyncio.gather(
+        _check_ready(ASR), _check_ready(MT), _check_ready(RENDER)
+    )
+    return {
+        "asr": asr,
+        "mt": mt,
+        "render": render,
+        "record_seconds": RECORD_SECONDS,
+        "max_record_seconds": MAX_RECORD_SECONDS,
+    }
 
 
 def _register(stage: PipelineStage) -> None:
@@ -499,6 +629,96 @@ def _register(stage: PipelineStage) -> None:
 
 for _stage in PIPELINE_STAGES:
     _register(_stage)
+
+
+def _validate_wav(data: bytes) -> tuple[float, int]:
+    """Return (duration_s, peak) for a 16 kHz mono PCM16 WAV, or raise DemoError."""
+    if not data:
+        raise DemoError("Recording was empty", "The page sent no audio. Press Try again.", 422)
+    if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise DemoError(
+            "Audio is not a WAV file",
+            "The recording must be a 16 kHz mono 16-bit WAV. Reload the page and press Try again.",
+            415,
+        )
+    try:
+        with wave.open(BytesIO(data), "rb") as w:
+            channels, width, rate = w.getnchannels(), w.getsampwidth(), w.getframerate()
+            frames = w.readframes(w.getnframes())
+    except (wave.Error, EOFError) as exc:
+        raise DemoError(
+            "Audio is not a valid WAV file",
+            f"The WAV could not be read ({exc}). Press Try again.",
+            415,
+        ) from exc
+    if rate != EXPECTED_RATE_HZ:
+        raise DemoError(
+            "Wrong sample rate",
+            f"Expected 16 kHz audio, got {rate} Hz. Reload the page and press Try again.",
+            422,
+        )
+    if channels != 1:
+        raise DemoError(
+            "Audio is not mono", f"Expected 1 channel, got {channels}. Press Try again.", 422
+        )
+    if width != 2:
+        raise DemoError(
+            "Audio is not 16-bit", f"Expected 16-bit samples, got {width * 8}-bit.", 422
+        )
+    samples = array("h")
+    samples.frombytes(frames[: len(frames) // 2 * 2])
+    if not samples:
+        raise DemoError("Recording was empty", "The WAV contains no audio. Press Try again.", 422)
+    if sys.byteorder == "big":
+        samples.byteswap()
+    peak = max(max(samples), -min(samples))
+    return len(samples) / rate, int(peak)
+
+
+@app.post("/pipeline/upload")
+async def pipeline_upload(request: Request) -> dict[str, Any]:
+    """Browser microphone path: the page POSTs a 16 kHz mono PCM16 WAV it encoded itself."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES:
+        raise DemoError("Recording is too large", "The upload exceeds the size limit.", 413)
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise DemoError("Recording is too large", "The upload exceeds the size limit.", 413)
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    duration_s, peak = _validate_wav(data)
+    if duration_s > MAX_RECORD_SECONDS + UPLOAD_GRACE_S:
+        raise DemoError(
+            "Recording is too long",
+            f"Recordings are limited to {MAX_RECORD_SECONDS:.0f} seconds. Press Try again.",
+            422,
+        )
+    if peak < SILENCE_PEAK_THRESHOLD:
+        raise DemoError(
+            "Recording was silent",
+            "The microphone picked up (almost) nothing. Check it is not muted and speak "
+            "a little closer, then press Try again.",
+            422,
+        )
+    tmp = RECORDING_PATH.with_suffix(".part")
+    tmp.write_bytes(data)
+    os.replace(tmp, RECORDING_PATH)
+    logger.info("uploaded %.1fs (peak %d)", duration_s, peak)
+    return {"duration_s": round(duration_s, 2), "peak": peak}
+
+
+@app.get("/pipeline/audio/{name}")
+async def pipeline_audio(name: str) -> FileResponse:
+    """Serve one rendered WAV: whitelisted by name, confined to the render output dir."""
+    if _AUDIO_NAME_RE.fullmatch(name):
+        root = RENDER_OUTPUT_DIR.resolve()
+        path = (root / name).resolve()
+        if path.parent == root and path.is_file():
+            return FileResponse(path, media_type="audio/wav")
+    raise HTTPException(status_code=404, detail="not found")
 
 
 @app.get("/")
