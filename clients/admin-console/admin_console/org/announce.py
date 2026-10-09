@@ -160,6 +160,7 @@ def _target_button(label, value) -> rx.Component:
     return rx.button(
         label,
         on_click=AnnounceState.set_target(value),
+        custom_attrs=ui.toggle_attrs(AnnounceState.target == value),
         style={
             "min_height": "56px",
             "font_size": "18px",
@@ -185,6 +186,7 @@ def _compose() -> rx.Component:
             placeholder="For example: Satsang moves to 6 pm this Sunday.",
             value=AnnounceState.text,
             on_change=AnnounceState.set_text,
+            aria_label="The announcement",
             style={**ui.FIELD_STYLE, "min_height": "160px", "font_size": "20px", "padding": "12px"},
         ),
         rx.text(

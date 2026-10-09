@@ -100,20 +100,34 @@ def page(current: str, *children: rx.Component, on_mount=None) -> rx.Component:
 
 
 def banner(message: rx.Var, is_error: rx.Var) -> rx.Component:
-    return rx.cond(
-        message != "",
-        rx.box(
-            rx.text(message, style={"font_size": "18px", "line_height": "1.5"}),
-            style={
-                "padding": "16px 20px",
-                "border_radius": "12px",
-                "margin_bottom": "16px",
-                "background": rx.cond(is_error, COLOR["error_tint"], COLOR["green_tint"]),
-                "border": f"1px solid {COLOR['line']}",
-            },
+    """What just happened, and what to do about it. The outer box is a live region that is
+    always on the page: a screen reader announces text that CHANGES inside an existing
+    region, but not a region that only appears together with its text."""
+    return rx.box(
+        rx.cond(
+            message != "",
+            rx.box(
+                rx.text(message, style={"font_size": "18px", "line_height": "1.5"}),
+                style={
+                    "padding": "16px 20px",
+                    "border_radius": "12px",
+                    "margin_bottom": "16px",
+                    "background": rx.cond(is_error, COLOR["error_tint"], COLOR["green_tint"]),
+                    "border": f"1px solid {COLOR['line']}",
+                },
+            ),
+            rx.fragment(),
         ),
-        rx.fragment(),
+        role="status",
+        aria_live="polite",
+        aria_atomic=True,
     )
+
+
+def toggle_attrs(selected: rx.Var) -> dict:
+    """`aria-pressed` for a button that is one of a set of choices, so a screen reader
+    says which is selected (the fill colour alone says it only to the eyes)."""
+    return {"aria-pressed": rx.cond(selected, "true", "false")}
 
 
 def card(*children: rx.Component, **style) -> rx.Component:
@@ -177,8 +191,26 @@ def pill(text, color: str = COLOR["gold_tint"]) -> rx.Component:
 
 
 def text_field(placeholder: str, value: rx.Var, on_change, **extra) -> rx.Component:
+    """`aria_label` names the field for a screen reader (a placeholder is not a label and
+    disappears when typing); it defaults to the placeholder, so say something better."""
+    extra.setdefault("aria_label", placeholder)
     return rx.input(
         placeholder=placeholder, value=value, on_change=on_change, style=FIELD_STYLE, **extra
+    )
+
+
+def select(options: list[str], value, on_change, label: str) -> rx.Component:
+    """A drop-down with a name a screen reader can say. The name goes on the TRIGGER: the
+    Radix Select root renders no element of its own, so an aria-label on it (which is where
+    `rx.select(..., aria_label=...)` would put it) never reaches the page."""
+    return rx.select.root(
+        rx.select.trigger(aria_label=label, style={"min_height": "56px", "font_size": "18px"}),
+        rx.select.content(
+            rx.select.group(*[rx.select.item(option, value=option) for option in options])
+        ),
+        value=value,
+        on_change=on_change,
+        size="3",
     )
 
 
@@ -190,6 +222,8 @@ def language_picker(value: rx.Var, on_pick) -> rx.Component:
             rx.button(
                 name,
                 on_click=on_pick(code),
+                aria_label="Language: " + name,
+                custom_attrs=toggle_attrs(value == code),
                 style={
                     "min_height": "56px",
                     "flex": "1",
@@ -206,6 +240,8 @@ def language_picker(value: rx.Var, on_pick) -> rx.Component:
         ],
         spacing="2",
         width="100%",
+        role="group",
+        aria_label="Language",
     )
 
 

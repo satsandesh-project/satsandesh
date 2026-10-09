@@ -165,6 +165,7 @@ def _circle_tick(choice: CircleChoice) -> rx.Component:
         rx.checkbox(
             checked=choice.ticked,
             on_change=lambda ticked: MembersState.toggle_circle(choice.id, ticked),
+            aria_label="Put them in " + choice.name,
             size="3",
         ),
         rx.text(choice.name, style={"font_size": "18px"}),
@@ -178,7 +179,12 @@ def _add_form() -> rx.Component:
     return ui.card(
         rx.heading("Add a person", size="5"),
         ui.label("Name"),
-        ui.text_field("Their name", MembersState.form_name, MembersState.set_form_name),
+        ui.text_field(
+            "Their name",
+            MembersState.form_name,
+            MembersState.set_form_name,
+            aria_label="Name of the new person",
+        ),
         ui.label("Language they read and listen in"),
         ui.language_picker(MembersState.form_language, MembersState.set_form_language),
         ui.label("Circles to put them in"),
@@ -188,11 +194,8 @@ def _add_form() -> rx.Component:
             rx.text("There are no circles yet — make one on the Circles page.", color="gray"),
         ),
         ui.label("Role"),
-        rx.select(
-            ROLES,
-            value=MembersState.form_role,
-            on_change=MembersState.set_form_role,
-            size="3",
+        ui.select(
+            ROLES, MembersState.form_role, MembersState.set_form_role, "Role for the new person"
         ),
         rx.text(
             "Elder takes part in circles. Moderator also reviews held messages. "
@@ -228,6 +231,7 @@ def _code_card() -> rx.Component:
             rx.text_area(
                 value=MembersState.issued_token,
                 read_only=True,
+                aria_label="Sign-in code, as text",
                 style={**ui.FIELD_STYLE, "min_height": "110px", "font_size": "14px"},
             ),
             rx.box(
@@ -247,13 +251,18 @@ def _person_row(row: UserRow) -> rx.Component:
             rx.text(row.language, style={"color": COLOR["muted"], "font_size": "16px"}),
             style={"flex": "1", "min_width": "180px"},
         ),
-        rx.select(
+        ui.select(
             ROLES,
-            value=row.role,
-            on_change=lambda role: MembersState.change_role(row.id, role),
-            size="3",
+            row.role,
+            lambda role: MembersState.change_role(row.id, role),
+            "Role of " + row.name,
         ),
-        ui.big_button("Sign-in code", MembersState.show_signin(row.id), primary=False),
+        ui.big_button(
+            "Sign-in code",
+            MembersState.show_signin(row.id),
+            primary=False,
+            aria_label="Sign-in code for " + row.name,
+        ),
         gap="12px",
         align="center",
         wrap="wrap",

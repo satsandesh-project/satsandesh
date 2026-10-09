@@ -245,6 +245,7 @@ def _kind_buttons() -> rx.Component:
         return rx.button(
             KIND_WORDS[kind],
             on_click=CirclesState.set_new_kind(kind),
+            custom_attrs=ui.toggle_attrs(CirclesState.new_kind == kind),
             style={
                 "min_height": "64px",
                 "flex": "1",
@@ -272,7 +273,12 @@ def _circle_line(row: CircleRow) -> rx.Component:
             style={"flex": "1", "min_width": "200px"},
         ),
         rx.text(row.member_count.to_string() + " people", style={"min_width": "100px"}),
-        ui.big_button("Open", CirclesState.open_circle(row.id), primary=False),
+        ui.big_button(
+            "Open",
+            CirclesState.open_circle(row.id),
+            primary=False,
+            aria_label="Open " + row.name,
+        ),
         gap="12px",
         align="center",
         wrap="wrap",
@@ -283,20 +289,34 @@ def _circle_line(row: CircleRow) -> rx.Component:
 def _member_line(row: MemberRow) -> rx.Component:
     return rx.flex(
         rx.text(row.name, style={"font_weight": "700", "flex": "1", "min_width": "160px"}),
-        rx.select(
+        ui.select(
             MEMBER_ROLES,
-            value=row.role,
-            on_change=lambda role: CirclesState.change_member_role(row.user_id, role),
-            size="3",
+            row.role,
+            lambda role: CirclesState.change_member_role(row.user_id, role),
+            "Role of " + row.name + " in this circle",
         ),
         rx.cond(
             CirclesState.pending_remove_id == row.user_id,
             rx.hstack(
-                ui.big_button("Yes, take them out", CirclesState.confirm_remove),
-                ui.big_button("No, keep", CirclesState.cancel_remove, primary=False),
+                ui.big_button(
+                    "Yes, take them out",
+                    CirclesState.confirm_remove,
+                    aria_label="Yes, take " + row.name + " out of this circle",
+                ),
+                ui.big_button(
+                    "No, keep",
+                    CirclesState.cancel_remove,
+                    primary=False,
+                    aria_label="No, keep " + row.name,
+                ),
                 spacing="2",
             ),
-            ui.big_button("Remove", CirclesState.ask_remove(row.user_id), primary=False),
+            ui.big_button(
+                "Remove",
+                CirclesState.ask_remove(row.user_id),
+                primary=False,
+                aria_label="Remove " + row.name + " from this circle",
+            ),
         ),
         gap="12px",
         align="center",
@@ -312,7 +332,11 @@ def _add_person() -> rx.Component:
             CirclesState.candidates.length() > 0,
             rx.flex(
                 rx.select.root(
-                    rx.select.trigger(placeholder="Choose a person", style={"min_height": "56px"}),
+                    rx.select.trigger(
+                        placeholder="Choose a person",
+                        aria_label="Person to add",
+                        style={"min_height": "56px"},
+                    ),
                     rx.select.content(
                         rx.foreach(
                             CirclesState.candidates,
@@ -323,11 +347,11 @@ def _add_person() -> rx.Component:
                     on_change=CirclesState.set_add_user,
                     size="3",
                 ),
-                rx.select(
+                ui.select(
                     MEMBER_ROLES,
-                    value=CirclesState.add_role,
-                    on_change=CirclesState.set_add_role,
-                    size="3",
+                    CirclesState.add_role,
+                    CirclesState.set_add_role,
+                    "Role in this circle",
                 ),
                 ui.big_button("Add", CirclesState.add_member),
                 gap="12px",
@@ -353,7 +377,10 @@ def _open_circle() -> rx.Component:
             rx.flex(
                 rx.box(
                     ui.text_field(
-                        "Circle name", CirclesState.rename_text, CirclesState.set_rename_text
+                        "Circle name",
+                        CirclesState.rename_text,
+                        CirclesState.set_rename_text,
+                        aria_label="New name for this circle",
                     ),
                     style={"flex": "1", "min_width": "220px"},
                 ),
@@ -392,7 +419,10 @@ def circles_page() -> rx.Component:
             rx.heading("Make a new circle", size="5"),
             ui.label("Name"),
             ui.text_field(
-                "For example: Evening Satsang", CirclesState.new_name, CirclesState.set_new_name
+                "For example: Evening Satsang",
+                CirclesState.new_name,
+                CirclesState.set_new_name,
+                aria_label="Name of the new circle",
             ),
             ui.label("What kind"),
             _kind_buttons(),
