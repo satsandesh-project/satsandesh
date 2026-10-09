@@ -71,7 +71,9 @@ header, the pivot is a fake `[en] <text>`, there is no WebSocket push.
   one. The console itself is still not served by the compose stack.
 - **The token must belong to a user whose `users.role` is `moderator` or
   `admin`**; the gateway checks the *database* role on every request. A signed
-  token comes from an operator: `python -m app.tokens <user-uuid>`. What a
+  token comes from an operator: `python -m app.tokens <user-uuid>`. The same
+  token is what the console needs to play a held voice note
+  (`GET /media/{id}`), which also requires a signed token since #126. What a
   token still does not do — no revocation, 30-day lifetime — is
   `services/gateway/OPEN_QUESTIONS.md` #33. Treat a moderator token as the most
   valuable credential in the system.
