@@ -15,6 +15,7 @@ import time
 import uuid
 
 import pytest
+from contracts.ai.moderation import ModerationAction, ModerationLabel
 from contracts.chat.admin_org import (
     AdminActionKind,
     AdminActionsOut,
@@ -28,14 +29,19 @@ from contracts.chat.admin_org import (
     AdminUserList,
     AdminUserOut,
 )
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+import app.admin_org as admin_module
 import app.ws as ws_module
+from app import pipeline
 from app.admin_org import promote_to_admin
+from app.config import get_settings
 from app.db.admin_actions import ADMIN_ACTIONS, AdminAction
-from app.db.models import Circle, Membership, Message
+from app.db.models import Circle, Job, Membership, Message
 from app.db.models import User as DbUser
 from app.tokens import issue_token, verify_token
+from tests._fake_ai import FakeAi
 
 
 def _user(db_session, name="Person", role="elder", language="te"):
@@ -410,6 +416,37 @@ def test_adding_an_existing_member_changes_and_logs_nothing(client, db_session, 
     assert _kinds(db_session) == ["member.add"]
 
 
+def test_two_admins_adding_the_same_person_at_once_is_not_a_500(
+    client, db_session, admin, h, engine, monkeypatch
+):
+    """The route checks "already a member?" and then inserts; another admin can slip in
+    between. The loser must get the existing membership back, not a primary-key 500, and must
+    log nothing (the winner's request already did)."""
+    circle = _circle(db_session, admin)
+    member = _user(db_session, "Member")
+    real_add_member = admin_module.add_member
+
+    def add_after_a_rival_got_there(session, *, circle_id, user_id, role="member"):
+        with engine.begin() as rival:  # another request, another connection, committed first
+            rival.execute(
+                Membership.__table__.insert().values(
+                    circle_id=circle_id, user_id=user_id, role="moderator"
+                )
+            )
+        return real_add_member(session, circle_id=circle_id, user_id=user_id, role=role)
+
+    monkeypatch.setattr(admin_module, "add_member", add_after_a_rival_got_there)
+
+    resp = client.post(
+        f"/admin/circles/{circle.id}/members", headers=h, json={"user_id": str(member.id)}
+    )
+
+    assert resp.status_code == 200
+    assert AdminMemberOut.model_validate(resp.json()).role.value == "moderator", "the rival's row"
+    assert _actions(db_session) == [], "this request added nothing, so it logs nothing"
+    assert db_session.query(Membership).filter_by(circle_id=circle.id).count() == 1
+
+
 def test_membership_errors(client, db_session, admin, h):
     circle = _circle(db_session, admin)
     member = _user(db_session, "Member")
@@ -588,6 +625,71 @@ def test_the_same_request_id_across_circles_does_not_collide(
     _circle(db_session, admin, "Events", kind="announcement")
     assert _announce(client, h, all_circles=True).status_code == 201
     assert db_session.query(Message).count() == 2
+
+
+@pytest.fixture
+def pipeline_on(monkeypatch, tmp_path):
+    """The pipeline as staging runs it: on, with the AI services scripted. What it asks the
+    event loop to deliver is recorded instead of done."""
+    ai = FakeAi(audio_dir=tmp_path)
+    monkeypatch.setattr(get_settings(), "PIPELINE_ENABLED", True)
+    monkeypatch.setattr(pipeline, "_ai_client", lambda: ai.client())
+    monkeypatch.setattr(get_settings(), "AI_RENDER_AUDIO_ROOT", str(tmp_path))
+    monkeypatch.setattr(get_settings(), "AI_AUDIO_MOUNT_ROOT", None)
+    asked = []
+    monkeypatch.setattr(pipeline, "_request_delivery", lambda message_id: asked.append(message_id))
+    return ai, asked
+
+
+def _announce_to_a_reader(client, db_session, admin, h):
+    news = _circle(db_session, admin, "News", kind="announcement")
+    reader = _user(db_session, "Reader", language="hi")
+    db_session.add(Membership(circle_id=news.id, user_id=reader.id, role="member"))
+    db_session.commit()
+    out = AdminAnnouncementOut.model_validate(_announce(client, h, circle_id=str(news.id)).json())
+    return uuid.UUID(out.message_ids[0])
+
+
+def test_with_the_pipeline_on_an_announcement_waits_to_be_ruled_on_then_goes_out(
+    client, db_session, admin, h, delivered, pipeline_on
+):
+    """Staging runs the pipeline on: an announcement is translated and moderated like any
+    message, and nothing is delivered until that has finished."""
+    ai, asked = pipeline_on
+
+    message_id = _announce_to_a_reader(client, db_session, admin, h)
+
+    time.sleep(0.3)  # the instant fan-out task runs now, and must find the message gated
+    db_session.expire_all()
+    message = db_session.get(Message, message_id)
+    assert (message.status, message.pipeline_state) == ("pending", "pending")
+    assert [f for _, f in delivered if f["type"] == "message.new"] == []
+    (job,) = db_session.scalars(select(Job).where(Job.job_type == "process_message")).all()
+    assert job.payload == {"message_id": str(message_id)}
+
+    pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+    db_session.commit()
+    db_session.expire_all()
+
+    assert db_session.get(Message, message_id).pipeline_state == "complete"
+    assert [stage for stage, _ in ai.calls] == ["pivot", "moderate", "render"]
+    assert asked == [message_id], "the pipeline asked for delivery of exactly this message"
+
+
+def test_a_held_announcement_is_not_delivered_and_goes_to_the_moderators(
+    client, db_session, admin, h, delivered, pipeline_on
+):
+    ai, asked = pipeline_on
+    ai.action = ModerationAction.HOLD
+    ai.label = ModerationLabel.D_DISPUTATIONAL
+    message_id = _announce_to_a_reader(client, db_session, admin, h)
+
+    pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+    db_session.commit()
+    db_session.expire_all()
+
+    assert db_session.get(Message, message_id).status == "held"
+    assert asked == [] and [f for _, f in delivered if f["type"] == "message.new"] == []
 
 
 # --- the audit log ------------------------------------------------------------------------------

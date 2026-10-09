@@ -61,11 +61,13 @@ from contracts.chat.circles import CircleKind
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import undo
 from app.auth import bearer, get_current_user
 from app.config import get_settings
+from app.cursors import decode_cursor, encode_cursor
 from app.db.admin_actions import list_admin_actions, record_admin_action
 from app.db.base import SessionLocal, get_db
 from app.db.models import Circle, Membership
@@ -73,7 +75,6 @@ from app.db.models import User as DbUser
 from app.db.repository import add_member, create_circle, create_message_with_created_flag
 from app.messages import _parse_uuid, fan_out_message
 from app.models import User
-from app.moderation import _decode_cursor, _encode_cursor
 from app.pipeline import start_pipeline
 from app.tokens import issue_token, looks_like_jwt
 from app.users import _supported_languages
@@ -227,13 +228,13 @@ def list_users(
 ) -> AdminUserList:
     stmt = select(DbUser)
     if cursor is not None:
-        stmt = stmt.where(DbUser.id > _decode_cursor(cursor))
+        stmt = stmt.where(DbUser.id > decode_cursor(cursor))
     # One extra row tells us whether another page exists, without a COUNT.
     rows = list(db.execute(stmt.order_by(DbUser.id).limit(limit + 1)).scalars())
     page = rows[:limit]
     return AdminUserList(
         items=[_user_out(r) for r in page],
-        next_cursor=_encode_cursor(page[-1].id) if len(rows) > limit else None,
+        next_cursor=encode_cursor(page[-1].id) if len(rows) > limit else None,
     )
 
 
@@ -387,7 +388,17 @@ def add_circle_member(
     if existing is not None:
         # Already a member: nothing changes, so nothing is logged.
         return _member_out(existing, user)
-    membership = add_member(db, circle_id=circle.id, user_id=user.id, role=body.role.value)
+    try:
+        # A SAVEPOINT, so losing a race does not poison the request's transaction.
+        with db.begin_nested():
+            membership = add_member(db, circle_id=circle.id, user_id=user.id, role=body.role.value)
+    except IntegrityError:
+        # Another admin added the same person between the check above and this insert.
+        # They are in, which is what was asked; that request logged it, this one adds nothing.
+        existing = db.get(Membership, (circle.id, user.id))
+        if existing is None:
+            raise
+        return _member_out(existing, user)
     record_admin_action(
         db,
         admin_id=admin.id,
@@ -462,6 +473,10 @@ async def publish_announcement(
     admin: DbUser = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> AdminAnnouncementOut:
+    """Idempotent on `client_msg_id`: a retry with the same id returns the messages the
+    FIRST call made, even if its text differs. That is what makes a dropped connection safe to
+    retry; it also means an edited message must be sent with a NEW id. The console does this
+    (its request id is made when the text is checked, and discarded when the text changes)."""
     if body.all_circles:
         circles = list(
             db.execute(
@@ -539,7 +554,7 @@ def get_actions(
     _admin: DbUser = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> AdminActionsOut:
-    before = _decode_cursor(cursor) if cursor is not None else None
+    before = decode_cursor(cursor) if cursor is not None else None
     rows = list_admin_actions(db, before_id=before, limit=limit + 1)
     page = rows[:limit]
     return AdminActionsOut(
@@ -555,7 +570,7 @@ def get_actions(
             )
             for r in page
         ],
-        next_cursor=_encode_cursor(page[-1].id) if len(rows) > limit else None,
+        next_cursor=encode_cursor(page[-1].id) if len(rows) > limit else None,
     )
 
 
