@@ -48,7 +48,7 @@ def test_a_brand_new_user_gets_the_defaults(client):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["contract_version"] == "0.7.0"
+    assert body["contract_version"] == "0.8.0"
     assert body["preferred_language"] == "te"  # what the stub auth provisions today
     assert body["tts_on"] is True
     assert body["quiet_hours_start"] is None and body["quiet_hours_end"] is None
