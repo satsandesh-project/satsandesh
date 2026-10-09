@@ -30,8 +30,6 @@ honestly False.
 
 from __future__ import annotations
 
-import base64
-import binascii
 import uuid
 
 from contracts.chat.common import MediaRef, MessageStatus
@@ -49,6 +47,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.auth import bearer, get_current_user
+from app.cursors import decode_cursor as _decode_cursor
+from app.cursors import encode_cursor as _encode_cursor
 from app.db.base import get_db
 from app.db.models import User as DbUser
 from app.db.moderation import (
@@ -88,18 +88,6 @@ def require_moderator(
     if row is None or row.role not in ("moderator", "admin"):
         raise HTTPException(status_code=403, detail="Insufficient role")
     return row
-
-
-def _encode_cursor(message_id: uuid.UUID) -> str:
-    return base64.urlsafe_b64encode(str(message_id).encode()).decode().rstrip("=")
-
-
-def _decode_cursor(cursor: str) -> uuid.UUID:
-    try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        return uuid.UUID(base64.urlsafe_b64decode(padded.encode()).decode())
-    except (ValueError, binascii.Error, UnicodeDecodeError):
-        raise HTTPException(status_code=422, detail="cursor is not a valid cursor") from None
 
 
 @router.get("/queue", response_model=ModerationQueueOut)

@@ -19,9 +19,10 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sa
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.db.base import Base
 from app.id import generate_uuid7
@@ -79,3 +80,38 @@ class AdminAction(Base):
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
+
+
+def record_admin_action(
+    session: Session,
+    *,
+    admin_id: uuid.UUID,
+    action: str,
+    target_type: str,
+    target_id: uuid.UUID | None = None,
+    **details: object,
+) -> AdminAction:
+    """Append one row, in the caller's transaction -- so an action and its log
+    line commit or roll back together. The caller commits. Never put a token
+    or other secret in `details`."""
+    row = AdminAction(
+        admin_id=admin_id,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        details=details,
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def list_admin_actions(
+    session: Session, *, before_id: uuid.UUID | None = None, limit: int = 50
+) -> list[AdminAction]:
+    """Newest first, keyset-paged on `id` (a UUIDv7, so creation order):
+    `before_id` is the oldest id the reader has seen."""
+    stmt = select(AdminAction)
+    if before_id is not None:
+        stmt = stmt.where(AdminAction.id < before_id)
+    return list(session.execute(stmt.order_by(AdminAction.id.desc()).limit(limit)).scalars())
