@@ -15,7 +15,12 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY services/ai/pyproject.toml /tmp/ai/pyproject.toml
-RUN pip install --no-cache-dir /tmp/ai
+# Optional RNNoise denoising (ASR_DENOISE=rnnoise): build with
+#   --build-arg ASR_EXTRAS="[denoise]"
+# pyrnnoise ships a py3-none manylinux1 x86-64 wheel, so no compiler is needed; it also
+# pulls matplotlib/audiolab, which adds image size -- hence off by default.
+ARG ASR_EXTRAS=""
+RUN pip install --no-cache-dir "/tmp/ai${ASR_EXTRAS}"
 
 COPY contracts/ai ./contracts/ai
 COPY services/ai/__init__.py ./services/ai/__init__.py

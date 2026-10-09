@@ -77,6 +77,12 @@ render = [
 render-tts = [
     "piper-tts",
 ]
+# Optional RNNoise denoising for both ASR services (ASR_DENOISE=rnnoise; default off).
+# Lazy-imported by services/ai/speech/denoise.py, so nothing needs it unless enabled.
+# py3-none wheels exist for Linux x86-64 (manylinux1), Windows and macOS.
+denoise = [
+    "pyrnnoise>=0.4.5",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "moderation/tests", "mt/tests", "speech_indicconformer/tests", "render/tests"]
