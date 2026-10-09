@@ -614,3 +614,11 @@ def test_what_a_reader_sees_follows_the_language_they_chose():
     assert 'findRendering(msg, "en")' in js
     assert "t.recv_show_english" in js
     assert "t.recv_show_original" in js
+
+
+def test_the_english_button_does_not_claim_to_be_the_original():
+    # For a Hindi note read by a Telugu reader the English text is the translation step, not the
+    # original, so the button says what it shows.
+    assert TEXTS["en"]["recv_show_english"] == "Show English"
+    assert "original" not in TEXTS["en"]["recv_show_english"].lower()
+    assert TEXTS["te"]["recv_show_english"] == "ఇంగ్లీష్ చూపించు"
