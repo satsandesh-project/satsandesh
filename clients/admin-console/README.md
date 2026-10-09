@@ -64,16 +64,17 @@ header, the pivot is a fake `[en] <text>`, there is no WebSocket push.
 
 **Against the real gateway.** Two things are easy to get wrong:
 
-- **`/moderation*` is deliberately not routed through Caddy**, so the
-  console must reach the gateway directly, inside the network. The identity
-  behind it was the stub — any UUID bearer *is* that user — and routing it
-  would let anyone holding a moderator's UUID release and block.
+- **`/moderation*` is routed through Caddy, and the gateway accepts only a
+  signed token there**, in every `AUTH_MODE` (PR #125): a bare user id, which
+  the legacy auth treats as that user, gets 401 "Moderation requires a signed
+  token" before anything else runs. So `CONSOLE_GATEWAY_TOKEN` must be a signed
+  one. The console itself is still not served by the compose stack.
 - **The token must belong to a user whose `users.role` is `moderator` or
-  `admin`**; the gateway checks the *database* role. A signed token comes
-  from an operator: `python -m app.tokens <user-uuid>`. Whether the
-  moderator role *requires* one is `services/gateway/OPEN_QUESTIONS.md` #32,
-  and what a token still does not do — no revocation, 30-day lifetime — is
-  #33. Treat a moderator token as the most valuable credential in the system.
+  `admin`**; the gateway checks the *database* role on every request. A signed
+  token comes from an operator: `python -m app.tokens <user-uuid>`. What a
+  token still does not do — no revocation, 30-day lifetime — is
+  `services/gateway/OPEN_QUESTIONS.md` #33. Treat a moderator token as the most
+  valuable credential in the system.
 
 ## Failures a moderator will actually meet
 
@@ -84,7 +85,7 @@ and nothing happens, with no word about why.
 
 | What happened | What the moderator sees |
 |---|---|
-| 401 | the token was not accepted — wrong or expired |
+| 401 | the token was not accepted — wrong, expired, or not a signed token |
 | 403 | this account is not a moderator on that gateway |
 | 404 | that message does not exist (any more) |
 | 5xx / other 4xx | the gateway's status and its own `detail` |
@@ -167,11 +168,11 @@ checks.
 
 ## Not done yet
 
-- **Role gating is not enforced here.** The console has no login and assumes
-  it is reachable only by a moderator; every route needs
-  `require_role("moderator", "admin")` on the gateway, and
-  `docs/security-checklist.md` B5 tracks it. This has to land before it is
-  pointed at anything real.
+- **The console has no login of its own.** It acts with the one token in
+  `CONSOLE_GATEWAY_TOKEN`. The gateway enforces the rest (a signed token and a
+  moderator or admin `users.role`, so a wrong token gets 401 or 403), but
+  anyone who can open the console in a browser can use that token's powers:
+  keep it on the network, not public. `docs/security-checklist.md` B5 tracks it.
 - **A voice note's transcript is not displayed yet.** `ModerationQueueItem`
   carries `transcript` / `transcript_language` (contracts/chat 0.6.0), kept
   apart from `original_text` on purpose: one is what the sender typed, the
