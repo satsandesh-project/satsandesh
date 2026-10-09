@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from services.ai.speech.denoise import parse_denoise_mode
+
 DEFAULT_MODEL_NAME = "ai4bharat/indic-conformer-600m-multilingual"
 ALLOWED_DECODE_MODES = {"ctc", "rnnt"}
 
@@ -25,6 +27,10 @@ class Settings:
     model_name: str
     decode_mode: str
     port: int
+    denoise_mode: str = "off"
+    no_speech_guard: bool = True
+    no_speech_min_rms: float = 0.003
+    no_speech_max_flatness: float = 0.5
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -58,4 +64,35 @@ class Settings:
         if not (1 <= port <= 65535):
             raise SettingsError(f"ASR_PORT must be a valid TCP port, got {port}")
 
-        return cls(hf_token=hf_token, model_name=model_name, decode_mode=decode_mode, port=port)
+        try:
+            denoise_mode = parse_denoise_mode(os.environ.get("ASR_DENOISE"))
+        except ValueError as exc:
+            raise SettingsError(str(exc)) from exc
+
+        guard_raw = os.environ.get("ASR_NO_SPEECH_GUARD", "on").strip().lower()
+        if guard_raw not in {"on", "off"}:
+            raise SettingsError(f"ASR_NO_SPEECH_GUARD={guard_raw!r} is not one of ['off', 'on']")
+
+        def _float_env(name: str, default: float, lo: float, hi: float) -> float:
+            raw = os.environ.get(name, str(default))
+            try:
+                value = float(raw)
+            except ValueError as exc:
+                raise SettingsError(f"{name}={raw!r} is not a number") from exc
+            if not (lo <= value <= hi):
+                raise SettingsError(f"{name} must be in [{lo}, {hi}], got {value}")
+            return value
+
+        no_speech_min_rms = _float_env("ASR_NO_SPEECH_MIN_RMS", 0.003, 0.0, 1.0)
+        no_speech_max_flatness = _float_env("ASR_NO_SPEECH_MAX_FLATNESS", 0.5, 0.0, 1.0)
+
+        return cls(
+            hf_token=hf_token,
+            model_name=model_name,
+            decode_mode=decode_mode,
+            port=port,
+            denoise_mode=denoise_mode,
+            no_speech_guard=guard_raw == "on",
+            no_speech_min_rms=no_speech_min_rms,
+            no_speech_max_flatness=no_speech_max_flatness,
+        )

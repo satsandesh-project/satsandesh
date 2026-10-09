@@ -14,6 +14,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from services.ai.speech.denoise import parse_denoise_mode
+
 _ALLOWED_COMPUTE_TYPES = {"int8", "int8_float16", "float16", "float32"}
 
 
@@ -27,6 +29,9 @@ class Settings:
     compute_type: str
     cpu_threads: int
     port: int
+    vad_filter: bool = True
+    no_speech_threshold: float = 0.6
+    denoise_mode: str = "off"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -65,6 +70,31 @@ class Settings:
         if not (1 <= port <= 65535):
             raise SettingsError(f"ASR_PORT must be a valid TCP port, got {port}")
 
+        vad_raw = os.environ.get("ASR_VAD_FILTER", "true").strip().lower()
+        if vad_raw not in {"true", "false"}:
+            raise SettingsError(f"ASR_VAD_FILTER={vad_raw!r} is not one of ['false', 'true']")
+
+        thr_raw = os.environ.get("ASR_NO_SPEECH_THRESHOLD", "0.6")
+        try:
+            no_speech_threshold = float(thr_raw)
+        except ValueError as exc:
+            raise SettingsError(f"ASR_NO_SPEECH_THRESHOLD={thr_raw!r} is not a number") from exc
+        if not (0.0 <= no_speech_threshold <= 1.0):
+            raise SettingsError(
+                f"ASR_NO_SPEECH_THRESHOLD must be in [0, 1], got {no_speech_threshold}"
+            )
+
+        try:
+            denoise_mode = parse_denoise_mode(os.environ.get("ASR_DENOISE"))
+        except ValueError as exc:
+            raise SettingsError(str(exc)) from exc
+
         return cls(
-            model_name=model_name, compute_type=compute_type, cpu_threads=cpu_threads, port=port
+            model_name=model_name,
+            compute_type=compute_type,
+            cpu_threads=cpu_threads,
+            port=port,
+            vad_filter=vad_raw == "true",
+            no_speech_threshold=no_speech_threshold,
+            denoise_mode=denoise_mode,
         )

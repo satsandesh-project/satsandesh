@@ -24,6 +24,7 @@ from contracts.ai.language import LanguageCode
 from contracts.ai.transcribe import TranscribeRequest, TranscribeResponse
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from services.ai.speech.denoise import Denoiser, get_denoiser
 from services.ai.speech.engine import (
     AsrEngine,
     FfmpegDecodeError,
@@ -41,7 +42,11 @@ engine = AsrEngine(
     model_name=settings.model_name,
     compute_type=settings.compute_type,
     cpu_threads=settings.cpu_threads,
+    vad_filter=settings.vad_filter,
+    no_speech_threshold=settings.no_speech_threshold,
 )
+
+denoiser: Denoiser | None = get_denoiser(settings.denoise_mode)  # None = ASR_DENOISE=off
 
 _WARMUP_AUDIO_PATH = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "tone_2s.wav"
 
@@ -159,6 +164,17 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse | JSONRes
         )
     decode_duration_ms = (time.perf_counter() - decode_start) * 1000
 
+    # Order: denoise -> ASR (VAD / no-speech filtering happens inside the engine).
+    denoise_duration_ms: float | None = None
+    if denoiser is not None:
+        denoise_start = time.perf_counter()
+        try:
+            audio = denoiser(audio)
+        except Exception:
+            # Denoising is an enhancement: on failure transcribe the original audio.
+            logger.exception("denoise failed; transcribing the un-denoised audio")
+        denoise_duration_ms = (time.perf_counter() - denoise_start) * 1000
+
     language_hint = request.language_hint.value if request.language_hint else None
     result = engine.transcribe(audio, language_hint)
 
@@ -175,18 +191,26 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse | JSONRes
         )
 
     total_duration_ms = (
-        decode_duration_ms + result.inference_duration_ms + result.postprocess_duration_ms
+        decode_duration_ms
+        + (denoise_duration_ms or 0.0)
+        + result.inference_duration_ms
+        + result.postprocess_duration_ms
     )
+    stage_timings = [StageTiming(stage="decode", duration_ms=round(decode_duration_ms, 3))]
+    if denoise_duration_ms is not None:
+        stage_timings.append(
+            StageTiming(stage="denoise", duration_ms=round(denoise_duration_ms, 3))
+        )
+    stage_timings += [
+        StageTiming(stage="inference", duration_ms=round(result.inference_duration_ms, 3)),
+        StageTiming(stage="postprocess", duration_ms=round(result.postprocess_duration_ms, 3)),
+    ]
 
     return TranscribeResponse(
         text=result.text,
         detected_language=detected_language,
         model_version=engine.model_version,
         duration_ms=total_duration_ms,
-        stage_timings=[
-            StageTiming(stage="decode", duration_ms=round(decode_duration_ms, 3)),
-            StageTiming(stage="inference", duration_ms=round(result.inference_duration_ms, 3)),
-            StageTiming(stage="postprocess", duration_ms=round(result.postprocess_duration_ms, 3)),
-        ],
+        stage_timings=stage_timings,
         degraded=DegradedMode.ok(),
     )

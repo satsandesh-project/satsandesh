@@ -157,7 +157,16 @@ class TranscriptionResult:
 class AsrEngine:
     """Owns exactly one faster-whisper model instance, loaded once at startup."""
 
-    def __init__(self, model_name: str, compute_type: str, cpu_threads: int) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        compute_type: str,
+        cpu_threads: int,
+        vad_filter: bool = True,
+        no_speech_threshold: float = 0.6,
+    ) -> None:
+        self._vad_filter = vad_filter
+        self._no_speech_threshold = no_speech_threshold
         self._model_name = model_name
         self._compute_type = compute_type
         self._cpu_threads = cpu_threads
@@ -200,8 +209,16 @@ class AsrEngine:
             raise RuntimeError("transcribe() called before load()")
 
         infer_start = time.perf_counter()
-        segments, info = self._model.transcribe(audio, language=language_hint)
-        segments = list(segments)
+        # condition_on_previous_text=False: one hallucinated segment must not seed the
+        # next ones (the classic repeat-loop). vad_filter drops non-speech stretches
+        # before decoding (Silero VAD bundled with faster-whisper).
+        segments, info = self._model.transcribe(
+            audio,
+            language=language_hint,
+            vad_filter=self._vad_filter,
+            condition_on_previous_text=False,
+        )
+        segments = drop_no_speech_segments(list(segments), self._no_speech_threshold)
         infer_duration_ms = (time.perf_counter() - infer_start) * 1000
 
         post_start = time.perf_counter()
@@ -215,3 +232,17 @@ class AsrEngine:
             inference_duration_ms=infer_duration_ms,
             postprocess_duration_ms=postprocess_duration_ms,
         )
+
+
+MIN_AVG_LOGPROB = -1.0
+
+
+def drop_no_speech_segments(segments: list, no_speech_threshold: float) -> list:
+    """Drop segments Whisper itself thinks are not speech: no_speech_prob above the
+    threshold AND avg_logprob below -1.0 (both, as in Whisper's own skip rule, so a
+    confident segment survives a high no_speech_prob)."""
+    return [
+        s
+        for s in segments
+        if not (s.no_speech_prob > no_speech_threshold and s.avg_logprob < MIN_AVG_LOGPROB)
+    ]
