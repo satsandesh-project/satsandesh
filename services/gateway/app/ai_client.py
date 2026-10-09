@@ -165,6 +165,7 @@ class AiClient:
         timeouts: Mapping[AiStage, float] | None = None,
         transcribe_timeout_per_audio_s: float = 0.0,
         transcribe_timeout_max_s: float = 600.0,
+        transcribe_urls_by_language: Mapping[str, str] | None = None,
         http: httpx.Client | None = None,
     ) -> None:
         missing = set(AiStage) - set(urls)
@@ -174,6 +175,11 @@ class AiClient:
         self._timeouts = {**_DEFAULT_TIMEOUT_S, **(timeouts or {})}
         self._transcribe_per_audio_s = transcribe_timeout_per_audio_s
         self._transcribe_max_s = transcribe_timeout_max_s
+        # Which ASR service answers which DECLARED language. Empty (the default) = everything goes to
+        # the one transcribe URL, as it always did. See `transcribe_url_for`.
+        self._transcribe_urls_by_language = {
+            lang: url.rstrip("/") for lang, url in (transcribe_urls_by_language or {}).items()
+        }
         # trust_env=False: these are calls to our own services; a system proxy
         # setting must never be able to intercept them.
         self._http = http if http is not None else httpx.Client(trust_env=False)
@@ -198,6 +204,7 @@ class AiClient:
             timeouts=timeouts,
             transcribe_timeout_per_audio_s=settings.AI_TRANSCRIBE_TIMEOUT_PER_AUDIO_S,
             transcribe_timeout_max_s=settings.AI_TRANSCRIBE_TIMEOUT_MAX_S,
+            transcribe_urls_by_language=settings.AI_TRANSCRIBE_URLS_BY_LANGUAGE,
         )
 
     def url_for(self, stage: AiStage) -> str:
@@ -219,14 +226,27 @@ class AiClient:
         scaled = self._transcribe_per_audio_s * audio_duration_ms / 1000.0
         return max(floor, min(scaled, self._transcribe_max_s))
 
+    def transcribe_url_for(self, language_hint) -> str:
+        """The ASR service for a note's DECLARED language. IndicConformer takes an explicit language
+        and has no auto-detect, so an undeclared note (no hint) always stays on the default service,
+        which detects. No fallback to the default when a routed service is down: that is a retryable
+        error like any other (OPEN_QUESTIONS #31)."""
+        key = getattr(language_hint, "value", language_hint)
+        return self._transcribe_urls_by_language.get(key, self._urls[AiStage.TRANSCRIBE])
+
     def close(self) -> None:
         self._http.close()
 
     # -- the four stages ------------------------------------------------------
 
     def transcribe(self, request: TranscribeRequest) -> TranscribeResponse:
-        timeout = self.transcribe_timeout_for(request.audio.duration_ms)
-        return self._call(AiStage.TRANSCRIBE, request, TranscribeResponse, timeout=timeout)
+        return self._call(
+            AiStage.TRANSCRIBE,
+            request,
+            TranscribeResponse,
+            base_url=self.transcribe_url_for(request.language_hint),
+            timeout=self.transcribe_timeout_for(request.audio.duration_ms),
+        )
 
     def pivot(self, request: PivotRequest) -> PivotResponse:
         return self._call(AiStage.PIVOT, request, PivotResponse)
@@ -246,8 +266,9 @@ class AiClient:
         response_model: type[ResponseT],
         *,
         timeout: float | None = None,
+        base_url: str | None = None,
     ) -> ResponseT:
-        url = f"{self._urls[stage]}{_PATH_BY_STAGE[stage]}"
+        url = f"{base_url or self._urls[stage]}{_PATH_BY_STAGE[stage]}"
         timeout = self._timeouts[stage] if timeout is None else timeout
         try:
             response = self._http.post(url, json=request.model_dump(mode="json"), timeout=timeout)

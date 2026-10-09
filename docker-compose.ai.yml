@@ -23,6 +23,10 @@ services:
       # One URL per stage: the real services are four processes on four ports
       # (the mock answers all four on one -- see the `ai-mock` profile).
       AI_TRANSCRIBE_URL: ${AI_TRANSCRIBE_URL:-http://speech:8002}
+      # Per-language routing, OFF (empty). A JSON object keyed by the sender's declared language, e.g.
+      #   AI_TRANSCRIBE_URLS_BY_LANGUAGE='{"te": "http://speech-indic:8004", "hi": "http://speech-indic:8004"}'
+      # Needs the `indic` profile's speech-indic running. Do not set until M3 posts his measurements (#98).
+      AI_TRANSCRIBE_URLS_BY_LANGUAGE: ${AI_TRANSCRIBE_URLS_BY_LANGUAGE:-}
       AI_PIVOT_URL: ${AI_PIVOT_URL:-http://mt:8004}
       AI_MODERATION_URL: ${AI_MODERATION_URL:-http://moderation:8003}
       AI_RENDER_URL: ${AI_RENDER_URL:-http://render:8005}
@@ -66,6 +70,11 @@ services:
     environment:
       ASR_MODEL_NAME: ${ASR_MODEL_NAME:-small}
       ASR_CPU_THREADS: ${ASR_CPU_THREADS:-4}
+      # Set ON PURPOSE rather than inherited from the service's own default, which M3's open PR #121
+      # (the VAD / no-speech work) makes `true`. `false` is today's behaviour. His smoke run on #122 says
+      # whisper-small returned EMPTY text for a Telugu clip with VAD on, and an empty transcript is held
+      # for a person: flip this only when he says so. (Ignored by images built before #121 merges.)
+      ASR_VAD_FILTER: ${ASR_VAD_FILTER:-false}
     volumes:
       # The gateway's media store, READ-ONLY, at the path AI_AUDIO_MOUNT_ROOT
       # tells the gateway to put in file:// URIs.
@@ -80,6 +89,38 @@ services:
       retries: 60
       # First start downloads the model weights.
       start_period: 120s
+
+  # AI4Bharat IndicConformer (Telugu and Hindi only; English stays on `speech`). OPT-IN: behind the
+  # `indic` profile, so a plain `up` and staging-ai.sh never start it. Not routed from the gateway
+  # either: PIPELINE's transcribe URL still points at `speech` until M3 posts his measurements (#98).
+  # Needs HF_TOKEN from an account that accepted ai4bharat/indic-conformer-600m-multilingual's terms
+  # (gated separately from IndicTrans2); startup fails fast without a token. Memory: a ~600M-parameter
+  # model on top of the ~6 GB the other AI services want; check free memory before starting it.
+  # Start:  docker compose -f docker-compose.yml -f docker-compose.ai.yml --profile indic up -d speech-indic
+  speech-indic:
+    profiles: ["indic"]
+    build:
+      context: .
+      dockerfile: infra/ai/Dockerfile.speech_indicconformer
+    restart: unless-stopped
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      # ctc (default, faster) or rnnt; M3 has not decided which is more accurate.
+      DECODE_MODE: ${INDIC_DECODE_MODE:-ctc}
+      # off, or rnnoise if built with --build-arg ASR_EXTRAS=",denoise" (M3's PR #121).
+      ASR_DENOISE: ${INDIC_ASR_DENOISE:-off}
+    volumes:
+      - media_data:/ai-media:ro
+      - ai_models:/models
+    expose:
+      - "8004"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 60
+      # The 600M model loads in ~7-14 s on CPU AFTER the first-start download.
+      start_period: 180s
 
   moderation:
     build:
