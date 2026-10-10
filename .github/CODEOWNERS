@@ -36,6 +36,7 @@
 /backbone/                      @veerendrakosuri
 /infra/                         @veerendrakosuri
 /db/                            @veerendrakosuri
+/services/gateway/              @veerendrakosuri
 /docker-compose.yml             @veerendrakosuri
 /.env.example                   @veerendrakosuri
 
