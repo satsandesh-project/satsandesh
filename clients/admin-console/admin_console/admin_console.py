@@ -462,6 +462,6 @@ def index() -> rx.Component:
     )
 
 
-app = rx.App()
+app = rx.App(theme=rx.theme(appearance="light"))
 app.add_page(index, title="SatSandesh — Moderator console")
 register_org_pages(app)
