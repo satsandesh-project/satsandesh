@@ -335,7 +335,7 @@ def _add_person() -> rx.Component:
                     rx.select.trigger(
                         placeholder="Choose a person",
                         aria_label="Person to add",
-                        style={"min_height": "56px"},
+                        style=ui.SELECT_TRIGGER_STYLE,
                     ),
                     rx.select.content(
                         rx.foreach(
@@ -358,7 +358,7 @@ def _add_person() -> rx.Component:
                 align="center",
                 wrap="wrap",
             ),
-            rx.text("Everyone is already in this circle.", color="gray"),
+            rx.text("Everyone is already in this circle.", style={"color": COLOR["muted"]}),
         ),
     )
 
@@ -392,7 +392,7 @@ def _open_circle() -> rx.Component:
             rx.cond(
                 CirclesState.members.length() > 0,
                 rx.foreach(CirclesState.members, _member_line),
-                rx.text("No one is in this circle yet.", color="gray"),
+                rx.text("No one is in this circle yet.", style={"color": COLOR["muted"]}),
             ),
             _add_person(),
             style={"border": f"2px solid {COLOR['green']}"},
@@ -412,7 +412,7 @@ def circles_page() -> rx.Component:
             rx.cond(
                 CirclesState.circles.length() > 0,
                 rx.foreach(CirclesState.circles, _circle_line),
-                rx.text("No circles yet.", color="gray"),
+                rx.text("No circles yet.", style={"color": COLOR["muted"]}),
             ),
         ),
         ui.card(

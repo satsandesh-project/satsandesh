@@ -161,17 +161,24 @@ class MembersState(rx.State):
 
 # --- the page --------------------------------------------------------------------------------
 def _circle_tick(choice: CircleChoice) -> rx.Component:
-    return rx.hstack(
-        rx.checkbox(
-            checked=choice.ticked,
-            on_change=lambda ticked: MembersState.toggle_circle(choice.id, ticked),
-            aria_label="Put them in " + choice.name,
-            size="3",
+    # The whole row is one <label>, so tapping the name ticks the box too: the box alone is
+    # about 20 px, too small a target for the people this is for.
+    return rx.text(
+        rx.hstack(
+            rx.checkbox(
+                checked=choice.ticked,
+                on_change=lambda ticked: MembersState.toggle_circle(choice.id, ticked),
+                aria_label="Put them in " + choice.name,
+                size="3",
+                style={"width": "28px", "height": "28px"},
+            ),
+            rx.text(choice.name, as_="span", style={"font_size": "18px"}),
+            ui.pill(choice.kind),
+            align="center",
+            spacing="3",
         ),
-        rx.text(choice.name, style={"font_size": "18px"}),
-        ui.pill(choice.kind),
-        align="center",
-        style={"min_height": "48px"},
+        as_="label",
+        style={"display": "block", "min_height": "56px", "padding": "8px 0", "cursor": "pointer"},
     )
 
 
@@ -191,7 +198,10 @@ def _add_form() -> rx.Component:
         rx.cond(
             MembersState.circles.length() > 0,
             rx.vstack(rx.foreach(MembersState.circles, _circle_tick), align="start", spacing="1"),
-            rx.text("There are no circles yet — make one on the Circles page.", color="gray"),
+            rx.text(
+                "There are no circles yet — make one on the Circles page.",
+                style={"color": COLOR["muted"]},
+            ),
         ),
         ui.label("Role"),
         ui.select(
@@ -282,7 +292,7 @@ def members_page() -> rx.Component:
             rx.cond(
                 MembersState.users.length() > 0,
                 rx.foreach(MembersState.users, _person_row),
-                rx.text("No one yet.", color="gray"),
+                rx.text("No one yet.", style={"color": COLOR["muted"]}),
             ),
         ),
         rx.text(MembersState.source_label, style={"color": COLOR["muted"], "font_size": "14px"}),

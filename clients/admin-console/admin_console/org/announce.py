@@ -259,7 +259,7 @@ def announce_page() -> rx.Component:
             rx.cond(
                 AnnounceState.recent.length() > 0,
                 rx.foreach(AnnounceState.recent, _sent_line),
-                rx.text("Nothing sent yet.", color="gray"),
+                rx.text("Nothing sent yet.", style={"color": COLOR["muted"]}),
             ),
         ),
         rx.text(AnnounceState.source_label, style={"color": COLOR["muted"], "font_size": "14px"}),

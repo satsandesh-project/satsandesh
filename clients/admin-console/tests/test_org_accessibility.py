@@ -116,3 +116,72 @@ def test_messages_land_in_a_live_region_that_is_always_on_the_page(page) -> None
 def test_the_qr_image_has_a_text_alternative() -> None:
     _, text = _render(members.members_page)
     assert "QR code of the sign-in code below, for " in text
+
+
+# --- found by opening the pages in a browser and measuring (not visible to the tests above) ----
+
+
+def _luminance(hex_colour: str) -> float:
+    r, g, b = (int(hex_colour.lstrip("#")[i : i + 2], 16) / 255 for i in (0, 2, 4))
+
+    def channel(v: float) -> float:
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def _contrast(a: str, b: str) -> float:
+    la, lb = _luminance(a), _luminance(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+@pytest.mark.parametrize(
+    "foreground,background,needed",
+    [
+        ("ink", "card", 4.5),
+        ("ink", "page", 4.5),
+        ("muted", "card", 4.5),  # the grey helper text and the placeholders
+        ("muted", "page", 4.5),
+        ("green", "card", 4.5),
+        ("green", "green_tint", 4.5),  # the selected page in the navigation
+        ("saffron", "card", 4.5),
+        ("field_border", "card", 3.0),  # the edge of a field: a control boundary needs 3 : 1
+        ("field_border", "page", 3.0),
+        ("green", "page", 3.0),  # the outline round a button, and the focus ring
+    ],
+)
+def test_the_palette_meets_the_contrast_each_use_needs(foreground, background, needed) -> None:
+    from admin_console.org.ui import COLOR
+
+    assert _contrast(COLOR[foreground], COLOR[background]) >= needed
+
+
+def test_white_text_on_the_green_buttons_is_readable() -> None:
+    from admin_console.org.ui import COLOR
+
+    assert _contrast("#FFFFFF", COLOR["green"]) >= 4.5
+
+
+def test_the_navigation_is_a_landmark_and_says_which_page_is_current() -> None:
+    from admin_console.org.ui import nav_bar
+
+    nodes = _nodes(nav_bar("/circles").render())
+    nav = [n for n in nodes if n["name"].strip('"') == "nav"]  # a plain HTML tag renders quoted
+    assert len(nav) == 1 and any('"aria-label":"Pages"' in p for p in nav[0]["props"])
+    current = [n for n in nodes if any('"aria-current":"page"' in p for p in n["props"])]
+    assert len(current) == 1, "exactly one link is the current page"
+
+
+@pytest.mark.parametrize("page", PAGES.values(), ids=PAGES.keys())
+def test_a_keyboard_user_gets_a_strong_focus_ring(page) -> None:
+    """Radix's own ring is pale blue (about 2.4 : 1 here) and the tick-boxes showed none."""
+    _, text = _render(page)
+    assert ":focus-visible" in text and "3px solid" in text
+
+
+def test_field_edges_and_placeholders_are_styled_for_contrast() -> None:
+    from admin_console.org import ui
+
+    assert ui.FIELD_STYLE["border"].endswith(ui.COLOR["field_border"])
+    assert ui.FIELD_STYLE["& input::placeholder"]["color"] == ui.COLOR["muted"]
+    assert ui.SELECT_TRIGGER_STYLE["border"].endswith(ui.COLOR["field_border"])

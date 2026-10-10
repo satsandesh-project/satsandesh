@@ -17,6 +17,9 @@ COLOR = {
     "ink": "#2A2118",
     "muted": "#6E6047",
     "line": "#EADCC4",
+    # The edge of a field or drop-down: 4.1 : 1 on the card, 3.7 : 1 on the page (a control's
+    # boundary needs 3 : 1; the decorative `line` above is only 1.3 : 1).
+    "field_border": "#8A795A",
     "green": "#2F5D50",
     "green_tint": "#EAF1EC",
     "saffron": "#B4531A",
@@ -38,41 +41,70 @@ FIELD_STYLE = {
     "min_height": "56px",
     "font_size": "18px",
     "border_radius": "12px",
-    "border": f"1px solid {COLOR['line']}",
+    "border": f"1px solid {COLOR['field_border']}",
     "background": "white",
     "width": "100%",
+    # The default placeholder measured 3.8 : 1 on white (below 4.5 : 1). The text sits in an
+    # inner <input>, so the rule is aimed at that.
+    "& input::placeholder": {"color": COLOR["muted"], "opacity": 1},
+}
+
+SELECT_TRIGGER_STYLE = {
+    "min_height": "56px",
+    "font_size": "18px",
+    "background": "white",
+    "color": COLOR["ink"],
+    "border": f"1px solid {COLOR['field_border']}",
 }
 
 
 def nav_bar(current: str) -> rx.Component:
-    """The way between the console's pages. `current` is the route of the page
-    being shown, which is drawn as the selected one."""
-    return rx.hstack(
+    """The way between the console's pages. `current` is the route of the page being shown,
+    which is drawn as the selected one and announced as the current page.
+
+    On a phone the name sits on its own row and the links share the next rows evenly (two
+    by two), instead of wrapping unevenly and taking a quarter of the screen."""
+    return rx.flex(
         rx.heading("SatSandesh", size="6", style={"color": COLOR["green"]}),
-        rx.spacer(),
-        *[
-            rx.link(
-                label,
-                href=route,
-                style={
-                    "font_size": "18px",
-                    "font_weight": "700" if route == current else "500",
-                    "padding": "12px 18px",
-                    "border_radius": "12px",
-                    "min_height": "48px",
-                    "display": "flex",
-                    "align_items": "center",
-                    "background": COLOR["green_tint"] if route == current else "transparent",
-                    "color": COLOR["green"],
-                    "text_decoration": "none",
-                },
-            )
-            for label, route in NAV
-        ],
+        rx.el.nav(
+            *[
+                rx.link(
+                    label,
+                    href=route,
+                    custom_attrs={"aria-current": "page"} if route == current else {},
+                    style={
+                        "font_size": "17px",
+                        "font_weight": "700" if route == current else "500",
+                        "padding": "10px 14px",
+                        "border_radius": "12px",
+                        "min_height": "48px",
+                        "flex": "1 1 auto",
+                        "display": "flex",
+                        "align_items": "center",
+                        "justify_content": "center",
+                        "text_align": "center",
+                        "background": COLOR["green_tint"] if route == current else "transparent",
+                        "color": COLOR["green"],
+                        "text_decoration": "none",
+                    },
+                )
+                for label, route in NAV
+            ],
+            aria_label="Pages",
+            style={
+                "display": "flex",
+                "flex_wrap": "wrap",
+                "gap": "4px",
+                "flex": "1 1 auto",
+                "justify_content": "flex-end",
+            },
+        ),
+        direction={"initial": "column", "sm": "row"},
+        align={"initial": "stretch", "sm": "center"},
+        gap="2",
         width="100%",
-        wrap="wrap",
         style={
-            "padding": "10px 20px",
+            "padding": "10px 16px",
             "background": COLOR["card"],
             "border_bottom": f"1px solid {COLOR['line']}",
         },
@@ -81,7 +113,15 @@ def nav_bar(current: str) -> rx.Component:
 
 def page(current: str, *children: rx.Component, on_mount=None) -> rx.Component:
     """The frame every organisation page shares. `on_mount` is the page's own
-    loader."""
+    loader.
+
+    These pages use a fixed LIGHT palette, so the app must be in Radix's light appearance
+    (`rx.App(theme=rx.theme(appearance="light"))` in admin_console.py). Without it Radix
+    follows the device's colour mode, and on a dark-mode device its fields, drop-downs and
+    placeholders turn near-white (about 1.1 : 1) on these cream backgrounds, unreadable. Found
+    by opening the pages in a browser and measuring, which no unit test sees. It cannot be
+    done from here: Reflex drops `appearance` on a nested `rx.theme`, a drop-down's popup is
+    drawn outside this frame anyway, and the colour mode is an app-wide switch."""
     extra = {"on_mount": on_mount} if on_mount is not None else {}
     return rx.box(
         nav_bar(current),
@@ -94,6 +134,12 @@ def page(current: str, *children: rx.Component, on_mount=None) -> rx.Component:
             "background": COLOR["page"],
             "color": COLOR["ink"],
             "font_size": "18px",
+            # A keyboard user must see where they are. Radix's own ring is pale blue (about
+            # 2.4 : 1 on these pages, below the 3 : 1 needed) and the tick-boxes showed none.
+            "& :focus-visible": {
+                "outline": f"3px solid {COLOR['green']}",
+                "outline_offset": "2px",
+            },
         },
         **extra,
     )
@@ -204,7 +250,7 @@ def select(options: list[str], value, on_change, label: str) -> rx.Component:
     Radix Select root renders no element of its own, so an aria-label on it (which is where
     `rx.select(..., aria_label=...)` would put it) never reaches the page."""
     return rx.select.root(
-        rx.select.trigger(aria_label=label, style={"min_height": "56px", "font_size": "18px"}),
+        rx.select.trigger(aria_label=label, style=SELECT_TRIGGER_STYLE),
         rx.select.content(
             rx.select.group(*[rx.select.item(option, value=option) for option in options])
         ),
