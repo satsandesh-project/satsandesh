@@ -29,6 +29,7 @@ from services.ai.speech.engine import (
     AsrEngine,
     FfmpegDecodeError,
     FfmpegNotFoundError,
+    UnsupportedLanguageError,
     UnsupportedWavError,
     decode_via_ffmpeg,
     decode_wav_pcm16,
@@ -44,6 +45,8 @@ engine = AsrEngine(
     cpu_threads=settings.cpu_threads,
     vad_filter=settings.vad_filter,
     no_speech_threshold=settings.no_speech_threshold,
+    hint_mode=settings.hint_mode,
+    hint_override_margin=settings.hint_override_margin,
 )
 
 denoiser: Denoiser | None = get_denoiser(settings.denoise_mode)  # None = ASR_DENOISE=off
@@ -176,7 +179,17 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse | JSONRes
         denoise_duration_ms = (time.perf_counter() - denoise_start) * 1000
 
     language_hint = request.language_hint.value if request.language_hint else None
-    result = engine.transcribe(audio, language_hint)
+    try:
+        result = engine.transcribe(audio, language_hint)
+    except UnsupportedLanguageError as exc:
+        # The caller's hint is outside en/hi/te: their error, never a guess.
+        return _pipeline_error(
+            ErrorCode.UNSUPPORTED_LANGUAGE,
+            str(exc),
+            stage="transcribe.language",
+            status_code=422,
+            detail={"language_hint": language_hint},
+        )
 
     try:
         detected_language = LanguageCode(result.detected_language)

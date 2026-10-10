@@ -179,3 +179,36 @@ full table is in the PR description.
 
 **Not decided:** whether `rnnoise` should become the default. That needs a Telugu/Hindi
 A/B on real noisy recordings, which this change does not have.
+
+
+## 14. ASR language: auto-detect restricted to en/hi/te; hint override ships off
+
+**Problem (#134):** with no `language_hint`, faster-whisper auto-detected any of its ~99
+languages and picked `nn`/`si`/`ur` for Indian-accented speech. The app then answered
+`UNSUPPORTED_LANGUAGE` and the gateway held the note.
+
+**Decisions:**
+- **No hint:** the engine calls `WhisperModel.detect_language` (faster-whisper 1.2.1 returns
+  `(best_language, best_prob, [(code, prob), ...])`, codes already stripped of `<|..|>`),
+  keeps only `en`/`hi`/`te`, takes the highest-probability one, and transcribes with that
+  language passed explicitly. Detection alone can no longer produce `UNSUPPORTED_LANGUAGE`.
+  Probabilities are not renormalised over the three; the full top-3 and the supported three
+  are logged at INFO for staging debugging.
+- **A hint outside en/hi/te** is still `UNSUPPORTED_LANGUAGE`: that is the caller's error,
+  not something to guess around.
+- **`detected_language` stays truthful:** the hint when it was forced, otherwise the language
+  actually decoded.
+- **`ASR_HINT_MODE=force|tiebreak`, default `force`.** `force` is today's behaviour (no
+  detection pass, so no extra latency). `tiebreak` decodes the declared language unless
+  another of the three is more probable by more than `ASR_HINT_OVERRIDE_MARGIN` (default
+  0.5, a probability gap in [0, 1], validated at startup). It costs one extra encoder pass.
+
+**Why `tiebreak` ships off:** a forced hint decodes English speech as invented Hindi words
+(Kshitiz's second run on #134), so `force` is demonstrably wrong for a mislabelled clip.
+But the default stays `force` until there are measurements: how often Whisper-small
+mis-detects real Telugu/Hindi (it can rank `en` above the true language on accented or noisy
+speech, so `tiebreak` could override a correct hint), what margin separates the cases, and
+the latency of the extra pass. 0.5 is a conservative guess, not a measured value. Changing
+the default needs a labelled en/hi/te set run through both modes.
+
+**Out of scope:** `speech_indicconformer` needs a hint and cannot detect; it is unchanged.
