@@ -34,6 +34,7 @@ import uuid
 
 import reflex as rx
 
+from admin_console.org import register_org_pages
 from admin_console.source import (
     QueueSource,
     ReviewConflict,
@@ -399,6 +400,7 @@ def index() -> rx.Component:
     return rx.vstack(
         rx.hstack(
             rx.heading("Moderator console", size="6"),
+            rx.link("Members, circles, announcements", href="/members"),
             rx.spacer(),
             rx.text(
                 State.source_label,
@@ -462,3 +464,4 @@ def index() -> rx.Component:
 
 app = rx.App()
 app.add_page(index, title="SatSandesh — Moderator console")
+register_org_pages(app)
