@@ -38,6 +38,7 @@ from contracts.chat.errors import ErrorCode, ErrorPayload
 from contracts.chat.media import MediaUploadOut
 from contracts.chat.messages import AckOut, MessageIn, MessageOut
 from contracts.chat.mock.admin_org import router as admin_org_router
+from contracts.chat.mock.claims import router as claims_router
 from contracts.chat.moderation import (
     ModerationAction,
     ModerationActorKind,
@@ -56,6 +57,7 @@ app = FastAPI(title="SatSandesh Chat — Mock Gateway", version="0.1.0")
 
 # Organisation admin routes (`/admin/*`): their own module, one line here.
 app.include_router(admin_org_router)
+app.include_router(claims_router)
 
 DEFAULT_LATENCY_MS = float(os.environ.get("MOCK_LATENCY_MS", "0"))
 

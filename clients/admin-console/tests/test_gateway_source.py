@@ -134,7 +134,7 @@ def test_the_largest_page_we_ask_for_is_accepted_and_returns_everything(mock_cli
 
 def test_a_server_that_repeats_its_cursor_does_not_loop_forever() -> None:
     page = {
-        "contract_version": "0.7.0",
+        "contract_version": "0.8.0",
         "items": [],
         "next_cursor": "same",
     }

@@ -93,7 +93,7 @@ def test_the_response_serialises_times_the_way_the_client_reads_them() -> None:
     dumped = out.model_dump(mode="json")
     assert dumped["quiet_hours_start"] == "20:00:00"  # the client slices [:5] for <input type=time>
     assert dumped["quiet_hours_end"] == "07:00:00"
-    assert dumped["contract_version"] == CONTRACTS_VERSION == "0.7.0"
+    assert dumped["contract_version"] == CONTRACTS_VERSION == "0.8.0"
 
 
 def test_the_response_has_no_quiet_hours_or_timezone_until_set() -> None:
