@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from app.db.admin_actions import AdminAction
+from app.db.admin_actions import ADMIN_ACTIONS, AdminAction
 from app.db.models import User as DbUser
 
 
@@ -159,6 +159,26 @@ def test_the_append_only_triggers_exist(db_session):
 
 
 # --- no database needed ---------------------------------------------------------------
+
+
+def test_every_action_name_the_code_allows_is_accepted_by_the_database(db_session):
+    """The model's CHECK is built from ADMIN_ACTIONS, but a live database has the one the MIGRATION
+    wrote: a name added to the tuple without a migration passes the set comparison above and then
+    fails on INSERT. `user.issue_claim` (contracts 0.8.0, #141) did exactly that."""
+    admin = _admin(db_session)
+    for name in ADMIN_ACTIONS:
+        target_type = "all_circles" if name == "announcement.publish" else "user"
+        row = AdminAction(
+            admin_id=admin.id,
+            action=name,
+            target_type=target_type,
+            target_id=None if target_type == "all_circles" else admin.id,
+            details={},
+        )
+        db_session.add(row)
+        db_session.flush()  # the CHECK fires here
+        db_session.expunge(row)
+    db_session.commit()
 
 
 def test_the_migration_chain_has_exactly_one_head():
