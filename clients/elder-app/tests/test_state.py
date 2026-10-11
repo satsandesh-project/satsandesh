@@ -622,3 +622,16 @@ def test_the_english_button_does_not_claim_to_be_the_original():
     assert TEXTS["en"]["recv_show_english"] == "Show English"
     assert "original" not in TEXTS["en"]["recv_show_english"].lower()
     assert TEXTS["te"]["recv_show_english"] == "ఇంగ్లీష్ చూపించు"
+
+
+def test_a_translation_does_not_hide_the_senders_own_voice():
+    js = CHAT_CONNECT_JS_TEMPLATE
+    # Under a translation, and under the English view, the real recording is there.
+    assert "const originalVoice = () => {" in js
+    assert js.count("originalVoice();") == 2
+    assert "bubble.appendChild(noteLine(t.recv_original_voice));" in js
+    # Not added twice for an English reader, who already has it as their play button.
+    assert 'if (msg.kind !== "voice" || !msg.media_ref || lang === "en") return;' in js
+    assert "recv_original_voice" in RECEIVER_TEXT_KEYS
+    for lang in ("en", "te"):
+        assert TEXTS[lang].get("recv_original_voice")
