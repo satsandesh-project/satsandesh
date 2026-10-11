@@ -1,7 +1,7 @@
 """add rooms and lead_queue: bhajan rooms with floor control
 
 Revision ID: a7c2e91f4b36
-Revises: e5b8a3c71d94
+Revises: f1a7c3e92b05
 Create Date: 2026-10-12 00:00:00.000000
 
 """
@@ -14,7 +14,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a7c2e91f4b36"
-down_revision: str | Sequence[str] | None = "e5b8a3c71d94"
+down_revision: str | Sequence[str] | None = "f1a7c3e92b05"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
