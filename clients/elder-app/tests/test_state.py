@@ -622,3 +622,39 @@ def test_the_english_button_does_not_claim_to_be_the_original():
     assert TEXTS["en"]["recv_show_english"] == "Show English"
     assert "original" not in TEXTS["en"]["recv_show_english"].lower()
     assert TEXTS["te"]["recv_show_english"] == "ఇంగ్లీష్ చూపించు"
+
+
+def test_the_sender_is_shown_the_notice_the_system_gave_them():
+    js = CHAT_CONNECT_JS_TEMPLATE
+    # Drawn under the status line of the sender's own message, as a note.
+    assert "if (msg.moderation_notice) {" in js
+    assert 'notice.setAttribute("role", "note")' in js
+    # Kept from every way a message reaches the app: the loaded thread, the live frame, the poll.
+    assert "moderation_notice: m.moderation_notice || null" in js
+    assert "update.moderation_notice = data.notice_text" in js
+    assert "moderation_notice: remote.moderation_notice || null" in js
+
+
+def test_a_notice_is_cleared_when_a_person_rules_but_not_by_a_delivery_frame():
+    js = CHAT_CONNECT_JS_TEMPLATE
+    # Cleared only when the message leaves held or blocked; a delivery frame (no notice) must not
+    # wipe a nudge the sender was shown.
+    assert 'before.status === "held" || before.status === "blocked"' in js
+    assert "update.moderation_notice = null" in js
+    assert "data.status !== before.status" in js
+
+
+def test_the_language_screen_is_readable_by_a_screen_reader():
+    import inspect
+
+    source = inspect.getsource(language_screen) + inspect.getsource(
+        __import__("elder_app.elder_app", fromlist=["language_pick_button"]).language_pick_button
+    )
+    # Each name is marked with its own language so it is read in that language.
+    assert 'custom_attrs={"lang": code}' in source
+    # The two titles are headings, and the swap from 'choose' to 'is this right?' is announced.
+    assert source.count('as_="h1"') == 2
+    assert '"aria-live": "polite"' in source
+    # Rendered, not just written: the attributes reach the page.
+    rendered = str(language_screen().render())
+    assert "aria-live" in rendered and "lang" in rendered

@@ -918,6 +918,17 @@ window.__satsandeshWsInit = true;
         status.style.fontStyle = isCancelledOrFailed ? "italic" : "normal";
         status.textContent = statusLabel(msg);
         bubble.appendChild(status);
+        // What the system told the sender about this message (held for review, not sent, ...).
+        // The gateway writes it in the sender's language and shows it to the author only; the
+        // reason behind it (label, confidence, model) never reaches the app.
+        if (msg.moderation_notice) {
+          const notice = noteLine(msg.moderation_notice);
+          notice.setAttribute("role", "note");
+          notice.style.marginTop = "6px";
+          notice.style.fontSize = "15px";
+          notice.style.color = "#8A3E0F";
+          bubble.appendChild(notice);
+        }
         if (msg.status === "pending" && msg.id && !pastUndoWindow(msg)) {
           bubble.onclick = () => cancelMessage(msg.id, contactId);
         }
@@ -974,7 +985,11 @@ window.__satsandeshWsInit = true;
         const batch = await resp.json();
         const remote = (batch.messages || []).find((m) => m.id === messageId);
         if (remote && remote.status !== "pending") {
-          upsertMessage(contactId, { id: messageId, status: remote.status });
+          upsertMessage(contactId, {
+            id: messageId,
+            status: remote.status,
+            moderation_notice: remote.moderation_notice || null,
+          });
           return;
         }
       }
@@ -1136,12 +1151,27 @@ window.__satsandeshWsInit = true;
       for (const contactId of Object.keys(window.__satConversations)) {
         const thread = window.__satConversations[contactId];
         if (thread.some((m) => m.id === data.id)) {
-          upsertMessage(contactId, {
+          const update = {
             id: data.id,
             status: data.status,
             delivered_count: data.delivered_count,
             member_count: data.member_count,
-          });
+          };
+          // A frame with a notice sets it. A frame without one leaves it alone, except when the
+          // message leaves 'held' or 'blocked' (a person ruled on it): the old reason would then
+          // describe a state it is no longer in. Delivery frames carry no notice and must not
+          // wipe a nudge the sender was shown.
+          const before = thread.find((m) => m.id === data.id);
+          if (data.notice_text) {
+            update.moderation_notice = data.notice_text;
+          } else if (
+            before &&
+            (before.status === "held" || before.status === "blocked") &&
+            data.status !== before.status
+          ) {
+            update.moderation_notice = null;
+          }
+          upsertMessage(contactId, update);
           break;
         }
       }
@@ -1159,6 +1189,7 @@ window.__satsandeshWsInit = true;
         renderings: m.renderings || [],
         transcript: m.transcript || null,
         transcript_language: m.transcript_language || null,
+        moderation_notice: m.moderation_notice || null,
         created_at: m.created_at,
         status: m.status,
       }));
@@ -2703,6 +2734,9 @@ def language_pick_button(code: str) -> rx.Component:
     return rx.button(
         LANGUAGE_NATIVE[code],
         on_click=lambda: State.pick_language(code),
+        # Each name is written in its own language, so say so: a screen reader then reads
+        # "తెలుగు" in Telugu instead of spelling it out in the page's language.
+        custom_attrs={"lang": code},
         style={
             "width": "100%",
             "min_height": "76px",
@@ -2729,92 +2763,101 @@ def language_screen() -> rx.Component:
                     "color": COLOR["ink"],
                 },
             ),
-            rx.cond(
-                State.pending_language == "",
-                rx.vstack(
-                    rx.text(
-                        State.t["choose_language_title"],
-                        style={
-                            "font_family": FONT_LATIN,
-                            "font_weight": "700",
-                            "font_size": "1.4rem",
-                            "color": COLOR["green_ink"],
-                            "text_align": "center",
-                        },
+            rx.box(
+                rx.cond(
+                    State.pending_language == "",
+                    rx.vstack(
+                        rx.heading(
+                            State.t["choose_language_title"],
+                            as_="h1",
+                            style={
+                                "font_family": FONT_LATIN,
+                                "font_weight": "700",
+                                "font_size": "1.4rem",
+                                "color": COLOR["green_ink"],
+                                "text_align": "center",
+                            },
+                        ),
+                        rx.text(
+                            State.t["choose_language_hint"],
+                            style={
+                                "font_size": "1.05rem",
+                                "color": COLOR["muted_ink"],
+                                "text_align": "center",
+                            },
+                        ),
+                        language_pick_button("te"),
+                        language_pick_button("hi"),
+                        language_pick_button("en"),
+                        spacing="4",
+                        width="100%",
                     ),
-                    rx.text(
-                        State.t["choose_language_hint"],
-                        style={
-                            "font_size": "1.05rem",
-                            "color": COLOR["muted_ink"],
-                            "text_align": "center",
-                        },
+                    rx.vstack(
+                        rx.heading(
+                            State.t["confirm_language_title"],
+                            as_="h1",
+                            style={
+                                "font_family": FONT_LATIN,
+                                "font_weight": "700",
+                                "font_size": "1.4rem",
+                                "color": COLOR["green_ink"],
+                                "text_align": "center",
+                            },
+                        ),
+                        rx.text(
+                            State.pending_language_name,
+                            custom_attrs={"lang": State.pending_language},
+                            style={
+                                "font_size": "2.2rem",
+                                "font_weight": "700",
+                                "color": COLOR["ink"],
+                                "text_align": "center",
+                            },
+                        ),
+                        rx.text(
+                            State.t["confirm_language_hint"],
+                            style={
+                                "font_size": "1.05rem",
+                                "color": COLOR["muted_ink"],
+                                "text_align": "center",
+                            },
+                        ),
+                        rx.button(
+                            State.t["confirm_language_yes"],
+                            on_click=State.confirm_language,
+                            style={
+                                "width": "100%",
+                                "min_height": "76px",
+                                "border_radius": "16px",
+                                "font_size": "1.4rem",
+                                "font_weight": "700",
+                                "cursor": "pointer",
+                                "background": COLOR["deep_green"],
+                                "color": COLOR["card_cream"],
+                                "border": "none",
+                            },
+                        ),
+                        rx.button(
+                            State.t["confirm_language_back"],
+                            on_click=State.cancel_pick_language,
+                            style={
+                                "width": "100%",
+                                "min_height": "64px",
+                                "border_radius": "16px",
+                                "font_size": "1.2rem",
+                                "font_weight": "700",
+                                "cursor": "pointer",
+                                **pill_button_style(False),
+                            },
+                        ),
+                        spacing="4",
+                        width="100%",
                     ),
-                    language_pick_button("te"),
-                    language_pick_button("hi"),
-                    language_pick_button("en"),
-                    spacing="4",
-                    width="100%",
                 ),
-                rx.vstack(
-                    rx.text(
-                        State.t["confirm_language_title"],
-                        style={
-                            "font_family": FONT_LATIN,
-                            "font_weight": "700",
-                            "font_size": "1.4rem",
-                            "color": COLOR["green_ink"],
-                            "text_align": "center",
-                        },
-                    ),
-                    rx.text(
-                        State.pending_language_name,
-                        style={
-                            "font_size": "2.2rem",
-                            "font_weight": "700",
-                            "color": COLOR["ink"],
-                            "text_align": "center",
-                        },
-                    ),
-                    rx.text(
-                        State.t["confirm_language_hint"],
-                        style={
-                            "font_size": "1.05rem",
-                            "color": COLOR["muted_ink"],
-                            "text_align": "center",
-                        },
-                    ),
-                    rx.button(
-                        State.t["confirm_language_yes"],
-                        on_click=State.confirm_language,
-                        style={
-                            "width": "100%",
-                            "min_height": "76px",
-                            "border_radius": "16px",
-                            "font_size": "1.4rem",
-                            "font_weight": "700",
-                            "cursor": "pointer",
-                            "background": COLOR["deep_green"],
-                            "color": COLOR["card_cream"],
-                            "border": "none",
-                        },
-                    ),
-                    rx.button(
-                        State.t["confirm_language_back"],
-                        on_click=State.cancel_pick_language,
-                        style={
-                            "width": "100%",
-                            "min_height": "64px",
-                            "border_radius": "16px",
-                            "font_size": "1.2rem",
-                            "font_weight": "700",
-                            "cursor": "pointer",
-                            **pill_button_style(False),
-                        },
-                    ),
-                    spacing="4",
-                    width="100%",
-                ),
+                # The step from "choose" to "is this right?" replaces what is on screen; a screen
+                # reader is told, instead of the page changing silently.
+                custom_attrs={"aria-live": "polite"},
+                width="100%",
             ),
             spacing="5",
             width="100%",
