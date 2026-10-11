@@ -546,12 +546,22 @@ def test_running_a_finished_message_again_changes_and_calls_nothing(db_session, 
     message_id = _dm(db_session)
     _run(db_session, message_id)
     fake.calls.clear()
+    # Every rendering, text and reason as the first run left them: the `hi` one the render service
+    # made and the `en` pivot row (#136). The second run must change none of it.
+    before = {
+        language: (r.text, r.degraded_reason, r.audio_media_object_id)
+        for language, r in _renderings(db_session, message_id).items()
+    }
 
     _run(db_session, message_id)
 
     assert fake.calls == []
     assert len(list_moderation_events(db_session, message_id)) == 1
-    assert len(_renderings(db_session, message_id)) == 1
+    assert {
+        language: (r.text, r.degraded_reason, r.audio_media_object_id)
+        for language, r in _renderings(db_session, message_id).items()
+    } == before
+    assert set(before) == {"hi", "en"}
 
 
 def test_a_run_resumed_after_a_verdict_does_not_ask_for_a_second_one(db_session, fake, outbox):
@@ -688,7 +698,9 @@ def test_a_held_message_still_gets_its_renderings_so_a_release_needs_no_rerun(
 
     _run(db_session, message_id)
 
-    assert set(_renderings(db_session, message_id)) == {"hi"}
+    # `en` is the pivot row for the Hindi reader's 'Show English' (#136); stored like the rest, and
+    # invisible until the message is out (test_the_pivot_row_is_hidden_until_the_message_is_out).
+    assert set(_renderings(db_session, message_id)) == {"hi", "en"}
 
 
 def test_a_degraded_fallback_hold_is_recorded_as_a_degraded_classifier_event(
