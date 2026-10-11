@@ -64,6 +64,8 @@ documented default below — there is no silent, undocumented fallback.
 | `ASR_VAD_FILTER` | `true` | faster-whisper `vad_filter` (Silero VAD drops non-speech before decoding); `false` restores the old behaviour. `condition_on_previous_text` is always off |
 | `ASR_NO_SPEECH_THRESHOLD` | `0.6` | drop segments with `no_speech_prob` above this **and** `avg_logprob < -1.0` |
 | `ASR_DENOISE` | `off` | `off` or `rnnoise` (RNNoise via the optional `denoise` extra: `pip install ".[denoise]"`). Order: denoise → ASR. Adds a `denoise` stage timing when on. A/B a file with `tools/denoise_ab.py` |
+| `ASR_HINT_MODE` | `force` | `force`: a `language_hint` is decoded as given. `tiebreak`: the hint is used unless another of en/hi/te is more probable by more than `ASR_HINT_OVERRIDE_MARGIN`. With no hint, the language is always auto-detected, restricted to en/hi/te. Probabilities are logged at INFO. See DECISIONS.md #14 |
+| `ASR_HINT_OVERRIDE_MARGIN` | `0.5` | tiebreak only; probability gap in [0, 1], validated at startup |
 
 ## Development
 

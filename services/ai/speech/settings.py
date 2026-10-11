@@ -11,10 +11,12 @@ with a confusing error from deep inside ctranslate2 or uvicorn.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 
 from services.ai.speech.denoise import parse_denoise_mode
+from services.ai.speech.engine import HINT_MODES
 
 _ALLOWED_COMPUTE_TYPES = {"int8", "int8_float16", "float16", "float32"}
 
@@ -32,6 +34,10 @@ class Settings:
     vad_filter: bool = True
     no_speech_threshold: float = 0.6
     denoise_mode: str = "off"
+    # force: a language_hint is decoded as given (today's behaviour). tiebreak: the hint is
+    # used unless another of en/hi/te is more probable by more than hint_override_margin.
+    hint_mode: str = "force"
+    hint_override_margin: float = 0.5
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -89,6 +95,20 @@ class Settings:
         except ValueError as exc:
             raise SettingsError(str(exc)) from exc
 
+        hint_mode = os.environ.get("ASR_HINT_MODE", "force").strip().lower()
+        if hint_mode not in HINT_MODES:
+            raise SettingsError(f"ASR_HINT_MODE={hint_mode!r} is not one of {sorted(HINT_MODES)}")
+
+        margin_raw = os.environ.get("ASR_HINT_OVERRIDE_MARGIN", "0.5")
+        try:
+            hint_override_margin = float(margin_raw)
+        except ValueError as exc:
+            raise SettingsError(f"ASR_HINT_OVERRIDE_MARGIN={margin_raw!r} is not a number") from exc
+        if math.isnan(hint_override_margin) or not (0.0 <= hint_override_margin <= 1.0):
+            raise SettingsError(
+                f"ASR_HINT_OVERRIDE_MARGIN must be in [0, 1], got {hint_override_margin}"
+            )
+
         return cls(
             model_name=model_name,
             compute_type=compute_type,
@@ -97,4 +117,6 @@ class Settings:
             vad_filter=vad_raw == "true",
             no_speech_threshold=no_speech_threshold,
             denoise_mode=denoise_mode,
+            hint_mode=hint_mode,
+            hint_override_margin=hint_override_margin,
         )
