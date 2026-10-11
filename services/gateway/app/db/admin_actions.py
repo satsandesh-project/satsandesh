@@ -31,6 +31,7 @@ ADMIN_ACTIONS = (
     "user.create",
     "user.set_role",
     "user.reissue_token",
+    "user.issue_claim",
     "circle.create",
     "circle.rename",
     "member.add",
