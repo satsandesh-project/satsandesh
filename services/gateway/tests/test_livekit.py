@@ -76,7 +76,7 @@ def test_a_room_name_is_derived_from_the_room_id() -> None:
 
 
 def test_a_join_token_is_signed_scoped_and_expires(configured) -> None:
-    issued = datetime(2026, 10, 12, 9, 30, tzinfo=UTC)
+    issued = datetime(2026, 10, 1, 9, 30, tzinfo=UTC)
     token, expires = livekit.join_token(
         identity="u-1", name="Anand", room="room-1", can_publish=False, now=issued
     )
