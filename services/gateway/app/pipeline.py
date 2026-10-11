@@ -408,6 +408,7 @@ def _run_stages(session: Session, client: AiClient, message: Message) -> None:
         else _source_language(message, author)
     )
     _render_missing(session, client, message, source_language)
+    _store_pivot_rendering(session, message, source_language)
 
     # -- 5. finish -----------------------------------------------------------------------------
     _finish(session, message, event.action, state="complete")
@@ -459,6 +460,37 @@ def _target_languages(session: Session, message: Message, source_language: str |
         for language in wanted
         if language in SUPPORTED_LANGUAGES and language != source_language
     )
+
+
+def _store_pivot_rendering(session: Session, message: Message, source_language: str | None) -> None:
+    """Store the English pivot as a text-only `en` rendering, for readers whose own language is not
+    English (#136): M1's reader (#135) gets the message in their language with a button that swaps to
+    the English version of what was said, and `_target_languages` carries only the recipients'
+    languages (#83), so there was no `en` row for them to see. No model call -- the pivot is already
+    on the message -- and no audio, because English has no synthesized voice.
+
+    Skipped when: the sender's own language is English (the English version IS the message, and the
+    app already falls back to the sender's own words -- a pivot row would claim a translation that
+    never happened); a recipient reads English (the render service makes that row itself, with its
+    own model version, and must not be overwritten by a copy); or nothing was rendered at all (no
+    rendering means no button). Idempotent and guarded to a `pending` message, like every other
+    rendering, so a retry neither duplicates it nor resurrects an undone message."""
+    if message.pivot_text_en is None or source_language == "en":
+        return
+    targets = _target_languages(session, message, source_language)
+    if not targets or "en" in targets:
+        return
+    text = message.pivot_text_en.strip()
+    if not text:
+        return
+    if upsert_rendering(
+        session,
+        message_id=message.id,
+        language="en",
+        text=text,
+        degraded_reason="text_only",
+    ):
+        session.commit()
 
 
 def _render_missing(
