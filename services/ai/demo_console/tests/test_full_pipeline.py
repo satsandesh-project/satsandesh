@@ -539,7 +539,7 @@ def test_launcher_never_prints_the_token(
     monkeypatch.setattr(start_demo, "_http_status", fake_status)
     monkeypatch.setattr(start_demo, "_python_exe", lambda: "python")
     monkeypatch.setattr(start_demo.time, "sleep", stop_after_ready)
-    assert start_demo.main(["--no-browser"]) == 0
+    assert start_demo.main(["--no-browser", "--asr-en", "off"]) == 0
     out = capsys.readouterr()
     assert FAKE_TOKEN not in out.out + out.err
     assert "DEMO READY" in out.out

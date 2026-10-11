@@ -3,464 +3,632 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SatSandesh Pipeline Demo</title>
-<!-- No external fonts/scripts on purpose: the demo must run with zero network.
-     "Nirmala UI" ships with Windows and covers Telugu + Devanagari. -->
+<title>SatSandesh voice demo</title>
+<link rel="icon" href="data:,">
+<!-- Offline on purpose: no CDN, no web fonts, no remote scripts or images. "Nirmala UI" ships
+     with Windows and covers Telugu and Devanagari; the other families are generic fallbacks.
+     All page text lives in static/i18n/{en,te,hi}.json. The English text written in the
+     markup below is only what shows before those files load. -->
 <style>
+  /* Colours and bubble shapes follow the elder app's look (read-only reference), written fresh. */
   :root {
-    --bg: #f6f5f1; --card: #ffffff; --ink: #1d232b; --muted: #5d6673; --line: #dfdcd3;
-    --accent: #1f6f5c; --accent-ink: #ffffff; --accent-soft: #e2f0eb;
-    --warn: #8a5a00; --warn-soft: #fff4dc; --err: #9b2c2c; --err-soft: #fdecec;
-    --ok: #1f7a4d; --rec: #b3261e;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #15181c; --card: #1e2227; --ink: #e8eaed; --muted: #9aa3ad; --line: #30363d;
-      --accent: #4fb896; --accent-ink: #0d1f19; --accent-soft: #1b3029;
-      --warn: #f0c060; --warn-soft: #33290f; --err: #f28b82; --err-soft: #3a1d1d;
-      --ok: #6fd3a0; --rec: #f28b82;
-    }
+    --canvas: #f7f0e3; --card: #fffcf6; --ink: #2a2118; --muted: #6e6047;
+    --saffron: #b4531a; --saffron-ink: #ffffff;
+    --green: #2f5d50; --green-ink: #fffcf6; --green-tint: #eaf1ec; --green-text: #1f4034;
+    --gold-soft: #fbefd5; --gold: #c68a22; --line: #eadcc4;
+    --err: #8a3e0f; --err-soft: #fbe9dc; --rec: #a12622; --ok: #2f6b3f;
   }
   * { box-sizing: border-box; }
+  html { font-size: 18px; }
+  @media (max-width: 600px) { html { font-size: 19px; } }
   body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 16px/1.5 "Segoe UI", "Nirmala UI", system-ui, sans-serif;
+    margin: 0; background: var(--canvas); color: var(--ink); line-height: 1.55;
+    font-family: "Nirmala UI", "Segoe UI", "Noto Sans Telugu", "Noto Sans Devanagari",
+      "Mangal", "Gautami", system-ui, sans-serif;
   }
-  main { max-width: 920px; margin: 0 auto; padding: 28px 16px 48px; }
-  header h1 { margin: 0; font-size: 1.6rem; letter-spacing: -0.01em; }
-  header p { margin: 4px 0 0; color: var(--muted); }
-  .deps { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0 22px; font-size: .9rem; color: var(--muted); }
-  .dep::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%;
-    margin-right: 6px; background: var(--line); vertical-align: 1px; }
-  .dep[data-state="ready"]::before { background: var(--ok); }
-  .dep[data-state="warming_up"]::before { background: var(--warn); }
-  .dep[data-state="down"]::before { background: var(--err); }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 56px; }
+  header { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 1.7rem; line-height: 1.25; }
+  header p { margin: 4px 0 0; color: var(--muted); max-width: 34rem; }
 
-  .banner { display: none; background: var(--warn-soft); border: 1px solid var(--warn); color: var(--ink);
-    border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; }
+  .pagelang { display: inline-flex; border: 2px solid var(--green); border-radius: 14px; overflow: hidden; background: var(--card); }
+  .pagelang button { border-radius: 0; background: transparent; color: var(--green-text); font-weight: 700;
+    padding: 10px 18px; min-height: 48px; font-size: 1rem; }
+  .pagelang button[aria-pressed="true"] { background: var(--green); color: var(--green-ink); }
+  .pagelang-label { display: block; font-size: .8rem; font-weight: 700; color: var(--muted); margin-bottom: 4px; }
+
+  .deps { display: flex; gap: 6px 18px; flex-wrap: wrap; margin: 14px 0 18px; font-size: .85rem; color: var(--muted); }
+  .dep::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    margin-right: 6px; background: var(--line); border: 1px solid var(--muted); }
+  .dep[data-state="ready"]::before { background: var(--ok); border-color: var(--ok); }
+  .dep[data-state="warming_up"]::before { background: var(--gold); border-color: var(--gold); }
+  .dep[data-state="down"]::before { background: var(--err); border-color: var(--err); }
+  .dep[data-state="off"]::before { background: transparent; }
+
+  .banner { display: none; background: var(--gold-soft); border: 2px solid var(--gold); border-radius: 12px;
+    padding: 12px 16px; margin-bottom: 16px; }
   .banner.show { display: block; }
 
-  .controls { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-    padding: 20px; display: grid; gap: 18px; }
-  .controls + .controls { margin-top: 22px; }
-  .controls h2 { margin: 0; font-size: 1.15rem; }
-  .row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-  .label { font-weight: 600; min-width: 90px; }
-  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  .seg label { padding: 8px 18px; cursor: pointer; user-select: none; }
-  .seg input { position: absolute; opacity: 0; pointer-events: none; }
-  .seg input:checked + span { color: var(--accent-ink); }
-  .seg label:has(input:checked) { background: var(--accent); color: var(--accent-ink); }
-  .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 4px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px; display: grid; gap: 16px; }
+  .card + .card { margin-top: 20px; }
+  .card h2 { margin: 0; font-size: 1.25rem; }
+  .row { display: flex; align-items: center; gap: 12px 16px; flex-wrap: wrap; }
+  .label { font-weight: 700; }
 
-  button { font: inherit; border: 0; border-radius: 12px; cursor: pointer; }
-  button:disabled { cursor: not-allowed; opacity: .55; }
-  #mic { background: var(--accent); color: var(--accent-ink); font-size: 1.25rem; font-weight: 600;
-    padding: 16px 34px; min-width: 240px; }
-  #mic.recording { background: var(--rec); opacity: 1; }
-  #record { background: var(--accent); color: var(--accent-ink); font-weight: 600; padding: 10px 24px; }
-  .ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 10px 20px; }
+  button { font: inherit; border: 0; border-radius: 14px; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .5; }
+  :focus-visible { outline: 3px solid var(--green-text); outline-offset: 3px; }
+
+  .seg { display: inline-flex; border: 2px solid var(--green); border-radius: 14px; overflow: hidden; background: var(--card); }
+  .seg label { padding: 10px 20px; min-height: 48px; display: inline-flex; align-items: center; cursor: pointer; user-select: none; font-weight: 700; color: var(--green-text); }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg label:has(input:checked) { background: var(--green); color: var(--green-ink); }
+  .seg label:has(input:focus-visible) { outline: 3px solid var(--green-text); outline-offset: -5px; }
+  .seg label:has(input:disabled) { opacity: .55; cursor: not-allowed; }
+
+  #mic { background: var(--saffron); color: var(--saffron-ink); font-size: 1.3rem; font-weight: 700;
+    padding: 16px 32px; min-width: 260px; min-height: 64px; }
+  #mic.recording { background: var(--rec); }
+  .primary { background: var(--green); color: var(--green-ink); font-weight: 700; padding: 12px 26px; min-height: 52px; }
+  .ghost { background: transparent; color: var(--ink); border: 2px solid var(--line); padding: 10px 20px; min-height: 48px; }
+  #record { background: var(--saffron); color: var(--saffron-ink); font-weight: 700; padding: 10px 24px; }
+
+  .status { font-size: 1.1rem; font-weight: 700; min-height: 1.6em; }
+  .steps { display: flex; gap: 8px; flex-wrap: wrap; list-style: none; margin: 8px 0 0; padding: 0; }
+  .steps li { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
+  .steps li[data-state="running"] { border-color: var(--green); color: var(--green-text); background: var(--green-tint); font-weight: 700; }
+  .steps li[data-state="done"] { color: var(--ok); border-color: var(--ok); }
+  .steps li[data-state="done"]::before { content: "\2713  "; }
+  .steps li[data-state="failed"] { color: var(--err); border-color: var(--err); background: var(--err-soft); }
+  .steps li[data-state="skipped"] { font-style: italic; }
 
   .meter-wrap { display: none; align-items: center; gap: 12px; flex-wrap: wrap; }
   .meter-wrap.show { display: flex; }
   .meter { width: 220px; height: 12px; border-radius: 6px; background: var(--line); overflow: hidden; }
   .meter > div { height: 100%; width: 0; background: var(--ok); transition: width .08s linear; }
-  #elapsed { font-variant-numeric: tabular-nums; font-weight: 600; }
-  .hint { color: var(--warn); font-size: .92rem; min-height: 1.3em; }
+  #elapsed { font-variant-numeric: tabular-nums; font-weight: 700; }
+  .hint { color: var(--err); font-size: .95rem; min-height: 1.3em; }
+  .small { font-size: .85rem; color: var(--muted); overflow-wrap: anywhere; }
 
-  .status { font-size: 1.1rem; font-weight: 600; min-height: 1.6em; }
-  .steps { display: flex; gap: 8px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
-  .steps li { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line);
-    color: var(--muted); font-size: .9rem; }
-  .steps li[data-state="running"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-  .steps li[data-state="done"] { color: var(--ok); border-color: var(--ok); }
-  .steps li[data-state="done"]::before { content: "\2713  "; }
-  .steps li[data-state="failed"] { color: var(--err); border-color: var(--err); background: var(--err-soft); }
-
-  .error { display: none; background: var(--err-soft); color: var(--ink); border: 1px solid var(--err);
-    border-radius: 12px; padding: 14px 16px; }
+  .error { display: none; background: var(--err-soft); border: 2px solid var(--err); border-radius: 14px; padding: 14px 16px; }
   .error.show { display: block; }
-  .error h2, .error h3 { margin: 0 0 4px; font-size: 1.05rem; color: var(--err); }
+  .error h3 { margin: 0 0 4px; font-size: 1.05rem; color: var(--err); }
   .error p { margin: 0 0 12px; overflow-wrap: anywhere; }
 
-  .divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .85rem; margin: 2px 0; }
+  .divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .9rem; }
   .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-  .text-flow { display: flex; flex-direction: column; gap: 10px; }
-  textarea { width: 100%; min-height: 90px; resize: vertical; font: inherit; padding: 10px 12px;
-    border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); }
-  textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .primary { background: var(--accent); color: var(--accent-ink); font-size: 1rem; font-weight: 600;
-    padding: 10px 26px; align-self: flex-start; }
-  details.legacy summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+  textarea { width: 100%; min-height: 84px; resize: vertical; font: inherit; font-size: 1.1rem; padding: 12px 14px;
+    border: 2px solid var(--line); border-radius: 14px; background: #fff; color: var(--ink); }
+  details > summary { cursor: pointer; color: var(--muted); font-size: .95rem; min-height: 32px; }
   details.legacy .row { margin-top: 10px; }
 
-  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
-  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; min-height: 130px; }
-  .panel.wide { grid-column: 1 / -1; min-height: 0; }
-  .panel h3 { margin: 0 0 8px; font-size: .85rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-  .panel .body { font-size: 1.35rem; line-height: 1.55; overflow-wrap: anywhere; }
-  .panel .body.empty { color: var(--muted); font-size: 1rem; }
-  .panel .meta { margin-top: 10px; font-size: .8rem; color: var(--muted); overflow-wrap: anywhere; }
+  /* Conversation: bubbles shaped like the app's (own = green tint, received = cream with a border). */
+  .thread { display: grid; gap: 14px; }
+  .bubble-row { display: flex; }
+  .bubble-row.mine { justify-content: flex-end; }
+  .bubble { max-width: min(92%, 36rem); padding: 14px 18px; border-radius: 18px 18px 18px 6px; background: var(--card);
+    border: 1px solid var(--line); min-width: 40%; }
+  .bubble-row.mine .bubble { border-radius: 18px 18px 6px 18px; background: var(--green-tint); border-color: transparent; }
+  .bubble .who { font-size: .8rem; font-weight: 700; color: var(--muted); margin-bottom: 2px; }
+  .bubble .text { font-size: 1.5rem; line-height: 1.5; overflow-wrap: anywhere; }
+  .bubble .empty { font-size: 1rem; color: var(--muted); }
+  .bubble .english { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 1.25rem; overflow-wrap: anywhere; }
+  .bubble .actions { margin-top: 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .toggle { background: transparent; border: 2px solid var(--green); color: var(--green-text); font-weight: 700; padding: 8px 16px; min-height: 44px; }
+  .play { background: var(--green); color: var(--green-ink); font-weight: 700; padding: 10px 22px; min-height: 52px; font-size: 1.05rem; }
+  .note { background: var(--gold-soft); border: 1px solid var(--gold); border-radius: 12px; padding: 8px 12px; font-size: .95rem; margin-top: 10px; }
+
   table.lat { width: 100%; border-collapse: collapse; font-size: .92rem; font-variant-numeric: tabular-nums; }
   table.lat td { padding: 5px 4px; border-top: 1px solid var(--line); }
   table.lat td:last-child { text-align: right; }
-
-  #reply-result { display: none; gap: 12px; }
-  #reply-result.show { display: grid; }
-  #reply-text-out { font-size: 1.35rem; line-height: 1.55; overflow-wrap: anywhere; }
-  #reply-audio-wrap { display: none; gap: 10px; align-items: center; flex-wrap: wrap; }
-  #reply-audio-wrap.show { display: flex; }
-  #reply-audio { max-width: 100%; }
-  .note { background: var(--warn-soft); border: 1px solid var(--warn); border-radius: 10px; padding: 8px 12px; }
-  .small { font-size: .8rem; color: var(--muted); overflow-wrap: anywhere; }
-  @media (max-width: 640px) { .panels { grid-template-columns: 1fr; } #mic { width: 100%; } }
+  .detail-block { margin-top: 12px; }
+  .detail-block h3 { margin: 0 0 4px; font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .detail-block p { margin: 2px 0; font-size: .92rem; overflow-wrap: anywhere; }
+  @media (max-width: 640px) { #mic { width: 100%; } .bubble { max-width: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .meter > div { transition: none; } }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>SatSandesh — AI pipeline demo</h1>
-    <p>Part 1: microphone → speech recognition (ASR) → English (MT). Part 2: English reply → target language → spoken audio. All local.</p>
+    <div>
+      <h1 data-i18n="heading">SatSandesh voice demo</h1>
+      <p data-i18n="subheading">Speak a note in your language, read it in English, then send a reply and hear it spoken.</p>
+    </div>
+    <div>
+      <span class="pagelang-label" id="pagelang-label" data-i18n="page_lang_label">Page language</span>
+      <div class="pagelang" role="group" aria-labelledby="pagelang-label" id="pagelang">
+        <button type="button" data-page-lang="en" lang="en" aria-pressed="true">English</button>
+        <button type="button" data-page-lang="te" lang="te" aria-pressed="false">తెలుగు</button>
+        <button type="button" data-page-lang="hi" lang="hi" aria-pressed="false">हिन्दी</button>
+      </div>
+    </div>
   </header>
 
+  <div class="deps" aria-live="polite" id="deps">
+    <span class="dep" id="dep-asr" data-state="unknown"></span>
+    <span class="dep" id="dep-asr_en" data-state="unknown"></span>
+    <span class="dep" id="dep-mt" data-state="unknown"></span>
+    <span class="dep" id="dep-render" data-state="unknown"></span>
+  </div>
   <div class="banner" id="host-banner" role="alert"></div>
 
-  <div class="deps" aria-live="polite">
-    <span class="dep" id="dep-asr" data-state="unknown">ASR: checking…</span>
-    <span class="dep" id="dep-mt" data-state="unknown">MT: checking…</span>
-    <span class="dep" id="dep-render" data-state="unknown">Render: checking…</span>
-  </div>
-
-  <section class="controls">
-    <h2>Part 1 — Speak → English</h2>
+  <section class="card" aria-labelledby="speak-title">
+    <h2 id="speak-title" data-i18n="speak_title">1. Speak a note</h2>
     <div class="row">
-      <span class="label">Language</span>
-      <div class="seg" role="radiogroup" aria-label="Spoken language">
-        <label><input type="radio" name="lang" value="te" checked><span>Telugu</span></label>
-        <label><input type="radio" name="lang" value="hi"><span>Hindi</span></label>
+      <span class="label" id="speaker-label" data-i18n="speaker_lang_label">Language you will speak</span>
+      <div class="seg" role="radiogroup" aria-labelledby="speaker-label">
+        <label><input type="radio" name="lang" value="en"><span data-i18n="lang_en">English</span></label>
+        <label><input type="radio" name="lang" value="te"><span data-i18n="lang_te">Telugu</span></label>
+        <label><input type="radio" name="lang" value="hi"><span data-i18n="lang_hi">Hindi</span></label>
       </div>
     </div>
     <div class="row">
       <button id="mic" type="button">Start recording</button>
       <div>
-        <div class="status" id="status" aria-live="polite">Ready. Press Start recording, speak one sentence, then Stop.</div>
+        <div class="status" id="status" aria-live="polite"></div>
         <ol class="steps" id="steps"></ol>
       </div>
     </div>
     <div class="meter-wrap" id="meter-wrap">
       <span id="elapsed">0.0 s</span>
       <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
-      <span class="small" id="meter-label">input level</span>
+      <span class="small" data-i18n="meter_label">input level</span>
     </div>
     <div class="hint" id="mic-hint" aria-live="polite"></div>
-    <div class="divider">— or type text directly —</div>
-    <div class="text-flow">
-      <textarea id="text-input" placeholder="Type or paste a Telugu or Hindi sentence…"
-        aria-label="Text to translate"></textarea>
-      <button id="text-translate" class="primary" type="button" disabled>Translate</button>
+    <div class="divider"><span data-i18n="or_type">or type text directly</span></div>
+    <div style="display:grid;gap:10px">
+      <textarea id="text-input" data-i18n-placeholder="type_placeholder" data-i18n-aria="type_aria"
+        placeholder="Type or paste a sentence in the language selected above…" aria-label="Text of the note"></textarea>
+      <button id="text-translate" class="primary" type="button" disabled data-i18n="type_button" style="justify-self:start">Use this text</button>
     </div>
     <details class="legacy">
-      <summary>Advanced: record on the console PC's own microphone</summary>
+      <summary data-i18n="advanced_summary">Advanced: record on the console PC's own microphone</summary>
       <div class="row">
         <button id="record" type="button">Record (7s)</button>
-        <span class="small">Server-side recording; the browser microphone above is the normal path.</span>
+        <span class="small" data-i18n="advanced_note">Server-side recording; the browser microphone above is the normal path.</span>
       </div>
     </details>
-
     <div class="error" id="error" role="alert">
-      <h2 id="error-title"></h2>
+      <h3 id="error-title"></h3>
       <p id="error-msg"></p>
-      <button id="retry" class="ghost" type="button">Try again</button>
+      <button id="retry" class="ghost" type="button" data-i18n="try_again">Try again</button>
     </div>
   </section>
 
-  <section class="panels" id="panels">
-    <div class="panel" id="panel-transcript">
-      <h3 id="transcript-title">Transcript (Telugu)</h3>
-      <div class="body empty">Waiting for a recording…</div>
-      <div class="meta"></div>
-    </div>
-    <div class="panel" id="panel-translation">
-      <h3>English translation</h3>
-      <div class="body empty">Waiting for a transcript…</div>
-      <div class="meta"></div>
-    </div>
-    <div class="panel wide" id="panel-latency">
-      <h3>Latency per stage (measured, ms)</h3>
-      <div class="body empty">No run yet.</div>
+  <section class="card" aria-labelledby="conv-title">
+    <h2 id="conv-title" data-i18n="conv_title">2. The conversation</h2>
+    <div class="thread">
+      <div class="bubble-row" id="note-row">
+        <div class="bubble">
+          <div class="who" id="note-who"></div>
+          <div class="text" id="note-text"></div>
+          <div class="small" id="note-meta"></div>
+          <div class="actions" id="note-actions" hidden>
+            <button class="toggle" id="toggle-english" type="button" aria-expanded="false"></button>
+          </div>
+          <div class="english" id="note-english" hidden></div>
+        </div>
+      </div>
+
+      <div style="display:grid;gap:10px">
+        <div class="label" data-i18n="reply_title">3. Family reply</div>
+        <div class="small" data-i18n="reply_hint">Write the reply in English. It is translated and spoken in the language chosen below.</div>
+        <textarea id="reply-input" data-i18n-placeholder="reply_placeholder" data-i18n-aria="reply_aria"
+          placeholder="English reply to translate and speak…" aria-label="English reply" lang="en"></textarea>
+        <div class="row">
+          <span class="label" id="tlang-label" data-i18n="reply_speak_in">Speak the reply in</span>
+          <div class="seg" role="radiogroup" aria-labelledby="tlang-label">
+            <label><input type="radio" name="tlang" value="en"><span data-i18n="lang_en">English</span></label>
+            <label><input type="radio" name="tlang" value="te" checked><span data-i18n="lang_te">Telugu</span></label>
+            <label><input type="radio" name="tlang" value="hi"><span data-i18n="lang_hi">Hindi</span></label>
+          </div>
+          <button id="reply-go" class="primary" type="button" disabled data-i18n="reply_go">Translate and speak</button>
+        </div>
+        <div class="status" id="reply-status" aria-live="polite"></div>
+        <div class="error" id="reply-error" role="alert">
+          <h3 id="reply-error-title"></h3>
+          <p id="reply-error-msg"></p>
+          <button id="reply-retry" class="ghost" type="button" data-i18n="try_again">Try again</button>
+        </div>
+      </div>
+
+      <div class="bubble-row mine" id="reply-row">
+        <div class="bubble">
+          <div class="who" id="reply-who"></div>
+          <div class="text" id="reply-text"></div>
+          <div class="actions" id="reply-actions" hidden>
+            <button class="play" id="reply-play" type="button"></button>
+            <span class="small" id="reply-length"></span>
+          </div>
+          <div class="note" id="reply-note" hidden></div>
+          <div class="small" id="reply-autoplay-hint" hidden></div>
+          <audio id="reply-audio" preload="auto"></audio>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="controls" id="reply" style="margin-top:22px">
-    <h2>Part 2 — Family reply → spoken</h2>
-    <textarea id="reply-input" placeholder="English reply to translate and speak…"
-      aria-label="English reply"></textarea>
-    <div class="row">
-      <span class="label">Speak in</span>
-      <div class="seg" role="radiogroup" aria-label="Target language">
-        <label><input type="radio" name="tlang" value="te" checked><span>Telugu</span></label>
-        <label><input type="radio" name="tlang" value="hi"><span>Hindi</span></label>
-      </div>
-      <button id="reply-go" class="primary" type="button" disabled>Translate and speak</button>
-    </div>
-    <div class="status" id="reply-status" aria-live="polite"></div>
-    <div class="error" id="reply-error" role="alert">
-      <h3 id="reply-error-title"></h3>
-      <p id="reply-error-msg"></p>
-      <button id="reply-retry" class="ghost" type="button">Try again</button>
-    </div>
-    <div id="reply-result">
-      <div class="small" id="reply-lang-label"></div>
-      <div id="reply-text-out"></div>
-      <div class="note" id="reply-degraded" hidden></div>
-      <div id="reply-audio-wrap">
-        <audio id="reply-audio" controls preload="auto"></audio>
-        <button id="reply-replay" class="ghost" type="button">Replay</button>
-        <span class="small" id="reply-length"></span>
-      </div>
-      <div class="small" id="reply-autoplay-hint" hidden>Your browser blocked autoplay — press play above.</div>
-      <div class="small" id="reply-models"></div>
-      <div id="reply-latency"></div>
-    </div>
+  <section class="card" style="padding:14px 20px">
+    <details id="details">
+      <summary data-i18n="details_summary">Details (models and timings)</summary>
+      <div id="details-body"></div>
+    </details>
   </section>
 </main>
 
 <script>
 "use strict";
-const LANG_NAMES = { te: "Telugu", hi: "Hindi" };
+const PAGE_LANGS = ["en", "te", "hi"];
+const SPEECH_LANGS = ["en", "te", "hi"];
 const TARGET_RATE = 16000;
-let RECORD_SECONDS = 7;      // legacy server-side recording only
-let MAX_RECORD_SECONDS = 20; // browser recording hard cap (overridden from /health/deps)
+const LS_KEY = "satsandesh.demo.pageLang";
+const TABLES = {};                 // pageLang -> {key: text}
+let pageLang = "en";
+let RECORD_SECONDS = 7;            // legacy server-side recording only
+let MAX_RECORD_SECONDS = 20;       // browser recording hard cap (overridden from /health/deps)
 
-// Part 1 stages. Each maps 1:1 to POST /pipeline/<id> in app.py. "record" is the
-// legacy server-microphone path; "upload" is the browser-microphone path.
-// A new stage = a PipelineStage in app.py plus one entry here.
-const STAGE_DEFS = {
-  record: {
-    id: "record", step: "Record",
-    running: () => `Recording — speak now… ${RECORD_SECONDS}s`,
-    timeoutMs: () => (RECORD_SECONDS + 20) * 1000,
-    body: () => ({}),
-    render: (r, ctx) => { ctx.latency.push(["Record (microphone, wall clock)", r.latency_ms.record_wall]); },
-  },
-  upload: {
-    id: "upload", step: "Upload",
-    running: () => "Sending the recording to the console…",
-    timeoutMs: () => 30000,
-    raw: (ctx) => ctx.wav,
-    render: (r, ctx) => {
-      ctx.latency.push(["Upload (browser → console, wall clock)", ctx.uploadMs]);
-    },
-  },
-  transcribe: {
-    id: "transcribe", step: "Transcribe",
-    running: () => "Transcribing… (ASR)",
-    timeoutMs: () => 130000,
-    body: (ctx) => ({ source_language: ctx.lang }),
-    render: (r, ctx) => {
-      ctx.transcript = r.text;
-      fillPanel("panel-transcript", r.text, `model: ${r.model_version}`);
-      const l = r.latency_ms;
-      ctx.latency.push(["ASR — decode", l.decode], ["ASR — inference", l.inference],
-        ["ASR — postprocess", l.postprocess], ["ASR — service total", l.service_total],
-        ["ASR — round trip (console → service)", l.round_trip]);
-    },
-  },
-  translate: {
-    id: "translate", step: "Translate",
-    running: () => "Translating to English… (MT, IndicTrans2)",
-    timeoutMs: () => 100000,
-    body: (ctx) => ({ text: ctx.transcript, source_language: ctx.lang }),
-    render: (r, ctx) => {
-      fillPanel("panel-translation", r.text || "(empty translation)", `model: ${r.model_version}`);
-      ctx.latency.push(["MT — service total", r.latency_ms.service_total],
-        ["MT — round trip (console → service)", r.latency_ms.round_trip]);
-      offerReply(r.text, ctx.lang);
-    },
-  },
+// ---- i18n -------------------------------------------------------------------------------
+// One table per page language. The page language only changes wording; it never touches the
+// speech language (the "lang" radios), which alone decides the ASR hint sent to the console.
+function t(key, params) {
+  const table = TABLES[pageLang] || {};
+  const raw = key in table ? table[key] : ((TABLES.en || {})[key] ?? key);
+  return raw.replace(/\{(\w+)\}/g, (m, k) => (params && k in params ? params[k] : m));
+}
+// Parameters may name a step/service/language by key; resolve those in the current language
+// each time we render, so a language switch re-words messages that are already on screen.
+function resolve(p) {
+  if (!p) return p;
+  const o = { ...p };
+  if (o.stepKey) o.step = t(o.stepKey);
+  if (o.serviceKey) o.service = t("svc_" + o.serviceKey);
+  if (o.langCode) o.lang = t("lang_" + o.langCode);
+  return o;
+}
+async function loadTables() {
+  await Promise.all(PAGE_LANGS.map(async (l) => {
+    try {
+      const r = await fetch(`/static/i18n/${l}.json`, { cache: "no-cache" });
+      if (r.ok) TABLES[l] = await r.json();
+    } catch (_) { /* the English text in the markup still shows */ }
+  }));
+}
+function readSavedLang() {
+  try { const v = localStorage.getItem(LS_KEY); if (PAGE_LANGS.includes(v)) return v; } catch (_) { /* private window */ }
+  return null;
+}
+function saveLang(l) { try { localStorage.setItem(LS_KEY, l); } catch (_) { /* works without it */ } }
+
+function applyStatic() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  document.querySelectorAll("[data-i18n-aria]").forEach((el) => { el.setAttribute("aria-label", t(el.dataset.i18nAria)); });
+}
+function setPageLang(l, persist) {
+  if (!PAGE_LANGS.includes(l)) return;
+  pageLang = l;
+  document.documentElement.lang = l;
+  document.title = t("page_title");
+  document.querySelectorAll("[data-page-lang]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.pageLang === l)));
+  applyStatic();
+  renderAll();
+  if (persist) saveLang(l);
+}
+
+// ---- state --------------------------------------------------------------------------------
+const S = {
+  status: null,        // {key, params, elapsed?}
+  steps: [],           // [{key, state}]
+  error: null,         // {local:{key, params}} | {server:{title,message,code,service}}
+  note: null,          // {lang, text, typed, asrModel, english, mtSkipped, mtModel, showEnglish, working}
+  reply: null,         // render response + {played}
+  replyStatus: null,   // {key, params, elapsed?}
+  replyError: null,
+  latency: [],         // [[labelKey, ms]]
+  replyLatency: [],
+  deps: null,
+  hint: null,          // {key, params}
 };
-const MIC_STAGES = [STAGE_DEFS.upload, STAGE_DEFS.transcribe, STAGE_DEFS.translate];
-const SERVER_STAGES = [STAGE_DEFS.record, STAGE_DEFS.transcribe, STAGE_DEFS.translate];
 
 const $ = (id) => document.getElementById(id);
-const micBtn = $("mic"), recordBtn = $("record"), statusEl = $("status"), stepsEl = $("steps");
+const micBtn = $("mic"), recordBtn = $("record"), stepsEl = $("steps");
 const textInput = $("text-input"), textTranslateBtn = $("text-translate");
+const replyInput = $("reply-input"), replyGo = $("reply-go"), audioEl = $("reply-audio");
 let busy = false, recording = false, replyBusy = false;
 let elapsedTimer = null, countdownTimer = null;
-let currentSteps = MIC_STAGES;
 
 function selectedLang() { return document.querySelector('input[name="lang"]:checked').value; }
 function targetLang() { return document.querySelector('input[name="tlang"]:checked').value; }
-function setLangInputsDisabled(d) { document.querySelectorAll('input[name="lang"]').forEach(i => i.disabled = d); }
 function anyBusy() { return busy || recording || replyBusy; }
 
-function fillPanel(id, text, meta) {
-  const p = $(id), b = p.querySelector(".body");
-  b.textContent = text; b.classList.toggle("empty", false);
-  const m = p.querySelector(".meta"); if (m) m.textContent = meta || "";
+// ---- rendering (everything is derived from S, so a language switch loses nothing) ----------
+function statusText(st) {
+  if (!st) return "";
+  const p = resolve(st.params);
+  if (st.elapsed !== undefined) return t("status_elapsed", { what: t(st.key, p), elapsed: st.elapsed });
+  return t(st.key, p);
 }
-function resetPanel(id, placeholder) {
-  const p = $(id), b = p.querySelector(".body");
-  b.textContent = placeholder; b.classList.add("empty");
-  const m = p.querySelector(".meta"); if (m) m.textContent = "";
+function errorTexts(e) {
+  if (e.local) return { title: t(e.local.key + "_title", resolve(e.local.params)), message: t(e.local.key + "_msg", resolve(e.local.params)) };
+  const s = e.server, table = TABLES[pageLang] || {};
+  if (s.code && (`err_${s.code}_title` in table)) {
+    const p = { service: s.service ? t("svc_" + s.service) : "" };
+    return { title: t(`err_${s.code}_title`, p), message: t(`err_${s.code}_msg`, p) };
+  }
+  return { title: s.title, message: s.message };   // server text, English
+}
+function renderError() {
+  const box = $("error");
+  if (!S.error) { box.classList.remove("show"); return; }
+  const x = errorTexts(S.error);
+  $("error-title").textContent = x.title; $("error-msg").textContent = x.message;
+  box.classList.add("show");
+}
+function renderReplyError() {
+  const box = $("reply-error");
+  if (!S.replyError) { box.classList.remove("show"); return; }
+  const x = errorTexts(S.replyError);
+  $("reply-error-title").textContent = x.title; $("reply-error-msg").textContent = x.message;
+  box.classList.add("show");
+}
+function renderSteps() {
+  stepsEl.textContent = "";
+  for (const s of S.steps) {
+    const li = document.createElement("li");
+    li.dataset.state = s.state;
+    li.textContent = t("step_" + s.key) + (s.state === "skipped" ? ` — ${t("step_skipped")}` : "");
+    stepsEl.appendChild(li);
+  }
+}
+function renderControlsText() {
+  micBtn.textContent = recording ? "■ " + t("mic_stop") : t("mic_start");
+  micBtn.classList.toggle("recording", recording);
+  if (!busy || !countdownTimer) recordBtn.textContent = t("record_button", { seconds: RECORD_SECONDS });
+  $("mic-hint").textContent = S.hint ? t(S.hint.key, S.hint.params) : "";
+}
+function langBlock(el, code, text) {
+  el.textContent = text;
+  el.setAttribute("lang", code);   // so screen readers pronounce Telugu/Hindi/English correctly
+}
+function renderNote() {
+  const n = S.note;
+  const text = $("note-text");
+  $("note-who").textContent = n ? `${t("note_who")} · ${t("lang_" + n.lang)}` : "";
+  if (!n) {
+    text.textContent = t("note_empty"); text.className = "text empty"; text.removeAttribute("lang");
+    $("note-meta").textContent = ""; $("note-actions").hidden = true; $("note-english").hidden = true;
+    return;
+  }
+  text.className = "text"; langBlock(text, n.lang, n.text);
+  $("note-meta").textContent = n.typed ? t("typed_tag") : (n.lang === "en" && n.asrModel ? t("produced_by", { model: n.asrModel }) : "");
+  const canToggle = n.lang !== "en" && n.english !== null;
+  $("note-actions").hidden = !canToggle;
+  const tg = $("toggle-english");
+  tg.textContent = n.showEnglish ? t("hide_english") : t("show_english");
+  tg.setAttribute("aria-expanded", String(n.showEnglish));
+  const eng = $("note-english");
+  if (n.working && n.lang !== "en") { eng.hidden = false; eng.removeAttribute("lang"); eng.textContent = t("note_working"); return; }
+  eng.hidden = !(canToggle && n.showEnglish);
+  if (!eng.hidden) langBlock(eng, "en", n.english || "");
+}
+function renderReply() {
+  const r = S.reply;
+  const text = $("reply-text");
+  $("reply-who").textContent = r ? t("reply_who", { lang: t("lang_" + r.language) }) : "";
+  const hasAudio = !!(r && r.audio_url);
+  $("reply-actions").hidden = !hasAudio;
+  $("reply-note").hidden = true;
+  if (!r) { text.textContent = t("reply_empty"); text.className = "text empty"; text.removeAttribute("lang"); return; }
+  text.className = "text"; langBlock(text, r.language, r.text);
+  if (hasAudio) {
+    $("reply-play").textContent = (r.played ? "↻ " + t("replay") : "▶ " + t("play"));
+    $("reply-length").textContent = t("audio_length", { seconds: (r.audio_duration_ms / 1000).toFixed(1) });
+  } else {
+    $("reply-note").hidden = false;
+    $("reply-note").textContent = r.skipped_render ? t("english_no_voice") : t("audio_unavailable");
+  }
+}
+function renderDeps() {
+  const stateKey = { ready: "state_ready", warming_up: "state_warming", down: "state_down", off: "state_off" };
+  for (const key of ["asr", "asr_en", "mt", "render"]) {
+    const el = $(`dep-${key}`), d = S.deps && S.deps[key];
+    const state = d ? d.state : "unknown";
+    el.dataset.state = state;
+    el.textContent = `${t("dep_" + key)}: ${t(d ? (stateKey[state] || "state_unknown") : "state_checking")}`;
+    el.title = d ? d.url : "";
+  }
 }
 function latencyTable(rows) {
-  const t = document.createElement("table"); t.className = "lat";
-  for (const [name, ms] of rows) {
+  const tb = document.createElement("table"); tb.className = "lat";
+  for (const [key, ms] of rows) {
     if (ms === undefined || ms === null) continue;
-    const tr = t.insertRow();
-    tr.insertCell().textContent = name;
+    const tr = tb.insertRow();
+    tr.insertCell().textContent = t(key);
     tr.insertCell().textContent = Number(ms).toLocaleString(undefined, { maximumFractionDigits: 0 });
   }
-  return t;
+  return tb;
 }
-function renderLatency(rows) {
-  const b = $("panel-latency").querySelector(".body");
-  if (!rows.length) { b.textContent = "No run yet."; b.classList.add("empty"); return; }
-  b.classList.remove("empty"); b.textContent = "";
-  b.appendChild(latencyTable(rows));
+function renderDetails() {
+  const body = $("details-body"); body.textContent = "";
+  const block = (titleKey) => {
+    const d = document.createElement("div"); d.className = "detail-block";
+    const h = document.createElement("h3"); h.textContent = t(titleKey); d.appendChild(h); body.appendChild(d); return d;
+  };
+  const line = (parent, label, value) => {
+    const p = document.createElement("p"); p.textContent = `${label}: ${value}`; parent.appendChild(p);
+  };
+  if (S.deps) {
+    const b = block("details_services");
+    for (const key of ["asr", "asr_en", "mt", "render"]) {
+      const d = S.deps[key]; if (!d) continue;
+      const voices = d.tts_voices ? " · " + Object.values(d.tts_voices).join(", ") : "";
+      line(b, t("dep_" + key), `${d.model ? d.model + " · " : ""}${d.url}${voices}`);
+    }
+  }
+  const m = block("details_models"), none = t("model_none");
+  line(m, t("model_asr"), (S.note && S.note.asrModel) || "—");
+  line(m, t("model_mt"), S.note ? (S.note.mtSkipped ? none : (S.note.mtModel || "—")) : "—");
+  line(m, t("model_translate"), S.reply ? (S.reply.model_version_translate || none) : "—");
+  line(m, t("model_voice"), S.reply ? (S.reply.model_version_tts || none) : "—");
+  const l = block("details_latency"), rows = [...S.latency, ...S.replyLatency];
+  if (rows.length) l.appendChild(latencyTable(rows));
+  else { const p = document.createElement("p"); p.textContent = t("details_none"); l.appendChild(p); }
 }
-function renderSteps(states) {
-  stepsEl.textContent = "";
-  currentSteps.forEach((s, i) => {
-    const li = document.createElement("li");
-    li.textContent = s.step; li.dataset.state = states[i] || "pending";
-    stepsEl.appendChild(li);
-  });
-}
-function showError(title, message) {
-  $("error-title").textContent = title;
-  $("error-msg").textContent = message;
-  $("error").classList.add("show");
-  $("retry").focus();
-}
-function hideError() { $("error").classList.remove("show"); }
-
-function resetAll() {
-  hideError();
-  $("mic-hint").textContent = "";
-  const lang = selectedLang();
-  $("transcript-title").textContent = `Transcript (${LANG_NAMES[lang]})`;
-  resetPanel("panel-transcript", "Waiting for a recording…");
-  resetPanel("panel-translation", "Waiting for a transcript…");
-  renderLatency([]);
-  currentSteps = MIC_STAGES;
-  renderSteps([]);
-  statusEl.textContent = "Ready. Press Start recording, speak one sentence, then Stop.";
-}
-
-function setControls() {
+function renderControlsState() {
   const working = busy || recording || replyBusy;
   micBtn.disabled = busy || replyBusy;
   recordBtn.disabled = working;
   textInput.disabled = busy || recording;
-  setLangInputsDisabled(busy || recording);
-  updateTextTranslateDisabled();
-  updateReplyDisabled();
+  document.querySelectorAll('input[name="lang"]').forEach((i) => { i.disabled = busy || recording; });
+  textTranslateBtn.disabled = anyBusy() || !textInput.value.trim();
+  replyGo.disabled = anyBusy() || !replyInput.value.trim();
+}
+function renderAll() {
+  $("status").textContent = statusText(S.status);
+  $("reply-status").textContent = statusText(S.replyStatus);
+  $("reply-autoplay-hint").textContent = t("autoplay_blocked");
+  renderSteps(); renderError(); renderReplyError(); renderControlsText();
+  renderNote(); renderReply(); renderDeps(); renderDetails(); renderControlsState();
+  renderHostBanner();
+}
+function setStatus(key, params, elapsed) { S.status = key ? { key, params, elapsed } : null; $("status").textContent = statusText(S.status); }
+function setError(e) { S.error = e; renderError(); if (e) $("retry").focus(); }
+function setReplyError(e) { S.replyError = e; renderReplyError(); if (e) $("reply-retry").focus(); }
+
+// ---- pipeline -----------------------------------------------------------------------------
+// Stage ids map 1:1 to POST /pipeline/<id> in app.py. "record" is the legacy server-microphone
+// path; "upload" is the browser-microphone path. A new stage = a PipelineStage in app.py plus
+// one entry here.
+const STAGE_DEFS = {
+  record: {
+    id: "record", running: "run_record",
+    timeoutMs: () => (RECORD_SECONDS + 20) * 1000, body: () => ({}),
+    render: (r, ctx) => { ctx.latency.push(["lat_record", r.latency_ms.record_wall]); },
+  },
+  upload: {
+    id: "upload", running: "run_upload", timeoutMs: () => 30000, raw: (ctx) => ctx.wav,
+    render: (r, ctx) => { ctx.latency.push(["lat_upload", ctx.uploadMs]); },
+  },
+  transcribe: {
+    id: "transcribe", running: "run_transcribe", timeoutMs: () => 130000,
+    body: (ctx) => ({ source_language: ctx.lang }),
+    render: (r, ctx) => {
+      const isEn = ctx.lang === "en";
+      S.note = { lang: ctx.lang, text: r.text, typed: false, asrModel: r.model_version,
+                 english: isEn ? r.text : null, mtSkipped: isEn, mtModel: null, showEnglish: false, working: !isEn };
+      const l = r.latency_ms;
+      ctx.latency.push(["lat_asr_decode", l.decode], ["lat_asr_inference", l.inference],
+        ["lat_asr_postprocess", l.postprocess], ["lat_asr_total", l.service_total],
+        ["lat_asr_round", l.round_trip]);
+      if (isEn) offerReply(r.text, ctx.lang);
+    },
+  },
+  translate: {
+    id: "translate", running: "run_translate", timeoutMs: () => 100000,
+    body: (ctx) => ({ text: ctx.transcript || (S.note && S.note.text), source_language: ctx.lang }),
+    render: (r, ctx) => {
+      if (S.note) { S.note.english = r.text || ""; S.note.mtModel = r.model_version; S.note.mtSkipped = !!r.skipped; S.note.working = false; }
+      if (!r.skipped) ctx.latency.push(["lat_mt_total", r.latency_ms.service_total], ["lat_mt_round", r.latency_ms.round_trip]);
+      offerReply(r.text, ctx.lang);
+    },
+  },
+};
+const stageKey = (s) => s.id;
+// English is already the pivot, so its Translate step is shown as skipped and never called.
+const micStages = (lang) => (lang === "en" ? [STAGE_DEFS.upload, STAGE_DEFS.transcribe] : [STAGE_DEFS.upload, STAGE_DEFS.transcribe, STAGE_DEFS.translate]);
+const serverStages = (lang) => (lang === "en" ? [STAGE_DEFS.record, STAGE_DEFS.transcribe] : [STAGE_DEFS.record, STAGE_DEFS.transcribe, STAGE_DEFS.translate]);
+function setSteps(stages, states, lang) {
+  S.steps = stages.map((s, i) => ({ key: stageKey(s), state: states[i] || "pending" }));
+  if (lang === "en") S.steps.push({ key: "translate", state: "skipped" });
+  renderSteps();
 }
 
-// Live elapsed-seconds readout so a slow CPU inference never looks like a hang.
 function startElapsed(stage) {
   const t0 = Date.now();
-  statusEl.textContent = stage.running();
-  elapsedTimer = setInterval(() => {
-    statusEl.textContent = `${stage.running()} ${Math.floor((Date.now() - t0) / 1000)}s`;
-  }, 1000);
+  setStatus(stage.running);
+  elapsedTimer = setInterval(() => setStatus(stage.running, undefined, Math.floor((Date.now() - t0) / 1000)), 1000);
 }
 function stopElapsed() { if (elapsedTimer) clearInterval(elapsedTimer); elapsedTimer = null; }
 
-function asError(e, fallbackTitle) {
-  return { title: (e && e.title) || fallbackTitle || "Something went wrong",
-           message: (e && e.message) || String(e) };
-}
-
-async function post(url, init, timeoutMs, stepName) {
+async function post(url, init, timeoutMs, stepKey) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let resp;
   try {
     resp = await fetch(url, { method: "POST", ...init, signal: ctrl.signal });
   } catch (e) {
-    if (e.name === "AbortError") {
-      throw { title: `${stepName} step timed out`,
-              message: "No response in time. Check the service terminals/logs, then press Try again." };
-    }
-    throw { title: "The demo console is not responding",
-            message: "The page could not reach its own backend. Is start_demo.py still running? " +
-                     "Restart it if needed, then press Try again." };
+    if (e.name === "AbortError") throw { local: { key: "err_timeout", params: { stepKey: "step_" + stepKey } } };
+    throw { local: { key: "err_console_down" } };
   } finally { clearTimeout(timer); }
   let data = null;
   try { data = await resp.json(); } catch (_) { /* non-JSON body */ }
   if (!resp.ok) {
     const err = data && data.error;
-    throw { title: (err && err.title) || `${stepName} step failed`,
-            message: (err && err.message) || `Unexpected HTTP ${resp.status} from the demo console.` };
+    if (err) throw { server: { title: err.title, message: err.message, code: err.code, service: err.service } };
+    throw { local: { key: "err_unexpected" } };
   }
   return data;
 }
+function asErrorObj(e) { return e && (e.local || e.server) ? e : { local: { key: "err_unexpected" } }; }
 
 function callStage(stage, ctx) {
   if (stage.raw) {
-    return post(`/pipeline/${stage.id}`,
-      { headers: { "Content-Type": "audio/wav" }, body: stage.raw(ctx) }, stage.timeoutMs(), stage.step);
+    return post(`/pipeline/${stage.id}`, { headers: { "Content-Type": "audio/wav" }, body: stage.raw(ctx) }, stage.timeoutMs(), stage.id);
   }
-  return post(`/pipeline/${stage.id}`,
-    { headers: { "Content-Type": "application/json" }, body: JSON.stringify(stage.body(ctx)) },
-    stage.timeoutMs(), stage.step);
+  return post(`/pipeline/${stage.id}`, { headers: { "Content-Type": "application/json" }, body: JSON.stringify(stage.body(ctx)) },
+    stage.timeoutMs(), stage.id);
 }
 
 async function runPipeline(stages, ctx) {
   if (busy) return;
-  busy = true; currentSteps = stages;
-  hideError(); setControls();
-  const lang = ctx.lang;
-  $("transcript-title").textContent = `Transcript (${LANG_NAMES[lang]})`;
-  resetPanel("panel-transcript", "Waiting for a recording…");
-  resetPanel("panel-translation", "Waiting for a transcript…");
-  renderLatency([]);
+  busy = true; setError(null); renderControlsState();
+  S.note = null; S.latency = []; S.hint = S.hint && S.hint.key === "hint_auto_stop" ? S.hint : null;
+  renderNote(); renderDetails();
   const states = stages.map(() => "pending");
+  setSteps(stages, states, ctx.lang);
   let i = 0;
   try {
     for (i = 0; i < stages.length; i++) {
       const stage = stages[i];
-      states[i] = "running"; renderSteps(states);
+      states[i] = "running"; setSteps(stages, states, ctx.lang);
       if (stage.id === "record") startServerCountdown(); else startElapsed(stage);
       const t0 = performance.now();
       const result = await callStage(stage, ctx);
       if (stage.id === "upload") ctx.uploadMs = performance.now() - t0;
       stopServerCountdown(); stopElapsed();
       stage.render(result, ctx);
-      renderLatency(ctx.latency);
-      states[i] = "done"; renderSteps(states);
+      S.latency = ctx.latency;
+      states[i] = "done"; setSteps(stages, states, ctx.lang);
+      renderNote(); renderDetails();
     }
-    statusEl.textContent = "Done. Press Start recording to try another sentence.";
+    setStatus("status_done");
   } catch (e) {
     stopServerCountdown(); stopElapsed();
-    states[i] = "failed"; renderSteps(states);
-    statusEl.textContent = `Stopped at the ${stages[i] ? stages[i].step : "pipeline"} step.`;
-    const err = asError(e);
-    showError(err.title, err.message);
+    states[i] = "failed"; setSteps(stages, states, ctx.lang);
+    if (S.note) { S.note.working = false; renderNote(); }
+    setStatus("status_stopped", { stepKey: "step_" + (stages[i] ? stageKey(stages[i]) : "upload") });
+    setError(asErrorObj(e));
   } finally {
-    busy = false; recordBtn.textContent = `Record (${RECORD_SECONDS}s)`; setControls();
+    busy = false; renderControlsText(); renderControlsState();
   }
 }
 
 // ---- legacy server-side recording (fixed timer) ----
 function startServerCountdown() {
   let left = RECORD_SECONDS;
-  recordBtn.textContent = `● Recording… ${left}s`;
-  statusEl.textContent = `Recording on the console PC — speak now… ${left}s left`;
+  const tick = () => { recordBtn.textContent = `● ${left}`; setStatus("status_recording_server", { left }); };
+  tick();
   countdownTimer = setInterval(() => {
     left -= 1;
-    if (left > 0) {
-      recordBtn.textContent = `● Recording… ${left}s`;
-      statusEl.textContent = `Recording on the console PC — speak now… ${left}s left`;
-    } else { stopServerCountdown(); recordBtn.textContent = "Working…"; }
+    if (left > 0) tick(); else { stopServerCountdown(); recordBtn.textContent = "…"; }
   }, 1000);
 }
 function stopServerCountdown() { if (countdownTimer) clearInterval(countdownTimer); countdownTimer = null; }
-recordBtn.addEventListener("click", () =>
-  runPipeline(SERVER_STAGES, { lang: selectedLang(), latency: [] }));
+recordBtn.addEventListener("click", () => {
+  const lang = selectedLang();
+  runPipeline(serverStages(lang), { lang, latency: [] });
+});
 
 // ---- browser microphone: getUserMedia -> Float32 -> 16 kHz mono PCM16 WAV (no MediaRecorder) ----
 const WORKLET_SRC = `
@@ -477,51 +645,33 @@ let cap = null; // { stream, ctx, chunks, sampleRate, t0, timer, cleanup, peakSe
 
 function micProblem(e) {
   const name = e && e.name;
-  if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") {
-    return { title: "Microphone access is blocked",
-             message: "Allow microphone access in the browser address bar, then press Try again. " +
-                      "You can still type text below." };
-  }
-  if (name === "NotFoundError" || name === "OverconstrainedError" || name === "DevicesNotFoundError") {
-    return { title: "No microphone found",
-             message: "No input device was found. Plug in or enable a microphone, then press Try again. " +
-                      "You can still type text below." };
-  }
-  if (name === "NotReadableError" || name === "AbortError") {
-    return { title: "The microphone is busy",
-             message: "Another app may be using the microphone. Close it, then press Try again." };
-  }
-  return { title: "Could not start the microphone",
-           message: `${name || "Error"}: ${(e && e.message) || e}. Press Try again, or type text below.` };
+  if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") return { local: { key: "err_mic_blocked" } };
+  if (name === "NotFoundError" || name === "OverconstrainedError" || name === "DevicesNotFoundError") return { local: { key: "err_no_mic" } };
+  if (name === "NotReadableError" || name === "AbortError") return { local: { key: "err_mic_busy" } };
+  return { local: { key: "err_mic_start", params: { detail: `${name || "Error"}: ${(e && e.message) || e}.` } } };
 }
 
 async function startCapture() {
-  hideError();
+  setError(null);
   if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showError("The browser blocks the microphone on this address",
-      "Open this page as http://127.0.0.1:" + (location.port || "8005") +
-      "/ (not a LAN IP or computer name) so the browser treats it as secure. You can still type text below.");
+    setError({ local: { key: "err_insecure", params: { port: location.port || "8005" } } });
     return;
   }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
-  } catch (e) {
-    const p = micProblem(e); showError(p.title, p.message); return;
-  }
+  } catch (e) { setError(micProblem(e)); return; }
   const AC = window.AudioContext || window.webkitAudioContext;
   const ctx = new AC();
   try { await ctx.resume(); } catch (_) { /* started by the click gesture anyway */ }
   const chunks = [];
-  const state = { stream, ctx, chunks, sampleRate: ctx.sampleRate, t0: performance.now(),
-                  timer: null, cleanup: () => {}, peakSeen: 0 };
+  const state = { stream, ctx, chunks, sampleRate: ctx.sampleRate, t0: performance.now(), timer: null, cleanup: () => {}, peakSeen: 0 };
   const onChunk = (f32) => {
     chunks.push(f32);
     let peak = 0;
     for (let i = 0; i < f32.length; i++) { const a = Math.abs(f32[i]); if (a > peak) peak = a; }
     if (peak > state.peakSeen) state.peakSeen = peak;
-    // sqrt curve so quiet speech still moves the bar
-    $("meter-bar").style.width = Math.min(100, Math.sqrt(peak) * 100) + "%";
+    $("meter-bar").style.width = Math.min(100, Math.sqrt(peak) * 100) + "%"; // sqrt: quiet speech still moves it
   };
   try {
     const source = ctx.createMediaStreamSource(stream);
@@ -541,20 +691,20 @@ async function startCapture() {
       state.cleanup = () => { node.onaudioprocess = null; source.disconnect(); node.disconnect(); };
     }
   } catch (e) {
-    stream.getTracks().forEach(t => t.stop()); ctx.close();
-    showError("Could not start recording", `${(e && e.message) || e}. Press Try again, or type text below.`);
+    stream.getTracks().forEach((tr) => tr.stop()); ctx.close();
+    setError({ local: { key: "err_mic_start", params: { detail: `${(e && e.message) || e}.` } } });
     return;
   }
-  cap = state; recording = true; setControls();
-  micBtn.textContent = "■ Stop recording"; micBtn.classList.add("recording");
+  cap = state; recording = true;
+  renderControlsText(); renderControlsState();
   $("meter-wrap").classList.add("show");
-  statusEl.textContent = "Recording — speak now, then press Stop.";
+  setStatus("status_recording");
   state.timer = setInterval(() => {
     const s = (performance.now() - state.t0) / 1000;
     $("elapsed").textContent = `${s.toFixed(1)} s / ${MAX_RECORD_SECONDS} s`;
-    if (s > 1.5 && state.peakSeen < 0.003) {
-      $("mic-hint").textContent = "No sound is reaching the microphone — check it is not muted.";
-    } else if (state.peakSeen >= 0.003) { $("mic-hint").textContent = ""; }
+    if (s > 1.5 && state.peakSeen < 0.003) S.hint = { key: "hint_no_sound" };
+    else if (state.peakSeen >= 0.003 && S.hint && S.hint.key === "hint_no_sound") S.hint = null;
+    $("mic-hint").textContent = S.hint ? t(S.hint.key, S.hint.params) : "";
     if (s >= MAX_RECORD_SECONDS) stopCapture(true);
   }, 100);
 }
@@ -593,189 +743,152 @@ async function stopCapture(auto) {
   if (!cap) return;
   const c = cap; cap = null;
   clearInterval(c.timer); c.cleanup();
-  c.stream.getTracks().forEach(t => t.stop());
+  c.stream.getTracks().forEach((tr) => tr.stop());
   try { await c.ctx.close(); } catch (_) { /* already closed */ }
   recording = false;
-  micBtn.textContent = "Start recording"; micBtn.classList.remove("recording");
   $("meter-wrap").classList.remove("show"); $("meter-bar").style.width = "0";
   const pcm = downsampleTo16k(c.chunks, c.sampleRate);
   if (pcm.length < TARGET_RATE * 0.3) {
-    setControls();
-    showError("Recording was too short", "Speak for a second or two before pressing Stop, then press Try again.");
+    renderControlsText(); renderControlsState();
+    setError({ local: { key: "err_too_short" } });
     return;
   }
-  const lang = selectedLang();
-  if (auto) $("mic-hint").textContent = `Stopped automatically at ${MAX_RECORD_SECONDS} s.`;
-  await runPipeline(MIC_STAGES, { lang, latency: [], wav: encodeWav(pcm) });
+  const lang = selectedLang();   // the speech language radio, never the page language
+  S.hint = auto ? { key: "hint_auto_stop", params: { seconds: MAX_RECORD_SECONDS } } : null;
+  renderControlsText();
+  await runPipeline(micStages(lang), { lang, latency: [], wav: encodeWav(pcm) });
 }
 
 micBtn.addEventListener("click", () => { if (recording) stopCapture(false); else if (!busy) startCapture(); });
 
-// ---- typed text -> MT fallback ----
-function updateTextTranslateDisabled() {
-  textTranslateBtn.disabled = anyBusy() || !textInput.value.trim();
-}
+// ---- typed text -> (MT unless English) ----
 async function runTextTranslate() {
   if (busy || recording) return;
-  busy = true; hideError(); setControls();
-  resetPanel("panel-translation", "Translating…");
-  renderLatency([]);
-  currentSteps = []; renderSteps([]);
-  const ctx = { transcript: textInput.value.trim(), lang: selectedLang(), latency: [] };
-  $("transcript-title").textContent = `Input text (${LANG_NAMES[ctx.lang]})`;
-  fillPanel("panel-transcript", ctx.transcript, "typed text — ASR skipped");
+  const lang = selectedLang(), text = textInput.value.trim();
+  if (!text) return;
+  busy = true; setError(null); S.latency = []; S.steps = []; renderSteps(); renderControlsState();
+  S.note = { lang, text, typed: true, asrModel: null, english: lang === "en" ? text : null,
+             mtSkipped: lang === "en", mtModel: null, showEnglish: false, working: lang !== "en" };
+  renderNote(); renderDetails();
+  if (lang === "en") {            // already English: nothing to translate, MT is never called
+    offerReply(text, lang); setStatus("status_done_typed"); busy = false; renderControlsState(); return;
+  }
+  const ctx = { transcript: text, lang, latency: [] };
   try {
     startElapsed(STAGE_DEFS.translate);
     const result = await callStage(STAGE_DEFS.translate, ctx);
     stopElapsed();
     STAGE_DEFS.translate.render(result, ctx);
-    renderLatency(ctx.latency);
-    statusEl.textContent = "Done. Type another sentence, or press Start recording.";
+    S.latency = ctx.latency;
+    setStatus("status_done_typed");
   } catch (e) {
-    stopElapsed();
-    statusEl.textContent = "Stopped at the Translate step.";
-    const err = asError(e); showError(err.title, err.message);
-  } finally { busy = false; setControls(); }
+    stopElapsed(); S.note.working = false;
+    setStatus("status_stopped", { stepKey: "step_translate" });
+    setError(asErrorObj(e));
+  } finally { busy = false; renderNote(); renderDetails(); renderControlsState(); }
 }
 textTranslateBtn.addEventListener("click", runTextTranslate);
-textInput.addEventListener("input", updateTextTranslateDisabled);
+textInput.addEventListener("input", renderControlsState);
 
-// ---- Part 2: English reply -> target text -> audio ----
-const replyInput = $("reply-input"), replyGo = $("reply-go"), audioEl = $("reply-audio");
+$("toggle-english").addEventListener("click", () => {
+  if (!S.note) return;
+  S.note.showEnglish = !S.note.showEnglish; renderNote();
+});
 
-function updateReplyDisabled() { replyGo.disabled = anyBusy() || !replyInput.value.trim(); }
-
-// Called after every successful Part 1 translation: prefill the editable box and
-// default the target language to the language the speaker used.
+// ---- family reply: English text -> target text -> audio ----
+// Called after every successful note: prefill the editable box and, if the speaker used
+// Telugu or Hindi, default the reply language to it.
 function offerReply(englishText, sourceLang) {
   if (englishText) replyInput.value = englishText;
-  const radio = document.querySelector(`input[name="tlang"][value="${sourceLang}"]`);
-  if (radio) radio.checked = true;
-  updateReplyDisabled();
+  if (sourceLang !== "en") {
+    const radio = document.querySelector(`input[name="tlang"][value="${sourceLang}"]`);
+    if (radio) radio.checked = true;
+  }
+  renderControlsState();
 }
-
-function hideReplyError() { $("reply-error").classList.remove("show"); }
-function showReplyError(title, message) {
-  $("reply-error-title").textContent = title;
-  $("reply-error-msg").textContent = message;
-  $("reply-error").classList.add("show");
-  $("reply-retry").focus();
-}
+function setReplyStatus(key, params, elapsed) { S.replyStatus = key ? { key, params, elapsed } : null; $("reply-status").textContent = statusText(S.replyStatus); }
 
 async function runReply() {
   if (anyBusy()) return;
   const text = replyInput.value.trim(), lang = targetLang();
   if (!text) return;
-  replyBusy = true; hideReplyError(); setControls();
+  replyBusy = true; setReplyError(null); renderControlsState();
   const t0 = Date.now();
-  const tick = setInterval(() => {
-    $("reply-status").textContent =
-      `Translating and speaking in ${LANG_NAMES[lang]}… ${Math.floor((Date.now() - t0) / 1000)}s`;
-  }, 1000);
-  $("reply-status").textContent = `Translating and speaking in ${LANG_NAMES[lang]}…`;
+  const upd = () => {
+    S.replyStatus = { key: "reply_busy", params: { langCode: lang, elapsed: Math.floor((Date.now() - t0) / 1000) } };
+    $("reply-status").textContent = statusText(S.replyStatus);
+  };
+  const tick = setInterval(upd, 1000); upd();
   try {
     const r = await post("/pipeline/render",
-      { headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, target_language: lang }) }, 190000, "Spoken reply");
-    showReply(r);
-    $("reply-status").textContent = r.degraded.active
-      ? "Done — text only this time." : "Done.";
+      { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, target_language: lang }) }, 190000, "render");
+    audioEl.pause();
+    S.reply = { ...r, played: false };
+    S.replyLatency = r.skipped_render ? [] : [["lat_render_total", r.latency_ms.service_total], ["lat_render_round", r.latency_ms.round_trip]];
+    if (r.audio_url) {
+      audioEl.src = r.audio_url;
+      $("reply-autoplay-hint").hidden = true;
+      audioEl.play().then(() => { S.reply.played = true; renderReply(); })
+        .catch(() => { $("reply-autoplay-hint").hidden = false; });   // autoplay may be blocked
+    }
+    setReplyStatus(r.degraded.active ? "reply_done_text_only" : "reply_done");
+    renderReply(); renderDetails();
   } catch (e) {
-    $("reply-status").textContent = "Stopped at the spoken-reply step.";
-    const err = asError(e); showReplyError(err.title, err.message);
-  } finally { clearInterval(tick); replyBusy = false; setControls(); }
+    setReplyStatus("reply_stopped");
+    setReplyError(asErrorObj(e));
+  } finally { clearInterval(tick); replyBusy = false; renderControlsState(); }
 }
-
-function showReply(r) {
-  $("reply-result").classList.add("show");
-  $("reply-lang-label").textContent = `${LANG_NAMES[r.language]} (translated text)`;
-  $("reply-text-out").textContent = r.text;
-  const note = $("reply-degraded"), wrap = $("reply-audio-wrap");
-  $("reply-autoplay-hint").hidden = true;
-  if (r.degraded.active || !r.audio_url) {
-    note.hidden = false;
-    note.textContent = "Audio is not available for this one — showing the translated text only." +
-      (r.degraded.detail ? ` (${r.degraded.detail})` : "");
-    // The previous audio stays on screen until a new one arrives; hide it only if it is stale.
-    audioEl.pause(); wrap.classList.remove("show");
-  } else {
-    note.hidden = true; note.textContent = "";
-    audioEl.src = r.audio_url;
-    wrap.classList.add("show");
-    $("reply-length").textContent = `audio length ${(r.audio_duration_ms / 1000).toFixed(1)} s`;
-    audioEl.play().catch(() => { $("reply-autoplay-hint").hidden = false; }); // autoplay may be blocked
-  }
-  $("reply-models").textContent =
-    `translate model: ${r.model_version_translate} · voice: ${r.model_version_tts}`;
-  const l = $("reply-latency"); l.textContent = "";
-  l.appendChild(latencyTable([
-    ["Render — service total (translate + speak)", r.latency_ms.service_total],
-    ["Render — round trip (console → service)", r.latency_ms.round_trip]]));
-}
-
 replyGo.addEventListener("click", runReply);
-replyInput.addEventListener("input", updateReplyDisabled);
-$("reply-replay").addEventListener("click", () => {
-  audioEl.currentTime = 0; audioEl.play().catch(() => { $("reply-autoplay-hint").hidden = false; });
+replyInput.addEventListener("input", renderControlsState);
+$("reply-play").addEventListener("click", () => {
+  if (!S.reply || !S.reply.audio_url) return;
+  audioEl.currentTime = 0;
+  audioEl.play().then(() => { $("reply-autoplay-hint").hidden = true; S.reply.played = true; renderReply(); })
+    .catch(() => { $("reply-autoplay-hint").hidden = false; });
 });
-$("reply-retry").addEventListener("click", () => { hideReplyError(); $("reply-status").textContent = ""; replyGo.focus(); });
+audioEl.addEventListener("error", () => { if (S.reply && S.reply.audio_url) { $("reply-autoplay-hint").hidden = false; $("reply-autoplay-hint").textContent = t("audio_failed"); } });
+$("reply-retry").addEventListener("click", () => { setReplyError(null); setReplyStatus(null); replyGo.focus(); });
 
 // ---- status line + host check ----
 async function refreshDeps() {
-  // Skip while a run is in progress: the services answer health checks slowly (or not
-  // at all) mid-inference, which would flash a false "not running".
+  // Skip while a run is in progress: services answer health checks slowly (or not at all)
+  // mid-inference, which would flash a false "not running".
   if (anyBusy()) return;
-  const label = { ready: "ready", warming_up: "warming up…", down: "not running" };
   try {
     const r = await fetch("/health/deps", { cache: "no-store" });
     const d = await r.json();
-    if (d.record_seconds && !anyBusy()) {
-      RECORD_SECONDS = Math.round(d.record_seconds);
-      recordBtn.textContent = `Record (${RECORD_SECONDS}s)`;
-    }
+    S.deps = d;
+    if (d.record_seconds && !anyBusy()) RECORD_SECONDS = Math.round(d.record_seconds);
     if (d.max_record_seconds) MAX_RECORD_SECONDS = Math.round(d.max_record_seconds);
-    for (const [key, name] of [["asr", "ASR"], ["mt", "MT"], ["render", "Render"]]) {
-      const dep = d[key]; if (!dep) continue;
-      const el = $(`dep-${key}`);
-      el.dataset.state = dep.state;
-      let text = `${name}: ${label[dep.state] || dep.state}`;
-      el.title = dep.url;
-      if (dep.state === "ready" && dep.model) {
-        text += ` · ${dep.model}`; el.title = `${dep.url} — ${dep.model}`;
-        if (dep.tts_voices) {
-          const v = Object.values(dep.tts_voices).join(", "); text += ` · ${v}`;
-        }
-      }
-      el.textContent = text;
-    }
   } catch (_) {
-    for (const key of ["asr", "mt", "render"]) {
-      $(`dep-${key}`).dataset.state = "down";
-      $(`dep-${key}`).textContent = `${key.toUpperCase()}: unknown (console not responding)`;
-    }
+    S.deps = Object.fromEntries(["asr", "asr_en", "mt", "render"].map((k) => [k, { state: "unknown", url: "" }]));
   }
+  renderDeps(); renderDetails(); renderControlsText();
 }
-
-function checkHost() {
-  const h = location.hostname;
+function renderHostBanner() {
+  const h = location.hostname, b = $("host-banner");
   if (!window.isSecureContext || (h !== "127.0.0.1" && h !== "localhost")) {
-    const b = $("host-banner");
-    b.textContent = "The microphone only works when this page is opened as http://127.0.0.1:" +
-      (location.port || "8005") + "/ — not through a LAN IP or computer name. Typing text still works.";
+    b.textContent = t("host_banner", { port: location.port || "8005" });
     b.classList.add("show");
   }
 }
 
-$("retry").addEventListener("click", () => { resetAll(); micBtn.focus(); refreshDeps(); });
-document.querySelectorAll('input[name="lang"]').forEach(i => i.addEventListener("change", () => {
-  if (!anyBusy()) $("transcript-title").textContent = `Transcript (${LANG_NAMES[selectedLang()]})`;
-}));
-window.addEventListener("beforeunload", () => { if (cap) cap.stream.getTracks().forEach(t => t.stop()); });
-resetAll();
-checkHost();
-setControls();
-refreshDeps();
-setInterval(refreshDeps, 5000);
+$("retry").addEventListener("click", () => { setError(null); setStatus("status_ready"); S.steps = []; renderSteps(); S.hint = null; renderControlsText(); micBtn.focus(); refreshDeps(); });
+document.querySelectorAll("[data-page-lang]").forEach((b) => b.addEventListener("click", () => setPageLang(b.dataset.pageLang, true)));
+window.addEventListener("beforeunload", () => { if (cap) cap.stream.getTracks().forEach((tr) => tr.stop()); });
+
+(async function init() {
+  await loadTables();
+  const guess = (navigator.language || "en").slice(0, 2);
+  const start = readSavedLang() || (PAGE_LANGS.includes(guess) ? guess : "en");
+  // The speaker's language starts as the page language; after that the two are independent.
+  const radio = document.querySelector(`input[name="lang"][value="${SPEECH_LANGS.includes(start) ? start : "en"}"]`);
+  radio.checked = true;
+  setStatus("status_ready");
+  setPageLang(start, false);
+  refreshDeps();
+  setInterval(refreshDeps, 5000);
+})();
 </script>
 </body>
 </html>

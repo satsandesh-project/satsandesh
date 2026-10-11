@@ -7,6 +7,11 @@ owned by M1). It talks to services/ai/speech/ and services/ai/mt/ only over
 their public HTTP APIs, the same way the gateway eventually will — it never
 imports their engines.
 
+Speech is routed by the language the speaker declared (asr_upstream_for): Telugu and
+Hindi go to the IndicConformer service, English to the faster-whisper service. English
+text is already the pivot, so English notes skip MT, and an English reply has no
+render step (render only translates into, and speaks, Telugu and Hindi).
+
 Pipeline = PIPELINE_STAGES below: one POST /pipeline/<stage> endpoint per
 stage, called one at a time by static/index.html so the page can show
 progressive status. A future stage (Week 7 TTS, later a moderation badge) is
@@ -67,6 +72,11 @@ DEMO_PORT = int(os.environ.get("DEMO_CONSOLE_PORT", "8005"))
 # rather than "localhost": on Windows, localhost tries ::1 first, and a refused
 # IPv6 connect can add ~2s before falling back to IPv4 (uvicorn binds IPv4).
 ASR_BASE_URL = f"http://127.0.0.1:{SpeechSettings.from_env().port}"
+# English speech goes to a second, separate faster-whisper service (the launcher starts it
+# on 8007). DEMO_ASR_EN=off means "no English ASR": typed English still works.
+ASR_EN_PORT = int(os.environ.get("DEMO_ASR_EN_PORT", "8007"))
+ASR_EN_BASE_URL = f"http://127.0.0.1:{ASR_EN_PORT}"
+ASR_EN_ENABLED = os.environ.get("DEMO_ASR_EN", "whisper").strip().lower() != "off"
 MT_BASE_URL = f"http://127.0.0.1:{MtSettings.from_env().port}"
 
 # The console has its own render port (render's own default, 8005, is the console's).
@@ -100,15 +110,36 @@ MT_TIMEOUT_S = 90.0
 RENDER_TIMEOUT_S = 180.0  # translate + synthesize on a cold CPU
 HEALTH_TIMEOUT_S = 3.0
 
-SUPPORTED_LANGUAGES = {"te": "Telugu", "hi": "Hindi"}
+# Languages a person can speak or type in. Replies are rendered only into REPLY_VOICE_LANGUAGES.
+SUPPORTED_LANGUAGES = {"en": "English", "te": "Telugu", "hi": "Hindi"}
+REPLY_VOICE_LANGUAGES = ("te", "hi")
+
+ASR_EN_UNAVAILABLE_TITLE = "English speech needs the faster-whisper service"
+ASR_EN_UNAVAILABLE_MESSAGE = (
+    "The faster-whisper service is not running, so English recordings cannot be turned into "
+    "text. You can still type English below, and Telugu and Hindi are not affected. "
+    "Start it with start_demo.py (without --asr-en off), then press Try again."
+)
 
 
 class DemoError(Exception):
-    def __init__(self, title: str, message: str, status_code: int = 502) -> None:
+    def __init__(
+        self,
+        title: str,
+        message: str,
+        status_code: int = 502,
+        *,
+        code: str | None = None,
+        service: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.title = title
         self.message = message
         self.status_code = status_code
+        # Stable machine-readable tags so the page can show its own-language wording;
+        # title/message stay the English fallback.
+        self.code = code
+        self.service = service
 
 
 # --------------------------------------------------------------------------
@@ -121,16 +152,30 @@ class Upstream:
     name: str  # human name used in messages, e.g. "Speech recognition (ASR)"
     base_url: str
     start_hint: str
+    key: str = ""  # short id for the page: "asr" | "asr_en" | "mt" | "render"
+    # When set, an unreachable service raises this calm message instead of the generic one.
+    unavailable: tuple[str, str, str] | None = None  # (title, message, code)
 
 
 ASR = Upstream(
+    key="asr",
     name="Speech recognition (ASR)",
     base_url=ASR_BASE_URL,
     start_hint="Start it with start_demo.py, or: cd services/ai && "
     "PYTHONPATH=../.. .venv/Scripts/python.exe -m uvicorn speech.app:app --port "
     f"{ASR_BASE_URL.rsplit(':', 1)[1]}",
 )
+ASR_EN = Upstream(
+    key="asr_en",
+    name="English speech recognition (faster-whisper)",
+    base_url=ASR_EN_BASE_URL,
+    start_hint="Start it with start_demo.py, or: cd services/ai && "
+    "ASR_PORT=8007 PYTHONPATH=../.. .venv/Scripts/python.exe -m uvicorn speech.app:app --port "
+    f"{ASR_EN_PORT}",
+    unavailable=(ASR_EN_UNAVAILABLE_TITLE, ASR_EN_UNAVAILABLE_MESSAGE, "asr_en_unavailable"),
+)
 MT = Upstream(
+    key="mt",
     name="Translation (MT)",
     base_url=MT_BASE_URL,
     start_hint="Start it with start_demo.py, or: cd services/ai && "
@@ -138,6 +183,7 @@ MT = Upstream(
     f"{MT_BASE_URL.rsplit(':', 1)[1]}",
 )
 RENDER = Upstream(
+    key="render",
     name="Spoken reply (render)",
     base_url=RENDER_BASE_URL,
     start_hint="Start it with start_demo.py (needs HF_TOKEN and the Piper voices)",
@@ -154,11 +200,18 @@ async def _call_upstream(
         async with httpx.AsyncClient(timeout=timeout_s, trust_env=False) as client:
             resp = await client.post(url, json=payload)
     except httpx.ConnectError as exc:
+        if upstream.unavailable:
+            title, message, code = upstream.unavailable
+            raise DemoError(
+                title, message, status_code=503, code=code, service=upstream.key
+            ) from exc
         raise DemoError(
             f"{upstream.name} service is not running",
             f"Could not connect to {upstream.base_url}. {upstream.start_hint}, "
             "then press Try again.",
             status_code=503,
+            code="upstream_down",
+            service=upstream.key,
         ) from exc
     except httpx.TimeoutException as exc:
         raise DemoError(
@@ -166,6 +219,8 @@ async def _call_upstream(
             f"No answer from {upstream.base_url} within {timeout_s:.0f}s. The service may "
             "be overloaded or stuck — check its terminal/log, then press Try again.",
             status_code=504,
+            code="upstream_timeout",
+            service=upstream.key,
         ) from exc
     except httpx.HTTPError as exc:
         raise DemoError(
@@ -188,11 +243,17 @@ async def _call_upstream(
             f"The model is still loading. Wait a few seconds and press Try again. "
             f"({upstream_msg or 'HTTP 503'})",
             status_code=503,
+            code="upstream_warming",
+            service=upstream.key,
         )
     raise DemoError(
         f"{upstream.name} returned an error",
         upstream_msg or f"Unexpected HTTP {resp.status_code} from {url}.",
     )
+
+
+async def _off_status(upstream: Upstream) -> dict[str, Any]:
+    return {"name": upstream.name, "url": upstream.base_url, "state": "off"}
 
 
 async def _check_ready(upstream: Upstream) -> dict[str, Any]:
@@ -298,6 +359,7 @@ def _record_blocking() -> dict[str, Any]:
             "The microphone picked up (almost) nothing. Check it is not muted and speak "
             "a little closer, then press Try again.",
             status_code=422,
+            code="silent",
         )
     logger.info(
         "recorded %.1fs (peak %d) -> %s", result.actual_seconds, result.peak_amplitude, result.path
@@ -327,19 +389,38 @@ async def stage_record(_body: RecordBody) -> dict[str, Any]:
         _record_lock.release()
 
 
+def asr_upstream_for(language: str) -> Upstream:
+    """Which ASR service hears a note declared in `language`.
+
+    The console's counterpart of the gateway's AI_TRANSCRIBE_URLS_BY_LANGUAGE: the language
+    the speaker chose picks the service, and the same code is sent to it as the hint.
+    Read at call time (not copied at import) so tests and the launcher can swap an upstream.
+    """
+    return ASR_EN if language == "en" else ASR
+
+
 class TranscribeBody(BaseModel):
     source_language: str
 
 
 async def stage_transcribe(body: TranscribeBody) -> dict[str, Any]:
     lang = _require_language(body.source_language)
+    upstream = asr_upstream_for(lang)
+    if upstream is ASR_EN and not ASR_EN_ENABLED:
+        raise DemoError(
+            ASR_EN_UNAVAILABLE_TITLE,
+            ASR_EN_UNAVAILABLE_MESSAGE.replace("is not running", "was turned off (--asr-en off)"),
+            status_code=503,
+            code="asr_en_unavailable",
+            service="asr_en",
+        )
     if not RECORDING_PATH.exists():
         raise DemoError(
             "Nothing recorded yet", "Press Record first, then try again.", status_code=409
         )
     start = time.perf_counter()
     data = await _call_upstream(
-        ASR,
+        upstream,
         "/v1/transcribe",
         {
             "audio": {"uri": str(RECORDING_PATH), "format": "wav_pcm16"},
@@ -353,8 +434,9 @@ async def stage_transcribe(body: TranscribeBody) -> dict[str, Any]:
         raise DemoError(
             "No speech recognised",
             "The recording reached the ASR service, but no words were recognised. "
-            "Speak clearly for most of the 7 seconds and press Try again.",
+            "Speak clearly for most of the recording and press Try again.",
             status_code=422,
+            code="no_speech",
         )
     latency = {t["stage"]: t["duration_ms"] for t in data.get("stage_timings", [])}
     latency["service_total"] = data.get("duration_ms")
@@ -376,6 +458,14 @@ async def stage_translate(body: TranslateBody) -> dict[str, Any]:
     lang = _require_language(body.source_language)
     if not body.text.strip():
         raise DemoError("Nothing to translate", "The transcript is empty.", status_code=422)
+    if lang == "en":
+        # Already English: it is the pivot as it stands. No MT call, no model, no latency.
+        return {
+            "text": body.text.strip(),
+            "model_version": None,
+            "skipped": True,
+            "latency_ms": {"service_total": None, "round_trip": None},
+        }
     start = time.perf_counter()
     data = await _call_upstream(
         MT, "/v1/pivot", {"text": body.text, "source_language": lang}, MT_TIMEOUT_S
@@ -384,6 +474,7 @@ async def stage_translate(body: TranslateBody) -> dict[str, Any]:
     return {
         "text": data.get("pivot_text", ""),
         "model_version": data.get("model_version"),
+        "skipped": False,
         "latency_ms": {
             "service_total": data.get("duration_ms"),
             "round_trip": round(round_trip_ms, 1),
@@ -415,6 +506,24 @@ async def stage_render(body: RenderBody) -> dict[str, Any]:
     lang = _require_language(body.target_language)
     if not body.text.strip():
         raise DemoError("Nothing to say", "The English text is empty.", status_code=422)
+    if lang not in REPLY_VOICE_LANGUAGES:
+        # An English reply needs no translation and render has no English voice, so there is
+        # nothing to ask render for. Shown like any other degraded result: text, no audio.
+        return {
+            "text": body.text.strip(),
+            "language": lang,
+            "audio_url": None,
+            "audio_duration_ms": None,
+            "model_version_translate": None,
+            "model_version_tts": None,
+            "skipped_render": True,
+            "degraded": {
+                "active": True,
+                "reason": "NO_ENGLISH_VOICE",
+                "detail": "No English voice is installed, so an English reply is text only.",
+            },
+            "latency_ms": {"service_total": None, "round_trip": None},
+        }
     start = time.perf_counter()
     data = await _call_upstream(
         RENDER,
@@ -454,6 +563,7 @@ async def stage_render(body: RenderBody) -> dict[str, Any]:
         "audio_duration_ms": audio.get("duration_ms") if audio_url else None,
         "model_version_translate": result.get("model_version_translate"),
         "model_version_tts": result.get("model_version_tts"),
+        "skipped_render": False,
         "degraded": {
             "active": bool(degraded.get("active")),
             "reason": degraded.get("reason"),
@@ -470,7 +580,7 @@ def _require_language(code: str) -> str:
     if code not in SUPPORTED_LANGUAGES:
         raise DemoError(
             "Unsupported language",
-            f"{code!r} is not supported here; choose Telugu or Hindi.",
+            f"{code!r} is not supported here; choose English, Telugu or Hindi.",
             status_code=422,
         )
     return code
@@ -501,6 +611,10 @@ PIPELINE_STAGES: list[PipelineStage] = [
 STARTUP_CHECK_WINDOW_S = 180.0
 
 
+def _watched_upstreams() -> list[Upstream]:
+    return [ASR, *([ASR_EN] if ASR_EN_ENABLED else []), MT, RENDER]
+
+
 async def _startup_check() -> None:
     """Log (never block on) whether the real services are reachable and ready,
     so a broken setup shows up in this terminal before the demo starts.
@@ -512,7 +626,7 @@ async def _startup_check() -> None:
     last: dict[str, str] = {}
     deadline = time.monotonic() + STARTUP_CHECK_WINDOW_S
     while True:
-        statuses = await asyncio.gather(_check_ready(ASR), _check_ready(MT), _check_ready(RENDER))
+        statuses = await asyncio.gather(*(_check_ready(u) for u in _watched_upstreams()))
         for st in statuses:
             if last.get(st["name"]) == st["state"]:
                 continue
@@ -559,7 +673,15 @@ async def _demo_error_handler(request: Request, exc: DemoError) -> JSONResponse:
     logger.warning("stage %s failed: %s — %s", stage, exc.title, exc.message)
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": {"stage": stage, "title": exc.title, "message": exc.message}},
+        content={
+            "error": {
+                "stage": stage,
+                "title": exc.title,
+                "message": exc.message,
+                **({"code": exc.code} if exc.code else {}),
+                **({"service": exc.service} if exc.service else {}),
+            }
+        },
     )
 
 
@@ -603,11 +725,15 @@ async def health() -> dict[str, str]:
 @app.get("/health/deps")
 async def health_deps() -> dict[str, Any]:
     """Readiness of the real services, for the page's status line."""
-    asr, mt, render = await asyncio.gather(
-        _check_ready(ASR), _check_ready(MT), _check_ready(RENDER)
+    asr, mt, render, asr_en = await asyncio.gather(
+        _check_ready(ASR),
+        _check_ready(MT),
+        _check_ready(RENDER),
+        _check_ready(ASR_EN) if ASR_EN_ENABLED else _off_status(ASR_EN),
     )
     return {
         "asr": asr,
+        "asr_en": asr_en,
         "mt": mt,
         "render": render,
         "record_seconds": RECORD_SECONDS,
@@ -702,6 +828,7 @@ async def pipeline_upload(request: Request) -> dict[str, Any]:
             "The microphone picked up (almost) nothing. Check it is not muted and speak "
             "a little closer, then press Try again.",
             422,
+            code="silent",
         )
     tmp = RECORDING_PATH.with_suffix(".part")
     tmp.write_bytes(data)

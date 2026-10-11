@@ -4,8 +4,9 @@ A small local web page that runs the **real** AI pipeline end to end, for live
 demos and manual testing:
 
 ```
-Part 1   browser mic -> WAV -> console -> ASR (IndicConformer, :8002) -> MT (IndicTrans2 indic->en, :8004) -> English text
-Part 2   English text -> render (IndicTrans2 en->indic + Piper TTS, :8006) -> Telugu/Hindi text + spoken audio
+Telugu/Hindi note   browser mic -> WAV -> console -> ASR (IndicConformer, :8002) -> MT (IndicTrans2 indic->en, :8004) -> English text
+English note        browser mic -> WAV -> console -> ASR (faster-whisper, :8007) -> English text   (no MT: it already is the pivot)
+Reply               English text -> render (IndicTrans2 en->indic + Piper TTS, :8006) -> Telugu/Hindi text + spoken audio
 ```
 
 **This is a demo/testing harness, not the product UI.** The real user-facing app
@@ -22,28 +23,37 @@ $env:HF_TOKEN = "hf_..."          # your read token; never printed or stored by 
 services\ai\.venv\Scripts\python.exe services\ai\demo_console\start_demo.py
 ```
 
-It starts ASR, MT, render and the console (in that order), waits until all four
-report ready, prints `DEMO READY: http://127.0.0.1:8005/` and opens the browser.
+It starts IndicConformer ASR, faster-whisper (English), MT, render and the console, waits
+until all five report ready, prints `DEMO READY: http://127.0.0.1:8005/` and opens the browser.
 Leave the window open. Ctrl+C stops only the processes this command started.
 
-- `--asr whisper` runs the faster-whisper service instead of IndicConformer
-  (fallback only; when last measured on 2026-09-24, before its VAD change, it took 84-97 s per 7 s Telugu clip and returned empty or garbled text. Not re-measured since). `--no-browser` prints the URL without opening it.
-- A service already running on its port is **reused**, not restarted, and the
-  model version it reports is printed. If the ASR on :8002 is not the one you
-  asked for, a loud `!! WARNING` line says so. Nothing is killed.
+- `--asr-en whisper|off` (default `whisper`): `off` does not start the English ASR. Typed English
+  still works; an English *recording* gets a calm "English speech needs the faster-whisper
+  service" message with Try again; Telugu and Hindi are unaffected.
+- `--asr whisper` runs faster-whisper as the *main* ASR on :8002 instead of IndicConformer
+  (fallback only; measured 2026-09-24, before its VAD change: 84-97 s per 7 s Telugu clip and
+  empty or garbled text; not re-measured). In that mode the same service also hears English, so no
+  second whisper is started.
+- `--no-browser` prints the URL without opening it.
+- A service already running on its port is **reused**, not restarted, and the model version it
+  reports is printed. If the service on :8002 is not the ASR you asked for, or the one on :8007 is
+  not faster-whisper, a loud `!! WARNING` line says so. Nothing is killed.
 - If one service dies mid-demo, run the same command again; only the missing one starts.
-- The wait for readiness is finite (`DEMO_READY_TIMEOUT_S`, default 900 s) and
-  names the service that is not ready. Progress is printed every 15 s.
+- The wait for readiness is finite (`DEMO_READY_TIMEOUT_S`, default 900 s) and names the service
+  that is not ready. Progress is printed every 15 s.
 - Logs go to `demo_console/_logs/` (gitignored).
 
 ## Ports
 
 | Port | Service | Why this port |
 |---|---|---|
-| 8002 | ASR (IndicConformer, or faster-whisper with `--asr whisper`) | Launcher sets `ASR_PORT=8002`. IndicConformer's own default is 8004. |
+| 8001 | mock server | not started by the demo |
+| 8002 | ASR for Telugu/Hindi (IndicConformer; faster-whisper with `--asr whisper`) | Launcher sets `ASR_PORT=8002`. IndicConformer's own default is 8004. |
+| 8003 | moderation | not started by the demo |
 | 8004 | MT (indic -> English) | MT's default. |
 | 8005 | Demo console | `DEMO_CONSOLE_PORT`. |
-| 8006 | Render (English -> text + audio) | Launcher sets `RENDER_PORT=8006`. Render's own default is 8005, which is the console's. The console reads `DEMO_RENDER_PORT` (default 8006) and never imports render's settings. |
+| 8006 | Render (English -> text + audio) | Launcher sets `RENDER_PORT=8006`. Render's own default is 8005, which is the console's. The console reads `DEMO_RENDER_PORT` (default 8006). |
+| 8007 | ASR for English (faster-whisper, `speech.app`) | Next free port. `speech.app` reads `ASR_PORT`, so the launcher sets `ASR_PORT=8007` for that child only. The console learns the port from `DEMO_ASR_EN_PORT`. |
 
 ## What must be on this machine (children run offline)
 
@@ -53,7 +63,7 @@ from the local Hugging Face cache only.
 - HF cache entries: `models--ai4bharat--indic-conformer-600m-multilingual`,
   `models--ai4bharat--indictrans2-indic-en-dist-200M`,
   `models--ai4bharat--indictrans2-en-indic-dist-200M`
-  (`models--Systran--faster-whisper-small` only for `--asr whisper`).
+  `models--Systran--faster-whisper-small` (English speech; also the `--asr whisper` fallback).
 - Piper voices `te_IN-maya-medium` and `hi_IN-rohan-medium` (`.onnx` + `.onnx.json`)
   in `services/ai/render/voices/` (or the folder in `RENDER_VOICE_DIR`).
 - `piper-tts` installed in `services/ai/.venv`.
@@ -63,43 +73,57 @@ from the local Hugging Face cache only.
   never printed or logged.
 - The en->indic translation model (render) and IndicConformer are gated on Hugging Face: accept the terms once, online, with the account the token belongs to.
 
-**Offline status: not yet verified.** Render's `TtsEngine._fetch()` calls
-`hf_hub_download(..., local_dir=voices)` for both voices on every start. Whether
-that call succeeds with `HF_HUB_OFFLINE=1` when the files are already on disk has
-**not** been tested on this machine (render could not be started: no token, no
-`piper-tts`). Until it is, do not promise "no network needed". If render fails
-to start offline, the smallest launcher-only change is to run the render child
-without `HF_HUB_OFFLINE` (keeping `TRANSFORMERS_OFFLINE=1`), which means render
-contacts huggingface.co for the voice files at start-up.
+**Offline status:** all five services started with `HF_HUB_OFFLINE=1` and
+`TRANSFORMERS_OFFLINE=1` on this machine (render included, with both Piper voices already on disk),
+and the page itself requests nothing outside `127.0.0.1` (no CDN, web fonts, remote scripts or
+images; checked in a headless browser). Not verified: a first start on a machine whose cache is
+empty (it would need the network once).
+
+## Language behaviour
+
+The **speaker language** (English / Telugu / Hindi, next to the microphone) is what the person
+speaks. It decides which ASR hears the note and is sent to it as the language hint. It starts as the
+page language and is **independent of it afterwards**.
+
+| Speaker language | ASR | MT | Shown as the English text |
+|---|---|---|---|
+| Telugu | IndicConformer :8002 (hint `te`) | called (indic -> English) | MT output (behind "Show English") |
+| Hindi | IndicConformer :8002 (hint `hi`) | called | MT output |
+| English | faster-whisper :8007 (hint `en`) | **skipped**, the transcript is the pivot | the transcript itself, with the producing model named |
+
+Replying: the reply is written in English and spoken in English, Telugu or Hindi. Telugu and Hindi
+go through render (text + audio). **English is text only**: render only translates into, and has
+voices for, Telugu and Hindi (`contracts/ai/render.py` requires audio in every result), so the console
+does not call render for an English reply and says "no English voice is installed".
+
+## Page language
+
+The switcher at the top (English / తెలుగు / हिन्दी) re-words the whole page instantly, without a
+reload. Notes, replies, audio, text boxes and the speaker language are kept. Strings are in
+`static/i18n/{en,te,hi}.json`; the choice is remembered in `localStorage` (inside try/catch, the page
+works without it). `<html lang>` follows the page language and every transcript or reply block gets
+its own `lang=` so screen readers pronounce it correctly. Fonts are a system stack
+(`Nirmala UI` first); nothing is fetched.
+
+**None of the Telugu or Hindi wording has been checked by a native speaker.** Every te/hi string
+is listed in `static/i18n/NEEDS_NATIVE_REVIEW.md` with its English source and where it came from
+(the elder app has English and Telugu only, so all Hindi is new). A test fails if a string is not
+listed. Error text that comes from a service and has no key is shown in English.
 
 ## What the page shows
 
-**Part 1 - Speak -> English**
-1. Language toggle: Telugu (default) / Hindi.
-2. **Start recording / Stop recording**, a live elapsed counter, and a live
-   input-level meter (a dead microphone is visible within a second or two).
-   Hard cap `DEMO_MAX_RECORD_SECONDS` (default 20 s); it stops by itself.
-3. Step status (Upload -> Transcribe -> Translate) with elapsed seconds.
-4. Panels: transcript, English translation, latency per stage. The ASR/MT/render
-   figures come from the services' own responses plus the console-measured round
-   trip. The upload figure is measured in the browser. Nothing is estimated.
-5. A typed-text box that goes straight to MT (fallback when the mic or ASR is unavailable).
-6. "Advanced: record on the console PC's own microphone" - the old server-side
-   7 s recording, kept but no longer the default.
+1. **Speak a note**: speaker language, Start/Stop recording with a live level meter (a dead
+   microphone is visible within a second or two; hard cap `DEMO_MAX_RECORD_SECONDS`, default 20 s),
+   step pills, and a typed-text box that skips ASR. "Advanced" keeps the old server-side 7 s recording.
+2. **The conversation**: the note as a bubble (original text, plus **Show English** like the app),
+   then a reply box (English, editable, pre-filled with the note's English) and the reply bubble with
+   the text, a **Play / Play again** button and the audio length. A degraded render result is shown
+   as text with "Audio is not available for this one", not as an error.
+3. **Details** (collapsed): service versions, the models that produced each result, and the measured
+   time per step. The ASR/MT/render figures come from the services' own responses plus the
+   console-measured round trip; the upload figure is measured in the browser. Nothing is estimated.
+   Render reports one duration for translate + speak, so the console shows that one number.
 
-**Part 2 - Family reply -> spoken**
-1. English box, pre-filled with the Part 1 translation when there is one;
-   editable, and usable on its own.
-2. Target language (defaults to the Part 1 language), **Translate and speak**.
-3. Shows the translated text, an audio player (autoplay tried once; the play
-   button is the fallback), a **Replay** button, the audio length, and latency.
-   The last audio stays on screen until the next successful run.
-4. If render reports a degraded result (text only / TTS skipped), the text is
-   shown with "Audio is not available for this one". That is not treated as a failure.
-5. Render reports one duration for translate + speak together; the console shows that
-   one number plus the round trip and does not invent a split.
-
-The status line shows each service's state and the model version it reports.
 Every failure shows a short message and **Try again**; no stack traces.
 
 ## Browser microphone notes
@@ -117,18 +141,22 @@ Every failure shows a short message and **Try again**; no stack traces.
 ## How it's built
 
 - `app.py` (FastAPI, port 8005). Endpoints:
-  - `GET /health`, `GET /health/deps` (ASR/MT/render state and model versions).
+  - `GET /health`, `GET /health/deps` (ASR, English ASR, MT, render: state and model versions).
   - `POST /pipeline/upload` (browser WAV, `audio/wav`): checks RIFF header, 16 kHz,
     mono, 16-bit, non-empty, size cap, duration cap and the silence threshold, then
     writes `_last_recording.wav`. Returns `{duration_s, peak}`.
-  - `POST /pipeline/record` (server mic), `/pipeline/transcribe`, `/pipeline/translate`.
-  - `POST /pipeline/render` `{text, target_language}`.
+  - `POST /pipeline/record` (server mic), `/pipeline/transcribe` (`en`/`te`/`hi`, routed by
+    `asr_upstream_for`), `/pipeline/translate` (`en` returns the text unchanged with
+    `skipped: true` and calls nothing).
+  - `POST /pipeline/render` `{text, target_language}` (`en`: text only, render is not called).
   - `GET /pipeline/audio/{name}`: serves only `^render-[0-9a-f]{32}-(te|hi)\.wav$`
     that resolves inside the render output directory (`RENDER_OUTPUT_DIR`, default
     `services/ai/render/output/`). Render and the console must use the same directory;
     the launcher passes the environment through to both.
-  - Every error is `{"error": {"stage", "title", "message"}}`.
-- `static/index.html`: plain HTML and vanilla JS, no build step, no external fonts or scripts.
+  - Every error is `{"error": {"stage", "title", "message"}}`, plus `code` / `service` when the
+    page can word it itself.
+- `static/index.html` + `static/i18n/*.json`: plain HTML and vanilla JS, no build step, no external
+  fonts or scripts.
 - `start_demo.py`: the launcher. `build_services()` and `child_env()` are unit-tested.
 
 Tests (no models, microphone or network needed):
@@ -137,24 +165,35 @@ Tests (no models, microphone or network needed):
 cd services/ai && ./.venv/Scripts/python.exe -m pytest demo_console/tests
 ```
 
+## Memory and start-up time (measured)
+
+Measured 2026-10-11 on the dev laptop (15.7 GB RAM, 12 logical CPUs, no GPU), all five services
+started together with the models already in the OS file cache:
+
+- **Start to `DEMO READY`: 39 s** (English ASR 22 s, IndicConformer 30 s, console 35 s, MT 36 s,
+  render 39 s). A first start after a reboot, with a cold disk cache, was not measured and will be slower.
+- **Idle memory** (Windows working set / private bytes): IndicConformer 2.8 / 2.9 GB, render 1.3 / 2.8 GB,
+  MT 0.9 / 2.3 GB, faster-whisper 0.4 / 2.7 GB, console 0.07 / 0.4 GB. Working sets sum to **5.5 GB**;
+  free RAM fell from 6.2 GB to 1.6 GB while the demo was up. Close other heavy apps first.
+
 ## Presenting
 
-1. **Start it 10 minutes early.** Cold-start time on the demo machine has **not
-   been measured yet** (see the PR). Run it once the day before and note the number.
-2. Wait for `DEMO READY`, then open `http://127.0.0.1:8005/` and check all three
-   status dots are green. Do one practice sentence in Telugu and one in Hindi.
-3. Say: "I speak in Telugu; the system writes it down, turns it into English, and
-   then a family reply in English comes back spoken in Telugu."
+1. **Start it 10 minutes early** and wait for `DEMO READY` (about 40 s warm). Open
+   `http://127.0.0.1:8005/` and check the four status dots are green.
+2. Do one practice sentence in each language you will show. Choose the page language first; it
+   does not change what the microphone expects, the speaker language does.
+3. Say: "I speak in Telugu; the system writes it down, turns it into English, and a family reply in
+   English comes back spoken in Telugu." For English: "English needs no translation step."
 4. If something fails:
    - **Mic blocked / no mic:** allow it in the address bar, or use the typed-text box.
    - **Recording silent:** check the meter moves while you speak; check the mic is not muted.
-   - **ASR not running / too slow:** run the start command again (it restarts only the missing
-     service); fall back to the typed-text box; as a last resort restart with `--asr whisper`.
-   - **MT not running:** run the start command again; Part 1 stops after the transcript.
-   - **Render not running or no audio:** run the start command again; if the page says
-     "audio is not available", the translated text is still shown.
-5. Transcript and audio correctness have **not** been checked by a Telugu/Hindi speaker.
-   Do that before presenting.
+   - **"English speech needs the faster-whisper service":** run the start command again (without
+     `--asr-en off`); meanwhile type the English sentence. Telugu and Hindi keep working.
+   - **ASR / MT not running or too slow:** run the start command again (it starts only what is missing).
+   - **Render not running or no audio:** run the start command again; the translated text still shows.
+5. **Not checked by a person:** Telugu and Hindi transcripts, Telugu and Hindi page wording, and how
+   understandable the spoken replies are. Have a native speaker check these before presenting. There is
+   no English voice, so English replies are text only.
 
 ## Extending it (later: moderation badge)
 
