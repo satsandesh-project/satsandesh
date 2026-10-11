@@ -1231,3 +1231,118 @@ def test_the_whole_pipeline_runs_against_the_real_ai_mock(db_session, outbox, mo
     # honestly marked as having no voice.
     assert rendering.audio_media_object_id is None and rendering.degraded_reason == "tts_skipped"
     assert outbox["delivery"] == [message_id]
+
+
+# --- the English pivot as a rendering, for 'Show English' (#136) ----------------------------------
+#
+# M1's reader behaviour (#135): a Telugu or Hindi reader gets the message in their own language with
+# a button that swaps to the English version of what was said. `renderings` carries only the
+# languages the recipients read (#83), so there was no `en` row for them and the button fell back to
+# the sender's own recording. The English pivot already exists on the message, so this is one stored
+# row, not a model call.
+
+
+def _pivot_row(db_session, message_id):
+    return _renderings(db_session, message_id).get("en")
+
+
+def test_a_reader_whose_language_is_not_english_also_gets_the_english_pivot(
+    db_session, fake, outbox
+):
+    message_id = _dm(db_session, source_lang="te", target_lang="hi")
+
+    _run(db_session, message_id)
+
+    row = _pivot_row(db_session, message_id)
+    assert row is not None, "a Hindi reader has no English version to swap to"
+    assert row.text == _msg(db_session, message_id).pivot_text_en
+    assert row.audio_media_object_id is None
+    assert row.degraded_reason == "text_only"
+    # No model call: the row is the pivot the message already carries, not a render result.
+    assert row.model_version_translate is None and row.model_version_tts is None
+    assert fake.requests("render")[0]["target_languages"] == ["hi"]
+
+
+def test_a_voice_note_gets_one_too(db_session, fake, outbox):
+    message_id = _dm(db_session, kind="voice", source_lang=None, target_lang="hi", due=True)
+
+    _run(db_session, message_id)
+
+    assert _pivot_row(db_session, message_id) is not None
+    assert set(_renderings(db_session, message_id)) == {"hi", "en"}
+
+
+def test_nothing_is_added_when_the_sender_wrote_english(db_session, fake, outbox):
+    """The English version of an English message is the message: the app's fallback already shows
+    the sender's own words, and a pivot row would claim a translation that never happened."""
+    message_id = _dm(db_session, source_lang="en", target_lang="hi")
+
+    _run(db_session, message_id)
+
+    assert set(_renderings(db_session, message_id)) == {"hi"}
+
+
+def test_an_english_readers_own_row_is_the_render_services_and_is_not_replaced(
+    db_session, fake, outbox
+):
+    author = _user(db_session, "Author", "te")
+    circle = create_circle(db_session, name="Satsang", created_by=author.id)
+    add_member(db_session, circle_id=circle.id, user_id=author.id, role="admin")
+    for name, language in [("A", "hi"), ("B", "en")]:
+        add_member(db_session, circle_id=circle.id, user_id=_user(db_session, name, language).id)
+    message_id = _message(db_session, author, target_circle=circle)
+
+    _run(db_session, message_id)
+
+    assert set(_renderings(db_session, message_id)) == {"en", "hi"}
+    # One row, and it is the render service's (it carries its model version), not a pivot copy.
+    assert _pivot_row(db_session, message_id).model_version_translate == "fake-render-mt"
+
+
+def test_a_circle_with_no_english_reader_gets_the_pivot_row(db_session, fake, outbox):
+    author = _user(db_session, "Author", "te")
+    circle = create_circle(db_session, name="Satsang", created_by=author.id)
+    add_member(db_session, circle_id=circle.id, user_id=author.id, role="admin")
+    for name, language in [("A", "hi"), ("B", "te")]:
+        add_member(db_session, circle_id=circle.id, user_id=_user(db_session, name, language).id)
+    message_id = _message(db_session, author, target_circle=circle)
+
+    _run(db_session, message_id)
+
+    assert set(_renderings(db_session, message_id)) == {"hi", "en"}
+    assert _pivot_row(db_session, message_id).model_version_translate is None
+
+
+def test_a_reader_in_the_senders_own_language_gets_no_renderings_at_all(db_session, fake, outbox):
+    """Nothing is rendered, so no button appears, so there is nothing for a pivot row to serve."""
+    message_id = _dm(db_session, source_lang="te", target_lang="te")
+
+    _run(db_session, message_id)
+
+    assert _renderings(db_session, message_id) == {}
+
+
+def test_a_retried_job_does_not_duplicate_or_change_it(db_session, fake, outbox):
+    message_id = _dm(db_session, source_lang="te", target_lang="hi")
+    _run(db_session, message_id)
+    first = _pivot_row(db_session, message_id)
+
+    _run(db_session, message_id)
+
+    again = _pivot_row(db_session, message_id)
+    assert len(_renderings(db_session, message_id)) == 2
+    assert (again.text, again.degraded_reason) == (first.text, first.degraded_reason)
+
+
+def test_the_pivot_row_is_hidden_until_the_message_is_out(db_session, fake, outbox):
+    from app.db.renderings import renderings_for_wire
+
+    fake.action = ModerationAction.HOLD
+    message_id = _dm(db_session, source_lang="te", target_lang="hi")
+
+    _run(db_session, message_id)
+
+    message = _msg(db_session, message_id)
+    assert message.status == "held"
+    assert _pivot_row(db_session, message_id) is not None, "stored, so a release needs no re-run"
+    assert renderings_for_wire(db_session, [message]) == {}, "not on the wire while it is held"
