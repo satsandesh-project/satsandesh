@@ -7,10 +7,9 @@ import os
 import sys
 
 import httpx
-from jose import jwt
-
 from app import livekit
 from app.livekit import LiveKitAdmin
+from jose import jwt
 
 BASE = os.environ["LIVEKIT_INTERNAL_URL"]
 failed = 0
