@@ -61,3 +61,16 @@ off by default)
   the package: the pyrnnoise 0.4.5 wheel contains no RNNoise license or copyright file, so
   the BSD terms come from the upstream project, not from these files. Check upstream and
   retain its copyright notice if the compiled library is redistributed.
+
+================================================================================
+LiveKit (bhajan rooms: the audio server and the browser library)
+================================================================================
+Used by: docker-compose.livekit.yml (the server image) and
+clients/elder-app/assets/livekit-client.umd.min.js (the browser library, loaded only on the
+bhajan rooms page).
+
+- livekit/livekit-server v1.13.9 (https://github.com/livekit/livekit): Apache-2.0. Run as an
+  unmodified container image; nothing of it is redistributed in this repository.
+- livekit-client 2.22.4 (https://github.com/livekit/client-sdk-js): Apache-2.0. The unmodified
+  UMD bundle from the npm package, vendored so the page does not depend on a CDN on a campus
+  network; its licence text is the standard Apache License 2.0 (copyright LiveKit, Inc.).

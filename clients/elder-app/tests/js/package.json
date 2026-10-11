@@ -1,0 +1,11 @@
+{
+  "name": "elder-app-js-tests",
+  "private": true,
+  "description": "Tests of assets/bhajan_rooms.js. bhajan_rooms.test.js needs only node; bhajan_screen.test.js also needs jsdom (npm install in this folder).",
+  "scripts": {
+    "test": "node --test ."
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.0"
+  }
+}
