@@ -115,11 +115,16 @@ class FakeLivekit {
   }
 }
 
+const windows = [];
+// The screen polls the room on a timer; closing each window stops it so the test run can end.
+test.after(() => windows.forEach((w) => w.close()));
+
 const tick = (ms = 120) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function boot(gateway, options = {}) {
   const dom = new JSDOM('<!doctype html><div id="bhajan-root"></div>', { url: "http://localhost/bhajans", runScripts: "outside-only", pretendToBeVisual: true });
   const { window } = dom;
+  windows.push(window);
   const log = [];
   window.fetch = gateway.handler();
   window.localStorage.setItem("satsandesh_my_id", gateway.me);
