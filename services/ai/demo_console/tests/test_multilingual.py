@@ -219,7 +219,10 @@ def test_reply_in_indic_calls_render_and_returns_text_and_audio(client, upstream
     assert body["degraded"]["active"] is False
 
 
-def test_reply_in_english_is_text_only_and_render_is_not_called(client, upstreams) -> None:
+def test_reply_in_english_without_a_voice_is_text_only_and_render_is_not_called(
+    client, upstreams, monkeypatch
+) -> None:
+    monkeypatch.setattr(console, "EN_VOICE_ENABLED", False)
     resp = client.post("/pipeline/render", json={"text": "Take care", "target_language": "en"})
     assert resp.status_code == 200
     body = resp.json()

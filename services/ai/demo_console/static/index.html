@@ -412,6 +412,8 @@ function renderNote() {
   eng.hidden = !(canToggle && n.showEnglish);
   if (!eng.hidden) langBlock(eng, "en", n.english || "");
 }
+// English replies are spoken by the console's own demo voice (Windows), not by render.
+const isLocalVoice = (r) => !!(r && r.model_version_tts && r.model_version_tts.startsWith("windows-sapi:"));
 function renderReply() {
   const r = S.reply;
   const text = $("reply-text");
@@ -426,7 +428,7 @@ function renderReply() {
     $("reply-length").textContent = t("audio_length", { seconds: (r.audio_duration_ms / 1000).toFixed(1) });
   } else {
     $("reply-note").hidden = false;
-    $("reply-note").textContent = r.skipped_render ? t("english_no_voice") : t("audio_unavailable");
+    $("reply-note").textContent = r.skipped_render ? t("english_voice_unavailable") : t("audio_unavailable");
   }
 }
 function renderDeps() {
@@ -456,7 +458,7 @@ function renderDetails() {
     const h = document.createElement("h3"); h.textContent = t(titleKey); d.appendChild(h); body.appendChild(d); return d;
   };
   const line = (parent, label, value) => {
-    const p = document.createElement("p"); p.textContent = `${label}: ${value}`; parent.appendChild(p);
+    const p = document.createElement("p"); p.textContent = label ? `${label}: ${value}` : value; parent.appendChild(p);
   };
   if (S.deps) {
     const b = block("details_services");
@@ -465,12 +467,18 @@ function renderDetails() {
       const voices = d.tts_voices ? " · " + Object.values(d.tts_voices).join(", ") : "";
       line(b, t("dep_" + key), `${d.model ? d.model + " · " : ""}${d.url}${voices}`);
     }
+    const ev = S.deps.en_voice;
+    if (ev) {
+      const k = { ready: "state_ready", off: "state_off" }[ev.state] || "state_unavailable";
+      line(b, t("dep_en_voice"), t(k) + (ev.voice ? ` · ${ev.voice}` : ""));
+    }
   }
   const m = block("details_models"), none = t("model_none");
   line(m, t("model_asr"), (S.note && S.note.asrModel) || "—");
   line(m, t("model_mt"), S.note ? (S.note.mtSkipped ? none : (S.note.mtModel || "—")) : "—");
   line(m, t("model_translate"), S.reply ? (S.reply.model_version_translate || none) : "—");
   line(m, t("model_voice"), S.reply ? (S.reply.model_version_tts || none) : "—");
+  if (isLocalVoice(S.reply)) line(m, "", t("details_voice_demo"));
   const l = block("details_latency"), rows = [...S.latency, ...S.replyLatency];
   if (rows.length) l.appendChild(latencyTable(rows));
   else { const p = document.createElement("p"); p.textContent = t("details_none"); l.appendChild(p); }
@@ -824,7 +832,7 @@ async function runReply() {
       { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, target_language: lang }) }, 190000, "render");
     audioEl.pause();
     S.reply = { ...r, played: false };
-    S.replyLatency = r.skipped_render ? [] : [["lat_render_total", r.latency_ms.service_total], ["lat_render_round", r.latency_ms.round_trip]];
+    S.replyLatency = isLocalVoice(r) ? [["lat_english_voice", r.latency_ms.service_total]] : r.skipped_render ? [] : [["lat_render_total", r.latency_ms.service_total], ["lat_render_round", r.latency_ms.round_trip]];
     if (r.audio_url) {
       audioEl.src = r.audio_url;
       $("reply-autoplay-hint").hidden = true;

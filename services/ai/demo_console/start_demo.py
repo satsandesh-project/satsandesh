@@ -97,7 +97,9 @@ def _http_json(url: str, timeout: float = 2.0) -> dict | None:
     return body if isinstance(body, dict) else None
 
 
-def build_services(asr: str = "indicconformer", asr_en: str = "off") -> list[Service]:
+def build_services(
+    asr: str = "indicconformer", asr_en: str = "off", en_voice: str = "windows"
+) -> list[Service]:
     """The services in start order.
 
     asr is "indicconformer" (default) or "whisper". asr_en is "whisper" (a faster-whisper
@@ -150,7 +152,11 @@ def build_services(asr: str = "indicconformer", asr_en: str = "off") -> list[Ser
         DEMO_PORT,
         "/health",
         role="console",
-        extra_env={"DEMO_ASR_EN": asr_en, "DEMO_ASR_EN_PORT": str(english_port)},
+        extra_env={
+            "DEMO_ASR_EN": asr_en,
+            "DEMO_ASR_EN_PORT": str(english_port),
+            "DEMO_EN_VOICE": en_voice,
+        },
     )
     return [
         asr_svc,
@@ -185,6 +191,7 @@ def child_env(svc: Service, base: Mapping[str, str]) -> dict[str, str]:
     # The console learns about English ASR only from its own extra_env (set in build_services).
     env.pop("DEMO_ASR_EN", None)
     env.pop("DEMO_ASR_EN_PORT", None)
+    env.pop("DEMO_EN_VOICE", None)
     env.update(svc.extra_env)
     return env
 
@@ -384,13 +391,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="English speech: whisper starts faster-whisper on :8007 (default); off skips it "
         "(typed English still works, English recordings get a calm message).",
     )
+    parser.add_argument(
+        "--en-voice",
+        choices=["windows", "off"],
+        default="windows",
+        help="Voice for English replies: windows = the built-in Windows voice (demo only, "
+        "Windows only; default); off = English replies are text only.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    services = build_services(args.asr, args.asr_en)
+    services = build_services(args.asr, args.asr_en, args.en_voice)
     python = _python_exe()
     print(
         f"Starting SatSandesh AI demo (python: {python}, ASR: {args.asr}, "

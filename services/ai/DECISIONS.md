@@ -200,8 +200,8 @@ A/B on real noisy recordings, which this change does not have.
 **Decisions:**
 - English notes are routed by the declared speaker language to a separate `speech.app` (faster-whisper) child on :8007, not by swapping the model behind :8002. IndicConformer and faster-whisper keep their own ports, so a failure of one leaves the other working. The console's routing is one function, `asr_upstream_for`, mirroring the gateway's per-language transcribe URLs.
 - An English note skips MT: the transcript is the pivot. `POST /pipeline/translate` with `en` returns the text with `skipped: true` and calls nothing.
-- An English reply does not call render. Render only translates into, and has voices for, Telugu and Hindi, and `RenderResult.audio` is required, so the console returns the text with a degraded marker `NO_ENGLISH_VOICE` instead of inventing audio.
+- An English reply does not call render. Render only translates into, and has voices for, Telugu and Hindi, and `RenderResult.audio` is required. The console speaks it itself with the Windows built-in voice (`demo_console/english_tts.py`, `--en-voice windows|off`, WAV in a gitignored `_audio/`, own strict name whitelist). This is a **demo-only, Windows-only** stopgap, not a product decision: the product needs a licensed Piper English voice in render, a separate task. When the voice cannot run, the reply is text only with a degraded marker `NO_ENGLISH_VOICE`, never an error.
 - With `--asr whisper` (fallback as the main ASR) that service also serves English; no second whisper is started.
 - The page language is client-only and independent of the speaker language. All page text is in `static/i18n/{en,te,hi}.json`; te/hi are unreviewed and listed in `NEEDS_NATIVE_REVIEW.md`.
 
-**Not decided:** an English voice for replies; whether the launcher should default to starting five processes on a machine with less than ~8 GB free (the demo measured about 5.5 GB working set).
+**Not decided:** the product English voice (licence and voice choice); whether the launcher should default to starting five processes on a machine with less than ~8 GB free (the demo measured about 5.5 GB working set).

@@ -26,12 +26,14 @@ signed it off. The `en.json` text is the source of truth for meaning.
 | `dep_asr_en` | Telugu | English speech | ఇంగ్లీష్ ప్రసంగం | new |
 | `dep_mt` | Telugu | Translation | అనువాదం | new |
 | `dep_render` | Telugu | Reply voice | జవాబు స్వరం | new |
+| `dep_en_voice` | Telugu | English reply voice | ఇంగ్లీష్ జవాబు స్వరం | new |
 | `state_checking` | Telugu | checking… | తనిఖీ చేస్తోంది… | new |
 | `state_ready` | Telugu | ready | సిద్ధం | new |
 | `state_warming` | Telugu | warming up… | సిద్ధమవుతోంది… | new |
 | `state_down` | Telugu | not running | నడవడం లేదు | new |
 | `state_off` | Telugu | turned off | ఆపివేయబడింది | new |
 | `state_unknown` | Telugu | not responding | స్పందించడం లేదు | new |
+| `state_unavailable` | Telugu | not available | అందుబాటులో లేదు | new |
 | `host_banner` | Telugu | The microphone only works when this page is opened as http://127.0.0.1:{port}/ — not through a LAN IP or computer name. Typing text still works. | ఈ పేజీని http://127.0.0.1:{port}/ గా తెరిచినప్పుడు మాత్రమే మైక్రోఫోన్ పనిచేస్తుంది — LAN IP లేదా కంప్యూటర్ పేరుతో కాదు. టెక్స్ట్ టైప్ చేయడం ఇప్పటికీ పనిచేస్తుంది. | new |
 | `speak_title` | Telugu | 1. Speak a note | 1. సందేశం మాట్లాడండి | new |
 | `speaker_lang_label` | Telugu | Language you will speak | మీరు మాట్లాడే భాష | new |
@@ -93,7 +95,7 @@ signed it off. The `en.json` text is the source of truth for meaning.
 | `replay` | Telugu | Play again | మళ్ళీ ప్లే చేయి | new |
 | `audio_length` | Telugu | audio length {seconds} s | ఆడియో నిడివి {seconds} సె | new |
 | `audio_unavailable` | Telugu | Audio is not available for this one — showing the text only. | దీనికి ఆడియో అందుబాటులో లేదు — పాఠ్యం మాత్రమే చూపిస్తున్నాం. | new |
-| `english_no_voice` | Telugu | English replies are text only: no English voice is installed. | ఇంగ్లీష్ జవాబులు పాఠ్యం మాత్రమే: ఇంగ్లీష్ స్వరం ఇన్‌స్టాల్ చేయబడలేదు. | new |
+| `english_voice_unavailable` | Telugu | No English voice is available on this PC, so this reply is shown as text only. | ఈ PC లో ఇంగ్లీష్ స్వరం అందుబాటులో లేదు, కాబట్టి ఈ జవాబు పాఠ్యంగా మాత్రమే చూపబడుతోంది. | new |
 | `autoplay_blocked` | Telugu | Your browser blocked autoplay — press Play. | మీ బ్రౌజర్ ఆటోప్లేను ఆపింది — ప్లే నొక్కండి. | new |
 | `audio_failed` | Telugu | Could not play the audio. Press Play to try again. | ఆడియో ప్లే కాలేదు. మళ్ళీ ప్రయత్నించడానికి ప్లే నొక్కండి. | new |
 | `details_summary` | Telugu | Details (models and timings) | వివరాలు (మోడల్స్, సమయాలు) | new |
@@ -101,6 +103,7 @@ signed it off. The `en.json` text is the source of truth for meaning.
 | `details_models` | Telugu | Models | మోడల్స్ | new |
 | `details_latency` | Telugu | Time taken per step (measured, ms) | ప్రతి దశకు పట్టిన సమయం (కొలిచినది, ms) | new |
 | `details_none` | Telugu | No run yet. | ఇంకా రన్ లేదు. | new |
+| `details_voice_demo` | Telugu | Demo-only Windows voice, not the product voice. | డెమో కోసం మాత్రమే Windows స్వరం, ఉత్పత్తి స్వరం కాదు. | new |
 | `model_asr` | Telugu | Speech model | ప్రసంగ మోడల్ | new |
 | `model_mt` | Telugu | Translation model | అనువాద మోడల్ | new |
 | `model_translate` | Telugu | Reply translation model | జవాబు అనువాద మోడల్ | new |
@@ -117,6 +120,7 @@ signed it off. The `en.json` text is the source of truth for meaning.
 | `lat_mt_round` | Telugu | MT — round trip (console → service) | MT — రౌండ్ ట్రిప్ (కన్సోల్ → సేవ) | new |
 | `lat_render_total` | Telugu | Render — service total (translate + speak) | Render — సేవ మొత్తం (అనువాదం + స్వరం) | new |
 | `lat_render_round` | Telugu | Render — round trip (console → service) | Render — రౌండ్ ట్రిప్ (కన్సోల్ → సేవ) | new |
+| `lat_english_voice` | Telugu | English voice (Windows, demo) — speaking | ఇంగ్లీష్ స్వరం (Windows, డెమో) — మాట్లాడటం | new |
 | `svc_asr` | Telugu | Speech recognition | ప్రసంగ గుర్తింపు | new |
 | `svc_asr_en` | Telugu | English speech recognition | ఇంగ్లీష్ ప్రసంగ గుర్తింపు | new |
 | `svc_mt` | Telugu | Translation | అనువాదం | new |
@@ -161,12 +165,14 @@ signed it off. The `en.json` text is the source of truth for meaning.
 | `dep_asr_en` | Hindi | English speech | अंग्रेज़ी बोली | new |
 | `dep_mt` | Hindi | Translation | अनुवाद | new |
 | `dep_render` | Hindi | Reply voice | जवाब की आवाज़ | new |
+| `dep_en_voice` | Hindi | English reply voice | अंग्रेज़ी जवाब की आवाज़ | new |
 | `state_checking` | Hindi | checking… | जाँच हो रही है… | new |
 | `state_ready` | Hindi | ready | तैयार | new |
 | `state_warming` | Hindi | warming up… | तैयार हो रहा है… | new |
 | `state_down` | Hindi | not running | चालू नहीं है | new |
 | `state_off` | Hindi | turned off | बंद किया गया | new |
 | `state_unknown` | Hindi | not responding | जवाब नहीं दे रहा | new |
+| `state_unavailable` | Hindi | not available | उपलब्ध नहीं | new |
 | `host_banner` | Hindi | The microphone only works when this page is opened as http://127.0.0.1:{port}/ — not through a LAN IP or computer name. Typing text still works. | माइक्रोफ़ोन तभी चलता है जब यह पेज http://127.0.0.1:{port}/ के रूप में खोला गया हो — LAN IP या कंप्यूटर के नाम से नहीं। टेक्स्ट टाइप करना फिर भी काम करता है। | new |
 | `speak_title` | Hindi | 1. Speak a note | 1. संदेश बोलिए | new |
 | `speaker_lang_label` | Hindi | Language you will speak | आप किस भाषा में बोलेंगे | new |
@@ -228,7 +234,7 @@ signed it off. The `en.json` text is the source of truth for meaning.
 | `replay` | Hindi | Play again | फिर से चलाएँ | new |
 | `audio_length` | Hindi | audio length {seconds} s | ऑडियो की लंबाई {seconds} सेकंड | new |
 | `audio_unavailable` | Hindi | Audio is not available for this one — showing the text only. | इसके लिए ऑडियो उपलब्ध नहीं है — सिर्फ़ टेक्स्ट दिखाया जा रहा है। | new |
-| `english_no_voice` | Hindi | English replies are text only: no English voice is installed. | अंग्रेज़ी जवाब सिर्फ़ टेक्स्ट में हैं: अंग्रेज़ी आवाज़ इंस्टॉल नहीं है। | new |
+| `english_voice_unavailable` | Hindi | No English voice is available on this PC, so this reply is shown as text only. | इस PC पर अंग्रेज़ी आवाज़ उपलब्ध नहीं है, इसलिए यह जवाब सिर्फ़ टेक्स्ट में दिखाया जा रहा है। | new |
 | `autoplay_blocked` | Hindi | Your browser blocked autoplay — press Play. | आपके ब्राउज़र ने अपने आप चलने से रोक दिया — चलाएँ दबाइए। | new |
 | `audio_failed` | Hindi | Could not play the audio. Press Play to try again. | ऑडियो नहीं चल सका। फिर से कोशिश करने के लिए चलाएँ दबाइए। | new |
 | `details_summary` | Hindi | Details (models and timings) | ब्यौरा (मॉडल और समय) | new |
@@ -236,6 +242,7 @@ signed it off. The `en.json` text is the source of truth for meaning.
 | `details_models` | Hindi | Models | मॉडल | new |
 | `details_latency` | Hindi | Time taken per step (measured, ms) | हर चरण में लगा समय (मापा हुआ, ms) | new |
 | `details_none` | Hindi | No run yet. | अभी कोई रन नहीं हुआ। | new |
+| `details_voice_demo` | Hindi | Demo-only Windows voice, not the product voice. | सिर्फ़ डेमो के लिए Windows की आवाज़, प्रोडक्ट की आवाज़ नहीं। | new |
 | `model_asr` | Hindi | Speech model | बोली पहचानने वाला मॉडल | new |
 | `model_mt` | Hindi | Translation model | अनुवाद मॉडल | new |
 | `model_translate` | Hindi | Reply translation model | जवाब का अनुवाद मॉडल | new |
@@ -252,6 +259,7 @@ signed it off. The `en.json` text is the source of truth for meaning.
 | `lat_mt_round` | Hindi | MT — round trip (console → service) | MT — राउंड ट्रिप (कंसोल → सेवा) | new |
 | `lat_render_total` | Hindi | Render — service total (translate + speak) | Render — सेवा का कुल (अनुवाद + आवाज़) | new |
 | `lat_render_round` | Hindi | Render — round trip (console → service) | Render — राउंड ट्रिप (कंसोल → सेवा) | new |
+| `lat_english_voice` | Hindi | English voice (Windows, demo) — speaking | अंग्रेज़ी आवाज़ (Windows, डेमो) — बोलना | new |
 | `svc_asr` | Hindi | Speech recognition | बोली की पहचान | new |
 | `svc_asr_en` | Hindi | English speech recognition | अंग्रेज़ी बोली की पहचान | new |
 | `svc_mt` | Hindi | Translation | अनुवाद | new |

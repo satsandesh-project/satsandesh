@@ -32,6 +32,7 @@ import re
 import sys
 import threading
 import time
+import uuid
 import wave
 from array import array
 from collections.abc import Callable
@@ -49,6 +50,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from services.ai.demo_console import english_tts
 from services.ai.mt.settings import Settings as MtSettings
 from services.ai.speech.settings import Settings as SpeechSettings
 
@@ -90,6 +92,17 @@ RENDER_OUTPUT_DIR = Path(
 # The only file names GET /pipeline/audio/ will serve (what render's _render_one writes).
 AUDIO_NAME_PATTERN = r"^render-[0-9a-f]{32}-(te|hi)\.wav$"
 _AUDIO_NAME_RE = re.compile(AUDIO_NAME_PATTERN)
+
+# English replies are spoken locally (english_tts: Windows' built-in voice, demo only), into the
+# console's OWN gitignored directory, with their own strict name whitelist. render's directory and
+# whitelist above are unchanged.
+EN_AUDIO_DIR = _HERE / "_audio"
+EN_AUDIO_NAME_PATTERN = r"^en-[0-9a-f]{32}\.wav$"
+EN_AUDIO_RE = re.compile(EN_AUDIO_NAME_PATTERN)
+EN_AUDIO_KEEP = 20  # newest files kept; older ones are deleted on each new reply
+# DEMO_EN_VOICE=off (start_demo.py --en-voice off) turns the English voice off: text only.
+EN_VOICE_ENABLED = os.environ.get("DEMO_EN_VOICE", "windows").strip().lower() != "off"
+_last_en_voice: str | None = None
 
 # Browser recording: hard cap, and the upload limits derived from it.
 MAX_RECORD_SECONDS = float(os.environ.get("DEMO_MAX_RECORD_SECONDS", "20"))
@@ -250,6 +263,13 @@ async def _call_upstream(
         f"{upstream.name} returned an error",
         upstream_msg or f"Unexpected HTTP {resp.status_code} from {url}.",
     )
+
+
+def _en_voice_status() -> dict[str, Any]:
+    if not EN_VOICE_ENABLED:
+        return {"state": "off"}
+    state = "ready" if sys.platform == "win32" else "unavailable"
+    return {"state": state, "voice": _last_en_voice}
 
 
 async def _off_status(upstream: Upstream) -> dict[str, Any]:
@@ -502,28 +522,73 @@ def _audio_path_from_uri(uri: str) -> Path | None:
     return path
 
 
+def _english_text_only(text: str, detail: str) -> dict[str, Any]:
+    return {
+        "text": text,
+        "language": "en",
+        "audio_url": None,
+        "audio_duration_ms": None,
+        "model_version_translate": None,
+        "model_version_tts": None,
+        "skipped_render": True,
+        "degraded": {"active": True, "reason": "NO_ENGLISH_VOICE", "detail": detail},
+        "latency_ms": {"service_total": None, "round_trip": None},
+    }
+
+
+def _prune_english_audio() -> None:
+    try:
+        files = sorted(EN_AUDIO_DIR.glob("en-*.wav"), key=lambda p: p.stat().st_mtime)
+        for old in files[: max(0, len(files) - EN_AUDIO_KEEP)]:
+            old.unlink(missing_ok=True)
+    except OSError:
+        logger.exception("could not prune old English audio")
+
+
+async def _english_reply(text: str) -> dict[str, Any]:
+    global _last_en_voice
+    if len(text) > english_tts.MAX_CHARS:
+        raise DemoError(
+            "The reply is too long to speak",
+            f"Keep an English reply under {english_tts.MAX_CHARS} characters, then press Try again.",
+            status_code=422,
+        )
+    if not EN_VOICE_ENABLED:
+        return _english_text_only(text, "The English voice was turned off (--en-voice off).")
+    out = EN_AUDIO_DIR / f"en-{uuid.uuid4().hex}.wav"
+    start = time.perf_counter()
+    try:
+        speech = await asyncio.to_thread(english_tts.synthesize, text, out)
+        if not out.is_file():
+            raise english_tts.EnglishVoiceUnavailable("the engine wrote no file")
+    except Exception as exc:  # noqa: BLE001 - any failure means text only, never an error page
+        out.unlink(missing_ok=True)
+        logger.warning("English voice unavailable, replying with text only: %s", exc)
+        return _english_text_only(text, "No English voice is available on this PC.")
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+    _last_en_voice = speech.voice
+    _prune_english_audio()
+    return {
+        "text": text,
+        "language": "en",
+        "audio_url": f"/pipeline/audio/{out.name}",
+        "audio_duration_ms": speech.duration_ms,
+        "model_version_translate": None,
+        "model_version_tts": f"windows-sapi:{speech.voice}",
+        "skipped_render": True,  # render was not asked: this is the local demo voice
+        "degraded": {"active": False, "reason": None, "detail": None},
+        "latency_ms": {"service_total": elapsed_ms, "round_trip": elapsed_ms},
+    }
+
+
 async def stage_render(body: RenderBody) -> dict[str, Any]:
     lang = _require_language(body.target_language)
     if not body.text.strip():
         raise DemoError("Nothing to say", "The English text is empty.", status_code=422)
     if lang not in REPLY_VOICE_LANGUAGES:
-        # An English reply needs no translation and render has no English voice, so there is
-        # nothing to ask render for. Shown like any other degraded result: text, no audio.
-        return {
-            "text": body.text.strip(),
-            "language": lang,
-            "audio_url": None,
-            "audio_duration_ms": None,
-            "model_version_translate": None,
-            "model_version_tts": None,
-            "skipped_render": True,
-            "degraded": {
-                "active": True,
-                "reason": "NO_ENGLISH_VOICE",
-                "detail": "No English voice is installed, so an English reply is text only.",
-            },
-            "latency_ms": {"service_total": None, "round_trip": None},
-        }
+        # An English reply needs no translation, so render is never asked. It is spoken by the
+        # local demo voice if there is one; otherwise it is the same text-only result as before.
+        return await _english_reply(body.text.strip())
     start = time.perf_counter()
     data = await _call_upstream(
         RENDER,
@@ -732,6 +797,7 @@ async def health_deps() -> dict[str, Any]:
         _check_ready(ASR_EN) if ASR_EN_ENABLED else _off_status(ASR_EN),
     )
     return {
+        "en_voice": _en_voice_status(),
         "asr": asr,
         "asr_en": asr_en,
         "mt": mt,
@@ -840,11 +906,12 @@ async def pipeline_upload(request: Request) -> dict[str, Any]:
 @app.get("/pipeline/audio/{name}")
 async def pipeline_audio(name: str) -> FileResponse:
     """Serve one rendered WAV: whitelisted by name, confined to the render output dir."""
-    if _AUDIO_NAME_RE.fullmatch(name):
-        root = RENDER_OUTPUT_DIR.resolve()
-        path = (root / name).resolve()
-        if path.parent == root and path.is_file():
-            return FileResponse(path, media_type="audio/wav")
+    for pattern, directory in ((_AUDIO_NAME_RE, RENDER_OUTPUT_DIR), (EN_AUDIO_RE, EN_AUDIO_DIR)):
+        if pattern.fullmatch(name):
+            root = directory.resolve()
+            path = (root / name).resolve()
+            if path.parent == root and path.is_file():
+                return FileResponse(path, media_type="audio/wav")
     raise HTTPException(status_code=404, detail="not found")
 
 

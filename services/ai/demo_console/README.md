@@ -6,7 +6,8 @@ demos and manual testing:
 ```
 Telugu/Hindi note   browser mic -> WAV -> console -> ASR (IndicConformer, :8002) -> MT (IndicTrans2 indic->en, :8004) -> English text
 English note        browser mic -> WAV -> console -> ASR (faster-whisper, :8007) -> English text   (no MT: it already is the pivot)
-Reply               English text -> render (IndicTrans2 en->indic + Piper TTS, :8006) -> Telugu/Hindi text + spoken audio
+Reply (te/hi)       English text -> render (IndicTrans2 en->indic + Piper TTS, :8006) -> Telugu/Hindi text + spoken audio
+Reply (en)          English text -> the console's own Windows voice (demo only, not render) -> spoken audio
 ```
 
 **This is a demo/testing harness, not the product UI.** The real user-facing app
@@ -34,6 +35,8 @@ Leave the window open. Ctrl+C stops only the processes this command started.
   (fallback only; measured 2026-09-24, before its VAD change: 84-97 s per 7 s Telugu clip and
   empty or garbled text; not re-measured). In that mode the same service also hears English, so no
   second whisper is started.
+- `--en-voice windows|off` (default `windows`): who speaks an *English* reply. `windows` uses the
+  built-in Windows voice (see "English replies" below); `off` makes English replies text only.
 - `--no-browser` prints the URL without opening it.
 - A service already running on its port is **reused**, not restarted, and the model version it
   reports is printed. If the service on :8002 is not the ASR you asked for, or the one on :8007 is
@@ -92,9 +95,27 @@ page language and is **independent of it afterwards**.
 | English | faster-whisper :8007 (hint `en`) | **skipped**, the transcript is the pivot | the transcript itself, with the producing model named |
 
 Replying: the reply is written in English and spoken in English, Telugu or Hindi. Telugu and Hindi
-go through render (text + audio). **English is text only**: render only translates into, and has
-voices for, Telugu and Hindi (`contracts/ai/render.py` requires audio in every result), so the console
-does not call render for an English reply and says "no English voice is installed".
+go through render (text + audio).
+
+### English replies (demo-only voice)
+
+Render has no English voice (and `contracts/ai/render.py` requires audio in every result), so the
+console never calls render for an English reply. It speaks it itself with `english_tts.py`:
+Windows' built-in speech engine (`System.Speech`, run in a PowerShell subprocess), writing a 16 kHz
+mono 16-bit WAV into `demo_console/_audio/` (gitignored; the newest 20 files are kept).
+
+- **Demo only, Windows only, not a product decision.** The product needs a licensed Piper English
+  voice served by render; that is a separate task.
+- The reply text never goes into the command line. The PowerShell script is a fixed string; the text
+  and output path travel in environment variables (`SAT_TTS_TEXT`, `SAT_TTS_OUT`), and `HF_TOKEN` is
+  not passed on. Hard timeout 30 s; replies over 1000 characters are refused with a calm message.
+- The exact voice used is reported as `windows-sapi:<voice name>` and shown under **Details**
+  (on the dev laptop it was `Microsoft David Desktop`).
+- If it cannot run (not Windows, no English voice installed, the engine fails or times out, or
+  `--en-voice off`) the reply is shown as text with a short note. It is never an error page.
+- `GET /pipeline/audio/{name}` serves `en-<32 hex>.wav` only from `_audio/`, and render's
+  `render-<32 hex>-te|hi.wav` only from render's output directory; neither pattern is accepted in the
+  other directory.
 
 ## Page language
 
@@ -192,8 +213,9 @@ started together with the models already in the OS file cache:
    - **ASR / MT not running or too slow:** run the start command again (it starts only what is missing).
    - **Render not running or no audio:** run the start command again; the translated text still shows.
 5. **Not checked by a person:** Telugu and Hindi transcripts, Telugu and Hindi page wording, and how
-   understandable the spoken replies are. Have a native speaker check these before presenting. There is
-   no English voice, so English replies are text only.
+   understandable the spoken replies are. Have a native speaker check these before presenting. The
+   English reply voice is the Windows demo voice, whose quality was not listened to by a person; on a
+   machine without an English Windows voice, English replies are text only.
 
 ## Extending it (later: moderation badge)
 
