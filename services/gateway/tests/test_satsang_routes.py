@@ -137,12 +137,14 @@ def _snapshot(db_session):
     return [(r.id, r.status, r.started_at, r.ended_at) for r in rows]
 
 
-def _publish(client, key, secret=HOOK_SECRET):
-    return client.post(PUBLISH, params={"secret": secret}, data={"name": key})
+def _publish(client, sid, key, secret=HOOK_SECRET):
+    """Exactly what nginx-rtmp posts for rtmp://host/live/<session id>?key=<key> (measured on Debian's
+    libnginx-mod-rtmp 1.2.2): the stream NAME is the session id, the key is a separate field."""
+    return client.post(PUBLISH, params={"secret": secret}, data={"name": str(sid), "key": key})
 
 
-def _done(client, key, secret=HOOK_SECRET):
-    return client.post(DONE, params={"secret": secret}, data={"name": key})
+def _done(client, sid, key, secret=HOOK_SECRET):
+    return client.post(DONE, params={"secret": secret}, data={"name": str(sid), "key": key})
 
 
 # --- who may schedule ----------------------------------------------------------------------------
@@ -156,6 +158,11 @@ def test_an_admin_schedules_a_satsang_and_the_database_keeps_only_a_hash(
     assert made.session.speaker_name == "Swami Ananda"
     assert made.session.created_by == str(admin.id)
     assert made.stream_key and made.stream_key in made.ingest_url
+    # Named by the SESSION, key as an argument: nginx-rtmp names the HLS files after the stream
+    # name, so named by the key, every listener's URL would carry it.
+    assert made.ingest_url == (
+        f"rtmp://localhost:1935/live/{made.session.id}?key={made.stream_key}"
+    )
     row = _fresh(db_session, made.session.id)
     assert row.stream_key_sha256 == _hash(made.stream_key)
     # Nothing in the stored row, rendered as text, contains the key itself.
@@ -322,8 +329,10 @@ def test_the_speaker_can_get_a_fresh_key_and_it_is_the_one_that_works(
     rotated = SatsangSessionCreated.model_validate(resp.json())
     assert rotated.stream_key != made.stream_key
     assert _fresh(db_session, made.session.id).stream_key_sha256 == _hash(rotated.stream_key)
-    assert _publish(client, made.stream_key).status_code == 403  # the old one is dead
-    assert _publish(client, rotated.stream_key).status_code == 200
+    assert (
+        _publish(client, made.session.id, made.stream_key).status_code == 403
+    )  # the old one is dead
+    assert _publish(client, rotated.session.id, rotated.stream_key).status_code == 200
 
 
 def test_a_moderator_may_rotate_a_key_too_which_is_how_a_leaked_one_is_dealt_with(
@@ -458,7 +467,7 @@ def test_publishing_with_a_valid_key_puts_a_scheduled_satsang_on_the_air(
     client, db_session, admin, swami, hook
 ) -> None:
     made = _schedule(client, admin, swami, minutes=5)  # inside the go-live window
-    resp = _publish(client, made.stream_key)
+    resp = _publish(client, made.session.id, made.stream_key)
     assert 200 <= resp.status_code < 300, resp.text
     row = _fresh(db_session, made.session.id)
     assert row.status == "live" and row.started_at is not None and row.ended_at is None
@@ -469,9 +478,9 @@ def test_publishing_with_a_valid_key_puts_a_scheduled_satsang_on_the_air(
 def test_an_unknown_or_empty_key_is_refused_and_changes_nothing(
     client, db_session, admin, swami, hook, name
 ) -> None:
-    _schedule(client, admin, swami)
+    made = _schedule(client, admin, swami, minutes=5)
     before = _snapshot(db_session)
-    resp = client.post(PUBLISH, params={"secret": HOOK_SECRET}, data={"name": name})
+    resp = _publish(client, made.session.id, name)
     assert resp.status_code == 403
     assert _snapshot(db_session) == before
 
@@ -479,10 +488,14 @@ def test_an_unknown_or_empty_key_is_refused_and_changes_nothing(
 def test_a_request_with_no_key_field_at_all_is_refused_and_changes_nothing(
     client, db_session, admin, swami, hook
 ) -> None:
-    _schedule(client, admin, swami)
+    made = _schedule(client, admin, swami, minutes=5)
     before = _snapshot(db_session)
     assert client.post(PUBLISH, params={"secret": HOOK_SECRET}, data={}).status_code == 403
     assert client.post(PUBLISH, params={"secret": HOOK_SECRET}).status_code == 403
+    no_key = {"name": made.session.id}
+    no_name = {"key": made.stream_key}
+    assert client.post(PUBLISH, params={"secret": HOOK_SECRET}, data=no_key).status_code == 403
+    assert client.post(PUBLISH, params={"secret": HOOK_SECRET}, data=no_name).status_code == 403
     assert _snapshot(db_session) == before
 
 
@@ -492,7 +505,7 @@ def test_the_key_of_a_finished_or_cancelled_satsang_is_dead(
 ) -> None:
     row, key = _insert(db_session, swami, admin, status=status, minutes=-30, key=f"k-{status}")
     before = _snapshot(db_session)
-    assert _publish(client, key).status_code == 403
+    assert _publish(client, row.id, key).status_code == 403
     assert _snapshot(db_session) == before
     assert _fresh(db_session, row.id).status == status  # ended -> live never happens
 
@@ -502,8 +515,8 @@ def test_only_one_satsang_goes_live_and_the_refused_one_stays_scheduled(
 ) -> None:
     first = _schedule(client, admin, swami, title="first", minutes=10)
     second = _schedule(client, admin, swami, title="second", minutes=20)
-    assert _publish(client, first.stream_key).status_code == 200
-    assert _publish(client, second.stream_key).status_code == 403
+    assert _publish(client, first.session.id, first.stream_key).status_code == 200
+    assert _publish(client, second.session.id, second.stream_key).status_code == 403
     assert _fresh(db_session, second.session.id).status == "scheduled"
     live = db_session.execute(text("SELECT count(*) FROM sessions WHERE status = 'live'"))
     assert live.scalar_one() == 1
@@ -513,10 +526,12 @@ def test_going_live_more_than_an_hour_early_is_refused_but_arbitrarily_late_is_n
     client, db_session, admin, swami, hook
 ) -> None:
     early, early_key = _insert(db_session, swami, admin, minutes=180, key="k-early")
-    assert _publish(client, early_key).status_code == 403
+    assert _publish(client, early.id, early_key).status_code == 403
     assert _fresh(db_session, early.id).status == "scheduled"
     late, late_key = _insert(db_session, swami, admin, minutes=-4 * 60, key="k-late")
-    assert _publish(client, late_key).status_code == 200  # a speaker four hours behind is still on
+    assert (
+        _publish(client, late.id, late_key).status_code == 200
+    )  # a speaker four hours behind is still on
     assert _fresh(db_session, late.id).status == "live"
 
 
@@ -526,9 +541,9 @@ def test_the_same_key_publishing_again_while_live_is_accepted_and_changes_nothin
     """A phone that drops and reconnects asks again before the old connection's end-of-stream
     hook has fired. It is the same speaker with the same key, so it must not be refused."""
     made = _schedule(client, admin, swami, minutes=5)
-    assert _publish(client, made.stream_key).status_code == 200
+    assert _publish(client, made.session.id, made.stream_key).status_code == 200
     started = _fresh(db_session, made.session.id).started_at
-    assert _publish(client, made.stream_key).status_code == 200
+    assert _publish(client, made.session.id, made.stream_key).status_code == 200
     assert _fresh(db_session, made.session.id).started_at == started
 
 
@@ -537,7 +552,9 @@ def test_the_json_form_the_mock_documents_is_accepted_too(
 ) -> None:
     made = _schedule(client, admin, swami, minutes=5)
     resp = client.post(
-        PUBLISH, params={"secret": HOOK_SECRET}, json={"stream_key": made.stream_key}
+        PUBLISH,
+        params={"secret": HOOK_SECRET},
+        json={"name": made.session.id, "key": made.stream_key},
     )
     assert resp.status_code == 200
     assert _fresh(db_session, made.session.id).status == "live"
@@ -547,15 +564,15 @@ def test_the_speaker_stopping_ends_the_satsang_and_frees_the_air(
     client, db_session, admin, swami, hook
 ) -> None:
     made = _schedule(client, admin, swami, minutes=5)
-    _publish(client, made.stream_key)
-    resp = _done(client, made.stream_key)
+    _publish(client, made.session.id, made.stream_key)
+    resp = _done(client, made.session.id, made.stream_key)
     assert resp.status_code == 200
     row = _fresh(db_session, made.session.id)
     assert row.status == "ended" and row.ended_at is not None
     # the key is now dead, and a different satsang may go on
-    assert _publish(client, made.stream_key).status_code == 403
+    assert _publish(client, made.session.id, made.stream_key).status_code == 403
     nxt = _schedule(client, admin, swami, title="next", minutes=5)
-    assert _publish(client, nxt.stream_key).status_code == 200
+    assert _publish(client, nxt.session.id, nxt.stream_key).status_code == 200
 
 
 def test_the_end_of_stream_hook_refuses_an_unknown_key_and_a_satsang_that_is_not_live(
@@ -563,8 +580,10 @@ def test_the_end_of_stream_hook_refuses_an_unknown_key_and_a_satsang_that_is_not
 ) -> None:
     scheduled = _schedule(client, admin, swami)
     before = _snapshot(db_session)
-    assert _done(client, "not-a-key").status_code == 403
-    assert _done(client, scheduled.stream_key).status_code == 409  # scheduled -> ended: no
+    assert _done(client, scheduled.session.id, "not-a-key").status_code == 403
+    assert (
+        _done(client, scheduled.session.id, scheduled.stream_key).status_code == 409
+    )  # scheduled -> ended: no
     assert _snapshot(db_session) == before
 
 
@@ -577,7 +596,8 @@ def test_no_user_token_opens_the_hook_not_even_an_admins(
     made = _schedule(client, admin, swami, minutes=5)
     before = _snapshot(db_session)
     for headers in (_as(admin), _as(swami), _legacy(admin), {}):
-        resp = client.post(PUBLISH, data={"name": made.stream_key}, headers=headers)
+        fields = {"name": made.session.id, "key": made.stream_key}
+        resp = client.post(PUBLISH, data=fields, headers=headers)
         assert resp.status_code == 403, headers
     assert _snapshot(db_session) == before
 
@@ -588,9 +608,10 @@ def test_a_wrong_or_missing_secret_is_refused_even_with_a_perfectly_valid_key(
 ) -> None:
     made = _schedule(client, admin, swami, minutes=5)
     before = _snapshot(db_session)
-    assert _publish(client, made.stream_key, secret=secret).status_code == 403
-    assert client.post(PUBLISH, data={"name": made.stream_key}).status_code == 403
-    assert _done(client, made.stream_key, secret=secret).status_code == 403
+    assert _publish(client, made.session.id, made.stream_key, secret=secret).status_code == 403
+    fields = {"name": made.session.id, "key": made.stream_key}
+    assert client.post(PUBLISH, data=fields).status_code == 403
+    assert _done(client, made.session.id, made.stream_key, secret=secret).status_code == 403
     assert _snapshot(db_session) == before
 
 
@@ -602,9 +623,9 @@ def test_with_no_secret_configured_the_hooks_refuse_everyone_nobody_can_go_live(
     monkeypatch.setattr(get_settings(), "SATSANG_HOOK_SECRET", None)
     made = _schedule(client, admin, swami, minutes=5)
     before = _snapshot(db_session)
-    assert _publish(client, made.stream_key, secret="anything").status_code == 503
-    assert _publish(client, made.stream_key, secret="").status_code == 503
-    assert _done(client, made.stream_key, secret="anything").status_code == 503
+    assert _publish(client, made.session.id, made.stream_key, secret="anything").status_code == 503
+    assert _publish(client, made.session.id, made.stream_key, secret="").status_code == 503
+    assert _done(client, made.session.id, made.stream_key, secret="anything").status_code == 503
     assert _snapshot(db_session) == before
 
 
@@ -613,7 +634,7 @@ def test_an_oversized_hook_body_is_refused_before_it_is_read_and_changes_nothing
 ) -> None:
     made = _schedule(client, admin, swami, minutes=5)
     before = _snapshot(db_session)
-    huge = b"name=" + made.stream_key.encode() + b"&pad=" + b"x" * 200_000
+    huge = f"name={made.session.id}&key={made.stream_key}&pad=".encode() + b"x" * 200_000
     resp = client.post(
         PUBLISH,
         params={"secret": HOOK_SECRET},
@@ -629,9 +650,9 @@ def test_the_key_is_never_written_to_the_log(
 ) -> None:
     with caplog.at_level(logging.DEBUG):
         made = _schedule(client, admin, swami, minutes=5)
-        _publish(client, made.stream_key)
-        _publish(client, "a-wrong-key-that-must-not-be-logged-either")
-        _done(client, made.stream_key)
+        _publish(client, made.session.id, made.stream_key)
+        _publish(client, made.session.id, "a-wrong-key-that-must-not-be-logged-either")
+        _done(client, made.session.id, made.stream_key)
         client.post(f"/sessions/{made.session.id}/key", headers=_as(swami))
     # Only the APP's loggers: the test client's own HTTP logger prints the URL it called, query
     # string and all, which says nothing about what the gateway writes.
@@ -645,6 +666,34 @@ def test_the_key_is_never_written_to_the_log(
 
 def test_the_hook_response_carries_no_key(client, admin, swami, hook) -> None:
     made = _schedule(client, admin, swami, minutes=5)
-    for resp in (_publish(client, made.stream_key), _done(client, made.stream_key)):
+    for resp in (
+        _publish(client, made.session.id, made.stream_key),
+        _done(client, made.session.id, made.stream_key),
+    ):
         assert made.stream_key not in resp.text
         assert "stream_key" not in json.dumps(resp.json())
+
+
+# --- the stream is named by the session, never by the key -----------------------------------------
+
+
+def test_a_valid_key_under_another_sessions_name_is_refused_and_changes_nothing(
+    client, db_session, admin, swami, hook
+) -> None:
+    mine = _schedule(client, admin, swami, title="mine", minutes=5)
+    other = _schedule(client, admin, swami, title="other", minutes=5)
+    before = _snapshot(db_session)
+    assert _publish(client, other.session.id, mine.stream_key).status_code == 403
+    assert _done(client, other.session.id, mine.stream_key).status_code == 403
+    assert _snapshot(db_session) == before
+
+
+def test_publishing_with_the_key_as_the_stream_name_is_refused(
+    client, db_session, admin, swami, hook
+) -> None:
+    """The old way, rtmp://host/live/<key>. Refused even with the right key in the key field, so the
+    RTMP server can never write HLS files whose names are the key."""
+    made = _schedule(client, admin, swami, minutes=5)
+    before = _snapshot(db_session)
+    assert _publish(client, made.stream_key, made.stream_key).status_code == 403
+    assert _snapshot(db_session) == before
