@@ -20,7 +20,9 @@ import json
 
 import reflex as rx
 
-from elder_app.elder_app import COLOR, FONT_LATIN, GATEWAY_PUBLIC_URL, State
+# The main module is imported inside the functions that need it, not here: elder_app.py imports
+# this module at its very end, so a top-level import the other way round would be circular and
+# would break whichever of the two was imported first.
 
 ROUTE = "/bhajans"
 
@@ -137,6 +139,8 @@ BOOT_JS_TEMPLATE = """
 
 
 def boot_config() -> dict:
+    from elder_app.elder_app import COLOR, GATEWAY_PUBLIC_URL
+
     return {
         "gateway": GATEWAY_PUBLIC_URL,
         "colors": {key: COLOR[key] for key in _COLOR_KEYS},
@@ -149,6 +153,8 @@ def boot_js() -> str:
 
 
 def bhajan_rooms_page() -> rx.Component:
+    from elder_app.elder_app import COLOR, FONT_LATIN
+
     return rx.box(
         rx.box(
             id="bhajan-root",
@@ -168,6 +174,8 @@ def bhajan_rooms_page() -> rx.Component:
 
 def rooms_link() -> rx.Component:
     """The one navigation entry: a large button on the home screen."""
+    from elder_app.elder_app import COLOR, State
+
     return rx.box(
         rx.link(
             rx.button(
