@@ -74,11 +74,19 @@ def test_a_second_first_request_for_the_same_new_token_does_not_wait_for_the_fir
 
 
 def test_a_token_that_already_has_a_row_is_not_inserted_again(engine, token) -> None:
-    with Session(engine) as setup:
-        user_from_token(token, setup)
+    # Passes before and after the fix: it guards the path every later request takes.
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO users (id, name, preferred_language, role)"
+                " VALUES (:id, 'Test Elder', 'te', 'elder')"
+            ),
+            {"id": token},
+        )
     again = Session(engine)
     try:
-        user_from_token(token, again)
+        user = user_from_token(token, again)
+        assert user.id == token
         assert _row_count(engine, token) == 1
     finally:
         again.close()
