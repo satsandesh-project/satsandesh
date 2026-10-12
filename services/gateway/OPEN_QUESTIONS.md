@@ -665,3 +665,15 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     Larger or newer open models were compared and none beat the current one on this data (Sarvam-Translate 4B fixes the
     word but invented a fact and addresses elders as "tum"); the IndicTrans2 1B and Indic→Indic models could not be
     tested because the Hugging Face terms are not accepted on the account behind the token (403).
+
+35. **A bhajan-room lead can rejoin as a speaker for about three minutes after their turn.** A token's
+    `canPublish` is applied again whenever someone joins with it, and the hand-over's
+    `UpdateParticipant` changes only the live session, so the publish-capable token is kept to two
+    minutes (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`) and the listener token to an hour. **LiveKit
+    v1.13.9 also accepts an expired token for exactly 60 more seconds** (measured by M2 on a throwaway
+    LiveKit: accepted up to 59 s past expiry, refused from 60 s, with a fresh-token control valid on
+    every row), so the real window is the token's life plus 60 s: about three minutes, not two.
+    That shrinks the window; it does not close it. Closing it needs a check on join: a LiveKit
+    `participant_joined` webhook that silences anyone who is not the current lead. Not built.
+    Found by M2's review of #151, who showed it on a real LiveKit. **Owner:** M1 (webhook route
+    and the gateway side), before bhajan rooms are used outside a demo.

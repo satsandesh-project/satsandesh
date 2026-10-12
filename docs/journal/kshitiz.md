@@ -390,3 +390,20 @@ does, the button falls back to the sender's own words as before.
 the server, the lock kept across a prefs sync, voice declares the language only once chosen, reader
 behaviour per language); lint clean; the four page components build. **Not verified:** in a
 browser, and with a real note; the Telugu strings need a native reader.
+
+## 2026-10-11 — Showing the sender what the system told them, and the language screen for a screen reader
+
+The gateway has served a sender's notice since #114 (`moderation_notice` on a message the author
+reads, `notice_text` on the live status frame), but the app never drew it: a held note showed only
+"Waiting for review". It now shows the notice under the status line of the sender's own message, in
+the language the gateway wrote it in. It is kept from the loaded thread, the live frame and the
+status poll. A frame with no notice does not wipe one (a delivery frame carries none), but the notice
+is cleared when the message leaves held or blocked, because the old reason would then describe a state
+it is no longer in. Nothing about why (label, confidence, model) ever reaches the app.
+
+The language screen got the accessibility attributes it lacked: each name carries its own `lang`, the
+two titles are headings, and the step from "choose" to "is this right?" is announced.
+
+**Verification:** 48 tests (2 new for the notice, 1 for the screen); lint clean; the screen builds and
+the attributes are in the rendered output. **Not verified:** in a browser, with a real held note, or with
+an actual screen reader or keyboard; the wording of the notice itself is the gateway's and M4's (#18).
