@@ -658,3 +658,16 @@ def test_the_language_screen_is_readable_by_a_screen_reader():
     # Rendered, not just written: the attributes reach the page.
     rendered = str(language_screen().render())
     assert "aria-live" in rendered and "lang" in rendered
+
+
+def test_a_translation_does_not_hide_the_senders_own_voice():
+    js = CHAT_CONNECT_JS_TEMPLATE
+    # Under a translation, and under the English view, the real recording is there.
+    assert "const originalVoice = () => {" in js
+    assert js.count("originalVoice();") == 2
+    assert "bubble.appendChild(noteLine(t.recv_original_voice));" in js
+    # Not added twice for an English reader, who already has it as their play button.
+    assert 'if (msg.kind !== "voice" || !msg.media_ref || lang === "en") return;' in js
+    assert "recv_original_voice" in RECEIVER_TEXT_KEYS
+    for lang in ("en", "te"):
+        assert TEXTS[lang].get("recv_original_voice")

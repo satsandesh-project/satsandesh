@@ -256,6 +256,7 @@ TEXTS = {
         "recv_audio_failed": "Could not load the audio. Tap to try again.",
         "recv_speed": "Speed",
         "recv_transcript": "Text",
+        "recv_original_voice": "Original voice",
         "recv_no_audio": "No audio for this message",
         "recv_approximate": "Approximate translation",
     },
@@ -360,6 +361,7 @@ TEXTS = {
         "recv_audio_failed": "ఆడియో లోడ్ కాలేదు. మళ్లీ ప్రయత్నించడానికి నొక్కండి.",
         "recv_speed": "వేగం",
         "recv_transcript": "వచనం",
+        "recv_original_voice": "అసలు గొంతు",
         "recv_no_audio": "ఈ సందేశానికి ఆడియో లేదు",
         "recv_approximate": "సుమారు అనువాదం",
     },
@@ -802,6 +804,14 @@ window.__satsandeshWsInit = true;
     const english = rendering && lang !== "en" ? findRendering(msg, "en") : null;
     const canToggle = !!rendering && lang !== "en";
     const showOriginal = !rendering || (canToggle && !!window.__satShowOriginal[key]);
+    // The sender's real recording, under a translation. A translation replaces the words, not the
+    // voice: the person who sent it should always be one tap away, without opening anything. (An
+    // English reader gets the recording as their play button below, so it is not added twice.)
+    const originalVoice = () => {
+      if (msg.kind !== "voice" || !msg.media_ref || lang === "en") return;
+      bubble.appendChild(noteLine(t.recv_original_voice));
+      bubble.appendChild(audioPlayer(msg.media_ref, key + ":o", resume));
+    };
 
     if (rendering && !showOriginal) {
       bubble.appendChild(textBlock(rendering.text));
@@ -821,8 +831,10 @@ window.__satsandeshWsInit = true;
       if (rendering.degraded_reason === "model_fallback") {
         bubble.appendChild(noteLine(t.recv_approximate));
       }
+      originalVoice();
     } else if (rendering && english) {
       bubble.appendChild(textBlock(english.text));
+      originalVoice();
     } else if (msg.kind === "voice") {
       if (msg.media_ref) bubble.appendChild(audioPlayer(msg.media_ref, key + ":o", resume));
       else if (!msg.transcript) bubble.appendChild(noteLine(t.recv_no_audio));
@@ -1632,6 +1644,7 @@ RECEIVER_TEXT_KEYS = (
     "recv_audio_failed",
     "recv_speed",
     "recv_transcript",
+    "recv_original_voice",
     "recv_no_audio",
     "recv_approximate",
 )
