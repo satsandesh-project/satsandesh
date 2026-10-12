@@ -656,3 +656,24 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     `participant_joined` webhook that silences anyone who is not the current lead. Not built.
     Found by M2's review of #151, who showed it on a real LiveKit. **Owner:** M1 (webhook route
     and the gateway side), before bhajan rooms are used outside a demo.
+
+36. **A satsang's stream key crosses the campus network in clear, and the ingest hook's secret sits
+    in a URL.** The hook (`POST /sessions/ingest/publish`, called by the RTMP server) is
+    protected by a shared secret, the stream key and what the key is worth (`app/satsang.py`
+    module docstring), and for the hook that is enough: an attacker without a valid key changes
+    nothing, and one with a key could already broadcast by publishing to the RTMP port. The weak
+    point is the key. **RTMP on 1935 carries it unencrypted** (`infra/satsang/INGEST_FINDING.md`),
+    so anyone who can watch one publish handshake on the same network learns a key that works
+    until that satsang ends. Its life is bounded (only while the satsang is scheduled or live,
+    only from an hour before the start, dead after it ends, one live at a time), which shortens
+    the exposure and does not remove it. RTMPS or WHIP would, and both need a trusted certificate,
+    which waits on the domain decision.
+    Smaller, all true now: (a) the secret is in the callback's query string, so it appears in the
+    gateway's own access log and is one value for both hooks; (b) Caddy must never route
+    `/sessions/ingest*`, which the module cannot enforce, so the infrastructure phase has to add the
+    refusal and a check for it in `infra/caddy/tls_check.py`; (c) that nginx-rtmp keeps the
+    callback's query string and posts the stream name in a field called `name` is from its
+    documentation and **not verified** until a media server runs; (d) a speaker whose connection
+    drops ends the satsang (the done-hook fires) and cannot resume, while a satsang whose done-hook
+    never arrives stays live until a moderator ends it by hand (`POST /sessions/{id}/end`); a
+    grace period and a watchdog are one design. **Owner:** M2, Week 10.

@@ -705,3 +705,8 @@ the server for its DB-backed tests (the local Python lacks
   enumerate `app.openapi()["paths"]`, which does see all six, with the guard kept.
 - The lesson is the guard, not the framework: a test that searches for something bad must first
   prove it is searching somewhere.
+- A database that holds a status and its timestamps CONSISTENT does not forbid an illegal MOVE:
+  `ended -> live` is one UPDATE (clear `ended_at`) and every CHECK still passes. I had called the
+  Phase 1 table finished; the Phase 2 transition tests showed nine illegal moves going straight
+  through, and a trigger was needed. The tests rewrite the timestamps to match each new status, so
+  only the transition rule can object.
