@@ -55,8 +55,19 @@ def _schedule(client, *, minutes: int = 10, headers=MOD, title="Thursday discour
     return SatsangSessionCreated.model_validate(resp.json())
 
 
-def _publish(client, key: str):
-    return client.post("/sessions/ingest/publish", json={"stream_key": key})
+def _publish(client, made, key=None):
+    """What nginx-rtmp sends (prototype-verified on Debian's libnginx-mod-rtmp 1.2.2): the stream
+    NAME, which is the session id, and the key as a separate argument of the publish URL."""
+    return client.post(
+        "/sessions/ingest/publish",
+        json={"name": made.session.id, "key": made.stream_key if key is None else key},
+    )
+
+
+def _done(client, made):
+    return client.post(
+        "/sessions/ingest/done", json={"name": made.session.id, "key": made.stream_key}
+    )
 
 
 # --- who may schedule ---------------------------------------------------------------------------
@@ -80,6 +91,25 @@ def test_a_new_satsang_is_scheduled_has_not_started_and_returns_its_key_once(cli
     assert made.session.reminder_sent_at is None
     assert made.stream_key and made.stream_key in made.ingest_url
     assert made.ingest_url.startswith("rtmp://")
+
+
+def test_the_ingest_url_names_the_session_and_carries_the_key_only_as_an_argument(client) -> None:
+    """nginx-rtmp names the HLS playlist and segments after the stream NAME. If the name were the
+    key, every listener's URL would carry the speaker's secret -- seen on a real nginx-rtmp. So the
+    stream is named by the session id and the key travels as `?key=`."""
+    made = _schedule(client, minutes=5)
+    assert made.ingest_url == f"rtmp://localhost:1935/live/{made.session.id}?key={made.stream_key}"
+    _publish(client, made)
+    item = client.get("/sessions", headers=ELDER).json()["items"][0]
+    assert item["hls_url"] == f"/hls/{made.session.id}.m3u8"
+    assert made.stream_key not in item["hls_url"]
+
+
+def test_a_valid_key_under_another_sessions_name_is_refused(client) -> None:
+    mine = _schedule(client, title="mine", minutes=5)
+    other = _schedule(client, title="other", minutes=5)
+    assert _publish(client, other, key=mine.stream_key).status_code == 403
+    assert all(r["status"] is SatsangStatus.SCHEDULED for r in mock_satsang._sessions.values())
 
 
 def test_a_start_time_without_a_timezone_is_refused_by_the_route(client) -> None:
@@ -145,8 +175,8 @@ def test_rotating_the_key_gives_a_new_one_and_retires_the_old(client) -> None:
         client.post(f"/sessions/{made.session.id}/key", headers=MOD).json()
     )
     assert rotated.stream_key != made.stream_key
-    assert _publish(client, made.stream_key).status_code == 403  # the old key is dead
-    assert _publish(client, rotated.stream_key).status_code == 200
+    assert _publish(client, made).status_code == 403  # the old key is dead
+    assert _publish(client, rotated).status_code == 200
 
 
 def test_only_a_moderator_cancels_or_ends(client) -> None:
@@ -172,7 +202,7 @@ def test_the_speaker_or_a_moderator_may_rekey_and_anyone_else_is_told_it_does_no
 
 def test_a_live_satsang_cannot_be_rekeyed_and_a_moderator_can_end_it(client) -> None:
     made = _schedule(client)
-    _publish(client, made.stream_key)
+    _publish(client, made)
     assert client.post(f"/sessions/{made.session.id}/key", headers=MOD).status_code == 409
     ended = SatsangSessionOut.model_validate(
         client.post(f"/sessions/{made.session.id}/end", headers=MOD).json()
@@ -191,7 +221,7 @@ def test_the_key_is_what_puts_a_satsang_on_air(client) -> None:
     made = _schedule(client)
     assert client.get("/sessions", headers=ELDER).json()["items"][0]["hls_url"] is None
 
-    live = SatsangSessionOut.model_validate(_publish(client, made.stream_key).json())
+    live = SatsangSessionOut.model_validate(_publish(client, made).json())
     assert live.status is SatsangStatus.LIVE and live.started_at is not None
 
     item = client.get("/sessions", headers=ELDER).json()["items"][0]
@@ -199,8 +229,8 @@ def test_the_key_is_what_puts_a_satsang_on_air(client) -> None:
 
 
 def test_a_wrong_key_is_refused_without_saying_whether_any_session_has_it(client) -> None:
-    _schedule(client)
-    resp = _publish(client, "not-a-real-key")
+    made = _schedule(client)
+    resp = _publish(client, made, key="not-a-real-key")
     assert resp.status_code == 403
     assert "not found" not in resp.text.lower()
 
@@ -208,34 +238,32 @@ def test_a_wrong_key_is_refused_without_saying_whether_any_session_has_it(client
 def test_only_one_satsang_is_live_at_a_time(client) -> None:
     first = _schedule(client, title="First")
     second = _schedule(client, title="Second")
-    assert _publish(client, first.stream_key).status_code == 200
-    assert _publish(client, second.stream_key).status_code == 409
+    assert _publish(client, first).status_code == 200
+    assert _publish(client, second).status_code == 409
     assert sum(1 for r in mock_satsang._sessions.values() if r["status"] is SatsangStatus.LIVE) == 1
 
 
 def test_a_satsang_more_than_an_hour_early_is_refused_but_a_late_one_is_not(client) -> None:
     early = _schedule(client, minutes=180)
-    assert _publish(client, early.stream_key).status_code == 409
+    assert _publish(client, early).status_code == 409
     late = _schedule(client, minutes=-240)  # four hours behind: still this satsang
-    assert _publish(client, late.stream_key).status_code == 200
+    assert _publish(client, late).status_code == 200
 
 
 def test_the_speaker_stopping_ends_it_and_frees_the_floor(client) -> None:
     first = _schedule(client, title="First")
-    _publish(client, first.stream_key)
-    ended = SatsangSessionOut.model_validate(
-        client.post("/sessions/ingest/done", json={"stream_key": first.stream_key}).json()
-    )
+    _publish(client, first)
+    ended = SatsangSessionOut.model_validate(_done(client, first).json())
     assert ended.status is SatsangStatus.ENDED and ended.ended_at is not None
     second = _schedule(client, title="Second")
-    assert _publish(client, second.stream_key).status_code == 200
+    assert _publish(client, second).status_code == 200
 
 
 def test_a_live_satsang_cannot_be_cancelled_and_an_ended_one_needs_no_key(client) -> None:
     made = _schedule(client)
-    _publish(client, made.stream_key)
+    _publish(client, made)
     assert client.post(f"/sessions/{made.session.id}/cancel", headers=MOD).status_code == 409
-    client.post("/sessions/ingest/done", json={"stream_key": made.stream_key})
+    _done(client, made)
     assert client.post(f"/sessions/{made.session.id}/key", headers=MOD).status_code == 409
 
 
@@ -247,8 +275,8 @@ def test_an_elder_sees_what_is_coming_what_is_on_and_what_was_called_off(client)
     called_off = _schedule(client, minutes=90, title="Called off")
     client.post(f"/sessions/{called_off.session.id}/cancel", headers=MOD)
     done = _schedule(client, minutes=-5, title="Already finished")
-    _publish(client, done.stream_key)
-    client.post("/sessions/ingest/done", json={"stream_key": done.stream_key})
+    _publish(client, done)
+    _done(client, done)
 
     titles = [i["title"] for i in client.get("/sessions", headers=ELDER).json()["items"]]
     assert "Already finished" not in titles  # the archive is a separate feature
