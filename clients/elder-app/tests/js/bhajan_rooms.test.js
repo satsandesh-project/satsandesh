@@ -76,6 +76,14 @@ test("a handoff turns the old lead's microphone off and the new lead's on", () =
   assert.deepEqual([anandMic, bhavyaMic], [false, true]);
 });
 
+test("a lead whose token could not publish needs a fresh token; nobody else does", () => {
+  assert.equal(logic.needsFreshToken(you({ is_lead: true }), false), true);
+  assert.equal(logic.needsFreshToken(you({ is_lead: true }), true), false);
+  assert.equal(logic.needsFreshToken(you({ is_lead: false }), false), false);
+  assert.equal(logic.needsFreshToken(you({ is_lead: true }), undefined), false);
+  assert.equal(logic.needsFreshToken(null, false), false);
+});
+
 test("each failure has its own message, and a lost connection is not 'forbidden'", () => {
   const cases = { 0: "err_network", 401: "err_signin", 403: "err_forbidden", 404: "err_notfound", 409: "err_closed", 502: "err_audio", 503: "err_audio", 500: "err_generic", 422: "err_generic" };
   for (const [status, key] of Object.entries(cases)) {

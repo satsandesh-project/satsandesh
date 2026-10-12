@@ -104,13 +104,14 @@ class FakeGateway {
 class FakeLivekit {
   static install(window, log) {
     class Room {
-      constructor() { this.handlers = {}; this.remoteParticipants = new Map(); this.canPlaybackAudio = Room.canPlayback; this.localParticipant = { name: "Me", setMicrophoneEnabled: async (on) => { log.push("mic:" + on); } }; log.push("new Room"); }
+      constructor() { Room.instances.push(this); this.handlers = {}; this.remoteParticipants = new Map(); this.canPlaybackAudio = Room.canPlayback; this.localParticipant = { name: "Me", setMicrophoneEnabled: async (on) => { log.push("mic:" + on); } }; log.push("new Room"); }
       on(name, fn) { this.handlers[name] = fn; return this; }
       async connect(url, token) { log.push("connect " + url + " " + token); }
       async startAudio() { log.push("startAudio"); }
       async disconnect() { log.push("disconnect"); }
     }
     Room.canPlayback = true;
+    Room.instances = [];
     window.LivekitClient = { Room, RoomEvent: { TrackSubscribed: "ts", TrackUnsubscribed: "tu", Disconnected: "d", AudioPlaybackStatusChanged: "a" } };
   }
 }
@@ -132,7 +133,7 @@ async function boot(gateway, options = {}) {
   window.confirm = () => options.confirm !== false;
   FakeLivekit.install(window, log);
   window.eval(SOURCE);
-  window.SatBhajan.start({ gateway: "http://gw", colors: COLORS, texts: TEXTS, pollMs: 40 });
+  window.SatBhajan.start({ gateway: "http://gw", colors: COLORS, texts: TEXTS, pollMs: 40, rejoinMinMs: options.rejoinMinMs });
   await tick();
   return { window, doc: window.document, log };
 }
@@ -308,4 +309,46 @@ run("a browser that keeps audio silent gets a 'tap to hear' button", async () =>
   window.LivekitClient.Room.canPlayback = false;
   await click(doc, "T:join");
   assert.ok(buttons(doc).includes("T:tap_to_hear"));
+});
+
+run("a person made the lead just before connecting rejoins with a fresh token that can publish", async () => {
+  const gw = new FakeGateway();
+  gw.entries.push({ user_id: "me", state: "leading" }); // already the lead when the token is issued...
+  gw.tokenCanPublish = false; // ...but the token (read without the lock) said "cannot publish"
+  const { doc, log, window } = await boot(gw, { rejoinMinMs: 0 });
+  await click(doc, "T:join");
+  gw.tokenCanPublish = true; // what the gateway says when asked again
+  await tick(300);
+  const tokenCalls = gw.calls.filter((c) => c === "POST /rooms/r1/token").length;
+  assert.equal(tokenCalls, 2, "one token to join, one fresh token to rejoin: " + gw.calls.join(","));
+  assert.ok(log.includes("disconnect"), "the first connection was closed");
+  assert.equal(window.LivekitClient.Room.instances.length, 2);
+  assert.ok(log.includes("mic:true"), "the microphone is on after the rejoin");
+  await tick(300);
+  assert.equal(gw.calls.filter((c) => c === "POST /rooms/r1/token").length, 2, "and it does not keep rejoining");
+});
+
+run("a token that could publish is not replaced for no reason", async () => {
+  const gw = new FakeGateway();
+  gw.entries.push({ user_id: "me", state: "leading" });
+  gw.tokenCanPublish = true;
+  const { doc } = await boot(gw, { rejoinMinMs: 0 });
+  await click(doc, "T:join");
+  await tick(300);
+  assert.equal(gw.calls.filter((c) => c === "POST /rooms/r1/token").length, 1);
+});
+
+run("a dropped audio connection offers 'reconnect', which asks for a new token and joins again", async () => {
+  const gw = new FakeGateway();
+  const { doc, window } = await boot(gw);
+  await click(doc, "T:join");
+  assert.ok(!buttons(doc).includes("T:reconnect"));
+  window.LivekitClient.Room.instances[0].handlers.d(); // LiveKit says Disconnected
+  await tick();
+  assert.ok(doc.body.textContent.includes("T:err_audio"));
+  await click(doc, "T:reconnect");
+  assert.equal(gw.calls.filter((c) => c === "POST /rooms/r1/token").length, 2, "a fresh token, not the old one");
+  assert.equal(window.LivekitClient.Room.instances.length, 2);
+  assert.ok(!buttons(doc).includes("T:reconnect"), "the button goes away once connected");
+  assert.ok(!doc.body.textContent.includes("T:err_audio"));
 });

@@ -42,6 +42,16 @@
     return "none";
   }
 
+  /**
+   * True when the server says this person leads but the token they joined with could not publish
+   * (they became the lead just before connecting). The microphone would be refused, so the app joins
+   * again with a fresh token. A token that can publish is short-lived on purpose, so a token is never
+   * kept and reused: every join and every rejoin asks the gateway for a new one.
+   */
+  function needsFreshToken(you, tokenCanPublish) {
+    return !!(you && you.is_lead && tokenCanPublish === false);
+  }
+
   /** Which message to show for a failed request. */
   function errorKey(status) {
     if (status === 0) return "err_network";
@@ -76,6 +86,7 @@
   const logic = {
     buttonsFor: buttonsFor,
     micPlan: micPlan,
+    needsFreshToken: needsFreshToken,
     errorKey: errorKey,
     fill: fill,
     hereNames: hereNames,
@@ -98,7 +109,8 @@
   let lang = "en";
   let rootEl = null;
   let pollTimer = null;
-  let current = null; // { id, room, state, micOn, view }
+  let current = null; // { id, room, state, micOn, view, tokenCanPublish, audioLost, joinedAt, rejoining }
+  const REJOIN_MIN_MS = 5000; // never rejoin more often than this, whatever the server says
 
   function T(key, values) {
     const table = (cfg.texts[lang] || cfg.texts.en);
@@ -403,6 +415,22 @@
     }
     renderHere();
     syncMic(state);
+    rejoinIfTokenTooWeak(state);
+  }
+
+  /** The server says "you lead" but the token held says "cannot publish": join again with a fresh one. */
+  function rejoinIfTokenTooWeak(state) {
+    if (!current || !current.room || current.rejoining) return;
+    if (!needsFreshToken(state.you, current.tokenCanPublish)) return;
+    const minMs = cfg.rejoinMinMs !== undefined ? cfg.rejoinMinMs : REJOIN_MIN_MS;
+    if (Date.now() - (current.joinedAt || 0) < minMs) return;
+    const id = current.id;
+    current.rejoining = true;
+    joinAudio(id).then(function () {
+      if (current && current.id === id) return syncMic(current.state);
+    }).finally(function () {
+      if (current) current.rejoining = false;
+    });
   }
 
   function renderButtons(state) {
@@ -450,11 +478,23 @@
 
   async function joinAudio(roomId) {
     const v = current.view;
+    // A fresh token every time, never one kept from before: the token that can publish lives two
+    // minutes, and a hand-over cannot reach a token that was already issued.
     const t = await api("/rooms/" + roomId + "/token", "POST");
     if (!t.ok) {
+      current.audioLost = true;
+      renderTap(null);
       sayError(t.status);
       return;
     }
+    if (current.room) {
+      const old = current.room;
+      current.room = null; // so the old connection's Disconnected event is not shown as a failure
+      try { await old.disconnect(); } catch (e) { /* already gone */ }
+    }
+    current.micOn = false;
+    current.tokenCanPublish = !!t.data.can_publish;
+    current.joinedAt = Date.now();
     try {
       const LK = await ensureLib();
       const room = new LK.Room({
@@ -470,15 +510,23 @@
         track.detach().forEach(function (node) { node.remove(); });
       });
       room.on(LK.RoomEvent.Disconnected, function () {
-        if (current && current.room === room) say(T("err_audio"), "error");
+        if (current && current.room === room) {
+          current.audioLost = true;
+          current.micOn = false;
+          renderTap(room);
+          say(T("err_audio"), "error");
+        }
       });
       room.on(LK.RoomEvent.AudioPlaybackStatusChanged, function () { renderTap(room); });
       await room.connect(t.data.url, t.data.token);
       current.room = room;
+      current.audioLost = false;
       try { await room.startAudio(); } catch (e) { /* the tap button below covers it */ }
       renderTap(room);
       say("");
     } catch (e) {
+      current.audioLost = true;
+      renderTap(null);
       say(T("err_audio"), "error");
     }
   }
@@ -488,7 +536,14 @@
     if (!current) return;
     const v = current.view;
     v.tap.innerHTML = "";
-    if (room && !room.canPlaybackAudio) {
+    if (current.audioLost) {
+      v.tap.appendChild(bigButton(T("reconnect"), async function (b) {
+        b.disabled = true;
+        say(T("connecting"));
+        await joinAudio(current.id);
+        if (current && current.room) await syncMic(current.state);
+      }, "primary"));
+    } else if (room && !room.canPlaybackAudio) {
       v.tap.appendChild(bigButton(T("tap_to_hear"), async function () {
         try { await room.startAudio(); } catch (e) { /* still blocked */ }
         renderTap(room);
