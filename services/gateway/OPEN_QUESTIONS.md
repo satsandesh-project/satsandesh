@@ -669,7 +669,8 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     the exposure and does not remove it. RTMPS or WHIP would, and both need a trusted certificate,
     which waits on the domain decision.
     Smaller, all true now: (a) the secret is in the callback's query string, so it appears in the
-    gateway's own access log and is one value for both hooks; (b) Caddy must never route
+    gateway's own access log (measured on a real stack: 8 access-log lines carried it) and is
+    one value for both hooks; (b) Caddy must never route
     `/sessions/ingest*`, which the module cannot enforce, so the infrastructure phase has to add the
     refusal and a check for it in `infra/caddy/tls_check.py`; (c) that nginx-rtmp keeps the
     callback's query string and posts the stream name in a field called `name` is from its

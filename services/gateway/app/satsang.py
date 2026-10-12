@@ -274,7 +274,9 @@ def schedule_session(
                 raise
             continue  # the generator repeated itself: draw again
         db.commit()
-        logger.info("satsang %s scheduled by %s", row.id, caller.id)
+        # The session id only. A user id is a bearer credential in legacy auth mode, so it is
+        # not written to a log that other people can read.
+        logger.info("satsang %s scheduled", row.id)
         return _created(db, row, key)
     raise HTTPException(status_code=503, detail="Could not make a unique stream key")
 
@@ -390,7 +392,7 @@ def rotate_stream_key(
                 raise
             continue
         db.commit()
-        logger.info("satsang %s re-keyed by %s", row.id, caller.id)
+        logger.info("satsang %s re-keyed", row.id)
         return _created(db, row, key)
     raise HTTPException(status_code=503, detail="Could not make a unique stream key")
 
