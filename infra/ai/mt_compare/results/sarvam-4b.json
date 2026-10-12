@@ -1,0 +1,112 @@
+{
+ "candidate": "sarvam-4b",
+ "threads": 8,
+ "rows": [
+  {
+   "id": 1,
+   "en": "There is a bhajan at the temple today at seven in the evening.",
+   "t_en_s": 7.91,
+   "hi": "आज शाम सात बजे मंदिर में भजन है।",
+   "t_hi_s": 13.79,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 2,
+   "en": "Please everyone, be on time.",
+   "t_en_s": 5.05,
+   "hi": "कृपया सभी लोग समय पर आएं।",
+   "t_hi_s": 9.68,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 3,
+   "en": "There will be no Satsang tomorrow morning.",
+   "t_en_s": 5.66,
+   "hi": "कल सुबह सत्संग नहीं होगा।",
+   "t_hi_s": 10.23,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 4,
+   "en": "I am not feeling well today and will not be coming.",
+   "t_en_s": 6.92,
+   "hi": "आज मेरी तबीयत ठीक नहीं है और मैं नहीं आ पाऊंगा।",
+   "t_hi_s": 13.61,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 5,
+   "en": "May the Lord's blessings be with you all.",
+   "t_en_s": 6.39,
+   "hi": "प्रभु का आशीर्वाद आप सभी के साथ रहे।",
+   "t_hi_s": 12.19,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 6,
+   "en": "Get your own plate to hold the offering in.",
+   "t_en_s": 6.19,
+   "hi": "प्रसाद रखने के लिए अपनी खुद की थाली लें।",
+   "t_hi_s": 12.43,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 7,
+   "en": "There is a big puja on Sunday in the temple, you must attend.",
+   "t_en_s": 7.74,
+   "hi": "रविवार को मंदिर में एक बड़ी पूजा है, तुम्हें ज़रूर जाना चाहिए।",
+   "t_hi_s": 15.16,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 8,
+   "en": "Mom, have you eaten yet?",
+   "t_en_s": 4.92,
+   "hi": "माँ, क्या तुमने अभी तक खाना खाया है?",
+   "t_hi_s": 10.44,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 9,
+   "en": "My grandson has done exceedingly well in his exams and has secured a place in the top percentile.",
+   "t_en_s": 8.49,
+   "hi": "मेरे पोते ने अपनी परीक्षा में बहुत अच्छा प्रदर्शन किया है और उसने टॉप पर्सेंटाइल में जगह बनाई है।",
+   "t_hi_s": 18.81,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 10,
+   "en": "The event was postponed the next week due to rain.",
+   "t_en_s": 6.54,
+   "hi": "बारिश के कारण कार्यक्रम अगले सप्ताह के लिए स्थगित कर दिया गया था।",
+   "t_hi_s": 13.7,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 11,
+   "en": "The doctor said to take the medicines twice a day.",
+   "t_en_s": 6.58,
+   "hi": "डॉक्टर ने कहा कि दवा दिन में दो बार लेना है।",
+   "t_hi_s": 13.13,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 12,
+   "en": "You sang very well. Your voice is very melodious.",
+   "t_en_s": 7.11,
+   "hi": "तुमने बहुत अच्छा गाया। तुम्हारी आवाज़ बहुत मधुर है।",
+   "t_hi_s": 13.7,
+   "hi_route": "via English (te->en + en->hi)"
+  },
+  {
+   "id": 13,
+   "en": "There is a bhajan at the temple at seven o'clock this evening. Please everyone come on time. Bring your own bowl to receive the prasadam.",
+   "t_en_s": 15.36,
+   "hi": "आज शाम सात बजे मंदिर में भजन है। कृपया सभी समय पर आएं। प्रसाद लेने के लिए अपना कटोरा स्वयं लाएँ।",
+   "t_hi_s": 28.01,
+   "hi_route": "via English (te->en + en->hi)"
+  }
+ ],
+ "load_s": 110.55,
+ "dtype": "torch.bfloat16"
+}
