@@ -1,11 +1,15 @@
 """add sessions: the scheduled satsang broadcast
 
 Revision ID: bc32cd718b80
-Revises: f1a7c3e92b05
+Revises: a7c2e91f4b36
 Create Date: 2026-10-12 00:00:00.000000
 
 The table holds only a SHA-256 of the stream key, never the key (see app/db/satsang.py), and a
 partial unique index lets at most one session be live at a time.
+
+Follows a7c2e91f4b36 (bhajan rooms), which merged first: both were written against
+f1a7c3e92b05, and two migrations with one parent are two heads, so the second to merge takes
+the first as its parent.
 """
 
 from collections.abc import Sequence
@@ -16,7 +20,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "bc32cd718b80"
-down_revision: str | Sequence[str] | None = "f1a7c3e92b05"
+down_revision: str | Sequence[str] | None = "a7c2e91f4b36"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
