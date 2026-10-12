@@ -245,6 +245,17 @@ class Settings(BaseSettings):
     # the test database.
     STARTUP_RECOVERY_ENABLED: bool = True
 
+    # Bhajan rooms (app/rooms.py, app/livekit.py): the audio runs on LiveKit, the gateway decides
+    # who may speak. All four unset = rooms work without audio (the token route answers 503).
+    # The key and secret are LiveKit's API pair (the same as its own `keys:` setting); the secret
+    # is never logged or returned. PUBLIC_URL is what the APP connects to (wss://..., normally
+    # through Caddy's /livekit path); INTERNAL_URL is how the GATEWAY reaches LiveKit's admin API
+    # on the compose network (http://livekit:7880).
+    LIVEKIT_API_KEY: str | None = None
+    LIVEKIT_API_SECRET: str | None = None
+    LIVEKIT_PUBLIC_URL: str | None = None
+    LIVEKIT_INTERNAL_URL: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

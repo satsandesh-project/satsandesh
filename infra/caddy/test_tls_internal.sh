@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Real test of the opt-in HTTPS mode (docker-compose.tls.yml): the REAL Caddy binary, the REAL
-# Caddyfile, the REAL entrypoint script, three fake upstreams that answer with their own name.
+# Caddyfile, the REAL entrypoint script, four fake upstreams that answer with their own name.
 # Run on any host with docker:   infra/caddy/test_tls_internal.sh
 # It binds no host ports and touches no running stack (own network, own containers).
 #
@@ -15,7 +15,7 @@ SUBNET=172.29.77.0/24
 CADDY_IP=172.29.77.10
 ROOT="$(mktemp)"
 BAD="$(mktemp)"
-cleanup() { docker rm -f ${N}-gw ${N}-el ${N}-ai ${N}-caddy ${N}-caddy2 >/dev/null 2>&1; docker network rm "$N" >/dev/null 2>&1; rm -f "$ROOT" "$BAD"; }
+cleanup() { docker rm -f ${N}-gw ${N}-el ${N}-ai ${N}-lk ${N}-caddy ${N}-caddy2 >/dev/null 2>&1; docker network rm "$N" >/dev/null 2>&1; rm -f "$ROOT" "$BAD"; }
 trap cleanup EXIT
 status=0
 
@@ -36,6 +36,7 @@ h.HTTPServer(('0.0.0.0', $2), H).serve_forever()" >/dev/null
 fake gateway 8000 GATEWAY gw
 fake elder-app 3000 ELDER-APP el
 fake ai-services 8001 AI-STUB ai
+fake livekit 7880 LIVEKIT lk
 
 run_case() {  # run_case <label> <TLS_HOST> [extra docker args...]
   local label=$1 host=$2; shift 2

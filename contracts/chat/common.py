@@ -3,7 +3,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
 
-CONTRACTS_VERSION = "0.9.0"
+CONTRACTS_VERSION = "0.10.0"
 """
 Schema-shape version for everything in contracts/chat/. Mirrors
 contracts/ai/common.CONTRACTS_VERSION in purpose — bump when any field is
@@ -13,8 +13,11 @@ independent counters: contracts/ai/ and contracts/chat/ are owned and
 evolved on different schedules by different people, so pinning them to one
 number would force one package's churn onto the other for no shared benefit.
 
-0.8.0 -> 0.9.0 (Week 9): new payloads for the scheduled satsang broadcast
+0.9.0 -> 0.10.0 (Week 9): new payloads for the scheduled satsang broadcast
 (contracts/chat/satsang.py, `/sessions*`). No existing payload changed.
+
+0.8.0 -> 0.9.0 (Week 9): new payloads for bhajan rooms with floor control
+(contracts/chat/rooms.py, `/rooms/*`). No existing payload changed.
 
 0.7.0 -> 0.8.0 (Week 9): new payloads for the single-use sign-in claim
 (contracts/chat/claims.py, `POST /onboarding/claim`; contracts/chat/admin_org.py
