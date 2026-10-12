@@ -655,9 +655,11 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     `participant_joined` webhook (`app/livekit_webhook.py`, `/internal/livekit/webhook`, signed with
     the API secret, reachable only inside the compose network) makes the gateway set the joiner's
     permission to what the database says, under the room lock. It also lets a lead who joined muted
-    speak. **Not shown against a real LiveKit:** the route is tested with signed events like
-    LiveKit's, but nobody has seen LiveKit itself send `participant_joined` to it, and the time
-    between a join and the permission change (audio could leak in that moment) is not measured.
+    speak. **Shown against a real LiveKit** (`infra/livekit/webhook_check.sh`): after a real WebRTC join
+    LiveKit sends `participant_joined` (a signalling-only join sends nothing), the gateway's own
+    signature check accepts its signature, and the event carries the room name and the person's
+    identity. **Not shown:** the whole chain end to end (the permission really changing on a live
+    session) and the time between a join and that change, during which audio could leak.
     If LiveKit cannot be reached the answer is a 502 and the person keeps what their token gave
     them, so the short token is still the first line of defence. Found by M2's review of #151.
     **Owner:** M1, to show it on a real LiveKit with real devices (deferred, see #36).
