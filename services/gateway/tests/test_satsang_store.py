@@ -198,6 +198,72 @@ def test_a_satsang_cancelled_after_its_reminder_went_out_is_ordinary(db_session)
     db_session.commit()  # no IntegrityError
 
 
+# --- which moves between statuses are legal ---------------------------------------------------------
+#
+# The CHECKs above hold a status and its timestamps CONSISTENT; they do not say which MOVE is
+# allowed. Every case below rewrites the timestamps to match its new status, so every CHECK is
+# satisfied and only the transition rule can object. Without that, `ended -> live` is one UPDATE
+# away: set status = 'live' and clear ended_at, and the row is perfectly consistent.
+
+_T0 = datetime(2026, 1, 1, tzinfo=UTC)
+_T1 = datetime(2026, 1, 2, tzinfo=UTC)
+
+# status -> the fields a CHECK-consistent row of that status has
+_AS = {
+    "scheduled": {"started_at": None, "ended_at": None},
+    "cancelled": {"started_at": None, "ended_at": None},
+    "live": {"started_at": _T0, "ended_at": None},
+    "ended": {"started_at": _T0, "ended_at": _T1},
+}
+
+LEGAL = [("scheduled", "live"), ("scheduled", "cancelled"), ("live", "ended")]
+ILLEGAL = [
+    ("ended", "live"),  # the one that must never happen: a finished satsang goes back on air
+    ("ended", "scheduled"),
+    ("ended", "cancelled"),
+    ("cancelled", "scheduled"),
+    ("cancelled", "live"),
+    ("cancelled", "ended"),
+    ("scheduled", "ended"),  # "ended" without ever having been live
+    ("live", "scheduled"),
+    ("live", "cancelled"),  # once on air it is ended, not cancelled
+]
+
+
+def _move(db_session, old: str, new: str) -> None:
+    row = _row(db_session, status=old, **_AS[old])
+    db_session.add(row)
+    db_session.commit()
+    row.status = new
+    for field, value in _AS[new].items():
+        setattr(row, field, value)
+
+
+@pytest.mark.parametrize("old, new", ILLEGAL)
+def test_an_illegal_status_move_is_refused_by_the_database(db_session, old, new) -> None:
+    with pytest.raises(IntegrityError, match="illegal satsang status transition"):
+        _move(db_session, old, new)
+        db_session.commit()
+    db_session.rollback()
+
+
+@pytest.mark.parametrize("old, new", LEGAL)
+def test_a_legal_status_move_is_accepted(db_session, old, new) -> None:
+    _move(db_session, old, new)
+    db_session.commit()  # no IntegrityError
+
+
+@pytest.mark.parametrize("status", sorted(SATSANG_STATUSES))
+def test_changing_something_other_than_the_status_is_never_a_transition(db_session, status) -> None:
+    """The reminder going out, or a retitle, on a row in ANY status must not trip the rule."""
+    row = _row(db_session, status=status, **_AS[status])
+    db_session.add(row)
+    db_session.commit()
+    row.reminder_sent_at = _now()
+    row.title = "Renamed"
+    db_session.commit()  # no IntegrityError
+
+
 # --- the rest of the shape --------------------------------------------------------------------------
 
 
@@ -257,3 +323,14 @@ def test_the_migration_created_every_constraint_and_index_the_model_declares(db_
         "uq_sessions_stream_key_sha256",
     }
     assert expected <= in_db, f"expected but absent from the database: {expected - in_db}"
+
+
+def test_the_migration_created_the_status_transition_trigger(db_session) -> None:
+    """A trigger is not a constraint, so the comparison above cannot see it."""
+    found = db_session.execute(
+        text(
+            "SELECT count(*) FROM pg_trigger WHERE tgrelid = 'sessions'::regclass "
+            "AND tgname = 'trg_sessions_status_transition' AND NOT tgisinternal"
+        )
+    ).scalar_one()
+    assert found == 1
