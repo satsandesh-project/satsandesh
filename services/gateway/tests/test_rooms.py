@@ -14,6 +14,9 @@ LiveKit calls are covered, separately, in tests/test_livekit.py. These tests aut
 signed tokens so the whole auth path is exercised.
 """
 
+import base64
+import hashlib
+import json
 import threading
 import uuid
 
@@ -607,3 +610,127 @@ def test_without_livekit_the_queue_still_works(client, w, room_id) -> None:
     _raise(client, room_id, w.anand)
     assert _next(client, room_id, w.anand).status_code == 200
     assert _lead_id(client, room_id, w.mod) == str(w.anand.id)
+
+
+# --- the join check (LiveKit's participant_joined webhook, app/livekit_webhook.py) ---------------
+
+WEBHOOK = "/internal/livekit/webhook"
+
+
+def _webhook(client, event: dict | bytes, *, secret=SECRET, issuer=API_KEY, sha=None, signed=True):
+    """POST an event the way LiveKit does: the body, and an Authorization JWT signed with the API
+    secret whose `sha256` claim is the base64 SHA-256 of the exact body."""
+    body = event if isinstance(event, bytes) else json.dumps(event).encode()
+    digest = sha or base64.b64encode(hashlib.sha256(body).digest()).decode()
+    headers = {"Content-Type": "application/webhook+json"}
+    if signed:
+        headers["Authorization"] = jwt.encode(
+            {"iss": issuer, "sha256": digest}, secret, algorithm="HS256"
+        )
+    return client.post(WEBHOOK, content=body, headers=headers)
+
+
+def _joined(room_id: str, person) -> dict:
+    return {
+        "event": "participant_joined",
+        "room": {"name": f"room-{room_id}"},
+        "participant": {"identity": str(person.id), "name": person.name},
+    }
+
+
+def test_a_person_who_led_and_rejoins_with_their_old_token_is_silenced(
+    client, w, room_id, lk
+) -> None:
+    _raise(client, room_id, w.anand)
+    _next(client, room_id, w.anand)  # Anand leads
+    _raise(client, room_id, w.bhavya)
+    _next(client, room_id, w.anand)  # hand-over: Bhavya leads, Anand is done
+    lk.calls.clear()
+
+    assert _webhook(client, _joined(room_id, w.anand)).status_code == 200  # Anand rejoins
+
+    assert lk.publishes() == [("set_can_publish", f"room-{room_id}", str(w.anand.id), False)]
+
+
+def test_a_listener_who_joins_is_set_to_cannot_publish(client, w, room_id, lk) -> None:
+    assert _webhook(client, _joined(room_id, w.chitra)).status_code == 200
+    assert lk.publishes() == [("set_can_publish", f"room-{room_id}", str(w.chitra.id), False)]
+
+
+def test_the_lead_who_joins_muted_is_allowed_to_speak(client, w, room_id, lk) -> None:
+    # Made the lead just before connecting: their token said canPublish false.
+    _raise(client, room_id, w.anand)
+    _next(client, room_id, w.anand)
+    lk.calls.clear()
+    assert _webhook(client, _joined(room_id, w.anand)).status_code == 200
+    assert lk.publishes() == [("set_can_publish", f"room-{room_id}", str(w.anand.id), True)]
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"event": "participant_left", "room": {"name": "ROOM"}, "participant": {"identity": "x"}},
+        {"event": "room_started", "room": {"name": "ROOM"}},
+        {"event": "participant_joined", "room": {"name": "room-not-one-of-ours"}, "participant": {"identity": "x"}},
+        {"event": "participant_joined", "room": {"name": "ROOM"}},
+    ],
+)
+def test_events_that_need_no_change_are_accepted_and_change_nothing(
+    client, w, room_id, lk, event
+) -> None:
+    event = json.loads(json.dumps(event).replace("ROOM", f"room-{room_id}"))
+    assert _webhook(client, event).status_code == 200
+    assert lk.publishes() == []
+
+
+def test_a_closed_room_is_left_alone(client, w, room_id, lk) -> None:
+    assert client.post(f"/rooms/{room_id}/close", headers=_as(w.mod)).status_code == 200
+    lk.calls.clear()
+    assert _webhook(client, _joined(room_id, w.anand)).status_code == 200
+    assert lk.publishes() == []
+
+
+def test_a_webhook_without_LiveKits_signature_is_refused(client, w, room_id, lk) -> None:
+    event = _joined(room_id, w.anand)
+    body = json.dumps(event).encode()
+    wrong_hash = base64.b64encode(hashlib.sha256(b"another body").digest()).decode()
+    cases = {
+        "no signature": _webhook(client, event, signed=False),
+        "another secret": _webhook(client, event, secret="another-secret-of-at-least-thirty-two-bytes"),
+        "another issuer": _webhook(client, event, issuer="not-our-key"),
+        "body does not match the signed hash": _webhook(client, body, sha=wrong_hash),
+    }
+    for name, resp in cases.items():
+        assert resp.status_code == 401, name
+    assert client.post(WEBHOOK, content=body, headers={"Authorization": "garbage"}).status_code == 401
+    assert lk.publishes() == []
+
+
+def test_a_malformed_signed_body_is_a_400(client, lk) -> None:
+    assert _webhook(client, b"not json").status_code == 400
+
+
+def test_when_livekit_cannot_be_told_the_check_is_a_502_and_nothing_is_kept(
+    client, w, room_id, lk
+) -> None:
+    lk.fail_on = {1}
+    assert _webhook(client, _joined(room_id, w.anand)).status_code == 502
+    # The room lock was released: a hand-over still works straight afterwards.
+    assert _raise(client, room_id, w.anand) is not None
+    assert _next(client, room_id, w.anand).status_code == 200
+
+
+def test_the_webhook_is_503_when_audio_is_not_set_up(client, monkeypatch) -> None:
+    settings = get_settings()
+    for name in ("LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"):
+        monkeypatch.setattr(settings, name, None)
+    assert client.post(WEBHOOK, content=b"{}").status_code == 503
+
+
+def test_the_webhook_is_not_a_public_route() -> None:
+    # Caddy forwards only the paths it lists; /internal/* is not one, so it cannot be reached from
+    # outside. If someone adds a route for it, this fails and they have to mean it.
+    from pathlib import Path
+
+    caddyfile = Path(__file__).resolve().parents[3] / "infra" / "caddy" / "Caddyfile"
+    assert "/internal" not in caddyfile.read_text(encoding="utf-8")

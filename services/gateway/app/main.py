@@ -21,6 +21,7 @@ from app.pipeline_watchdog import run_pipeline_watchdog_loop
 from app.push import router as push_router
 from app.recovery import recover_pending_fan_outs
 from app.retention import run_retention_sweep_loop
+from app.livekit_webhook import router as livekit_webhook_router
 from app.rooms import router as rooms_router
 from app.users import router as users_router
 from app.ws import router as ws_router
@@ -108,6 +109,7 @@ app.include_router(moderation_router)
 app.include_router(users_router)
 app.include_router(admin_org_router)
 app.include_router(rooms_router)
+app.include_router(livekit_webhook_router)
 
 
 @app.get("/health")
