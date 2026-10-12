@@ -117,19 +117,22 @@ def test_an_elder_listing_carries_no_key_no_speaker_id_and_no_bookkeeping(client
     assert listing.items[0].speaker_name
 
 
-def test_there_is_no_route_that_reads_a_key_back(client) -> None:
-    """By design: the real gateway stores only the SHA-256 and could not answer such a route."""
+def test_no_get_route_under_sessions_reads_a_key_back(client) -> None:
+    """By design: the real gateway stores only the SHA-256 and could not answer such a route.
+
+    Enumerated from the OpenAPI schema, so a GET added later is covered without anyone
+    remembering to come back here. **Not** from `app.routes`: in FastAPI 0.143 `include_router`
+    appends one opaque `_IncludedRouter` object rather than flattening the child routes, so every
+    router-mounted path is invisible there -- an earlier version of this test looked there, found
+    nothing, and would have passed while checking nothing. Hence the guard below."""
     made = _schedule(client)
-    paths = [getattr(r, "path", "") for r in mock_app.app.routes]
-    session_paths = [p for p in paths if p.startswith("/sessions")]
-    assert session_paths, "the satsang router is not mounted"
-    # The one key-bearing response is a POST (create / rotate); no GET anywhere returns it.
-    for route in mock_app.app.routes:
-        path = getattr(route, "path", "")
-        if path.startswith("/sessions") and "GET" in getattr(route, "methods", set()):
-            resp = client.get(path.replace("{session_id}", made.session.id), headers=MOD)
-            if resp.status_code == 200:
-                assert made.stream_key not in json.dumps(resp.json()), path
+    schema = mock_app.app.openapi()["paths"]
+    gets = sorted(p for p, ops in schema.items() if p.startswith("/sessions") and "get" in ops)
+    assert gets, "no GET found under /sessions: this test would be checking nothing"
+    for path in gets:
+        resp = client.get(path.replace("{session_id}", made.session.id), headers=MOD)
+        assert resp.status_code == 200, (path, resp.text)
+        assert made.stream_key not in json.dumps(resp.json()), path
 
 
 def test_rotating_the_key_gives_a_new_one_and_retires_the_old(client) -> None:
