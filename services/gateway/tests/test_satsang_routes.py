@@ -639,6 +639,8 @@ def test_the_key_is_never_written_to_the_log(
     assert made.stream_key not in logged and _hash(made.stream_key) not in logged
     assert "a-wrong-key-that-must-not-be-logged-either" not in logged
     assert HOOK_SECRET not in logged
+    # A user id is a bearer credential in legacy auth mode: the log names sessions, not people.
+    assert str(admin.id) not in logged and str(swami.id) not in logged
 
 
 def test_the_hook_response_carries_no_key(client, admin, swami, hook) -> None:
