@@ -91,13 +91,24 @@ addition to a working feature rather than a bet.
   without it, so that line survives untouched; the file has it exactly once, at line 1. A **Caddy restart
   is needed** for it to take effect, which is M1's stack and his go — the same lesson as `/moderation*`,
   which is still a 404 on staging for exactly this reason.
-- **A reminder with its own clock.** `app/jobs.py` has `register_handler`, but the queue has **no
-  future-due support** (no `due_at`, `run_after` or `available_at`). So the reminder stores its own
-  `due_at` on the `sessions` rows and needs a periodic sweep. `run_retention_sweep_loop`, started in
-  `app/main.py`'s `lifespan`, is the shape to copy.
-- **Two additive lines in `app/main.py`** (an `include_router` and one `create_task` for that sweep).
-  `main.py` is outside the files this feature owns, and I am flagging it rather than assuming: it is the
-  same one-line additive pattern every other router has used, but it is a shared file.
+- **The reminder rides the existing job queue** — no new sweep loop. *(Corrected 2026-10-12: an earlier
+  version of this file said the queue had "no future-due support". That was wrong. I had grepped
+  `app/jobs.py` for `due_at`, `run_after` and `available_at`; the mechanism exists under a different name,
+  in a different file.)* `jobs.next_attempt_at` is exactly a due time: `claim_next_job`
+  (`app/db/repository.py`) gates on `Job.next_attempt_at <= now` and orders by it, and the `Job` docstring
+  says a queued job whose `next_attempt_at` is still in the future is **deliberately not claimed**. So a
+  reminder is one job enqueued with `next_attempt_at = scheduled_start_at - 30 min`, which inherits the
+  queue's retries, backoff, dead-lettering and lease-based reclaim rather than re-implementing them.
+  - The one real gap: **`enqueue_job(...)` has no parameter to set it** (it relies on the column's
+    `server_default now()`), so this needs either one additive keyword argument there or setting the
+    column on the `Job` before flush. `repository.py` is a shared file — flagging, not assuming.
+  - **Design point for Week 10, not solved here:** if a session is rescheduled after its reminder job is
+    enqueued, that job is now due at the wrong time. Either re-enqueue on edit, or have the handler
+    re-read the session's current `scheduled_start_at` and re-enqueue itself. `reminder_sent_at` is what
+    makes either choice idempotent across a restart.
+- **One additive line in `app/main.py`** (`include_router`). `main.py` is outside the files this feature
+  owns, and I am flagging it rather than assuming: it is the same one-line additive pattern every other
+  router has used, but it is a shared file.
 - The HLS latency number from §2, measured, before W11's Q&A queue is designed on top of it.
 
 ## Not done in this phase
