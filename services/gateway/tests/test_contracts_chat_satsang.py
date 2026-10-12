@@ -11,7 +11,7 @@ every model in the module -- a new model added later is covered without anyone r
 """
 
 import inspect
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -46,7 +46,7 @@ _CREDENTIAL_FIELDS = frozenset({"stream_key", "stream_key_sha256", "ingest_url"}
 
 
 def _utc(offset_minutes: int = 60) -> datetime:
-    return datetime.now(timezone.utc) + timedelta(minutes=offset_minutes)
+    return datetime.now(UTC) + timedelta(minutes=offset_minutes)
 
 
 @pytest.mark.parametrize("filename,model_cls", MODELS_BY_FIXTURE.items())
@@ -116,10 +116,11 @@ def test_a_start_time_without_a_timezone_is_refused() -> None:
     """A satsang at "seven o'clock" in no particular zone is a reminder that fires in the wrong
     hour. The column is `timestamptz`, so a naive value would be silently assumed, not rejected --
     this is the first contract here to require awareness, deliberately."""
+    # The whole point of this test is a datetime with no zone, so DTZ001 is the subject here,
+    # not a defect.
+    naive = datetime(2026, 10, 15, 19, 0)  # noqa: DTZ001
     with pytest.raises(ValidationError):
-        SatsangSessionCreate(
-            title="t", speaker_user_id="u-1", scheduled_start_at=datetime(2026, 10, 15, 19, 0)
-        )
+        SatsangSessionCreate(title="t", speaker_user_id="u-1", scheduled_start_at=naive)
     aware = SatsangSessionCreate(
         title="t", speaker_user_id="u-1", scheduled_start_at=_utc()
     ).scheduled_start_at

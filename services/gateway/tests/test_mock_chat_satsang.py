@@ -11,7 +11,7 @@ not hand out is not in anything we hand out".
 """
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from contracts.chat.mock import app as mock_app
@@ -38,7 +38,7 @@ def client():
 
 
 def _in(minutes: int) -> str:
-    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
+    return (datetime.now(UTC) + timedelta(minutes=minutes)).isoformat()
 
 
 def _schedule(client, *, minutes: int = 10, headers=MOD, title="Thursday discourse"):
