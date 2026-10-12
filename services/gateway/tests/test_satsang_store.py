@@ -19,12 +19,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from app.db.satsang import SATSANG_STATUSES, SatsangSession
 from contracts.chat.satsang import SatsangStatus
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import User as DbUser
+from app.db.satsang import SATSANG_STATUSES, SatsangSession
 
 LONG_AGO = datetime(2026, 1, 1, tzinfo=UTC)
 LATER = datetime(2026, 1, 2, tzinfo=UTC)
