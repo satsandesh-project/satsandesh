@@ -64,10 +64,15 @@ not close it. Recorded as OPEN_QUESTIONS #36, with two smaller things true of th
 in the query string, so it appears in the gateway's own access log (whoever can read that log
 holds it), and it is one value shared by both hooks.
 
-Not verified, and to be verified when the media server exists: that nginx-rtmp keeps the query
-string of its configured callback URL, and the exact form fields it posts. This module reads the
-stream name from a form field called `name` (what nginx-rtmp posts) or from JSON `stream_key`
-(what the mock documents), and nothing else.
+**The stream is named by the session, never by the key.** Measured on a real nginx-rtmp (Debian's
+libnginx-mod-rtmp 1.2.2): it names the HLS playlist and every segment after the stream NAME, so a
+stream named by its key would put the key in every listener's URL. Its documented `on_publish`
+"rename" (a 3xx with a new name) did not rename those files, and a 3xx to a local `rtmp://` relay
+still wrote them under the key and logged the key at error level. So the speaker publishes to
+`rtmp://host/live/<session id>?key=<key>`: nginx-rtmp posts `name` (the session id) and `key` as
+separate form fields, at publish and at done, and keeps the callback URL's query string (the
+secret) -- all three measured. The hook looks the session up by id and checks the key against its
+stored hash; a key under another session's name, and the key used AS the name, are refused.
 
 Known limit, not decided here: when a speaker's connection drops, `on_publish_done` ends the
 satsang, and the key is then dead, so the speaker cannot resume. The same key publishing again
@@ -221,7 +226,11 @@ def _created(db: Session, row: SatsangSession, key: str) -> SatsangSessionCreate
     base = get_settings().SATSANG_INGEST_BASE_URL.rstrip("/")
     names = _names(db, {row.speaker_user_id})
     return SatsangSessionCreated(
-        session=_admin_view(row, names), stream_key=key, ingest_url=f"{base}/{key}"
+        session=_admin_view(row, names),
+        stream_key=key,
+        # Named by the SESSION, key as an argument: the RTMP server names the HLS files after
+        # the stream name, and those are in every listener's URL.
+        ingest_url=f"{base}/{row.id}?key={key}",
     )
 
 
@@ -411,10 +420,11 @@ def _check_hook_secret(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
-async def _read_stream_key(request: Request) -> str | None:
-    """The stream name from the body, reading at most _MAX_HOOK_BODY bytes. nginx-rtmp posts
-    `application/x-www-form-urlencoded` with the name in `name`; the mock documents JSON with
-    `stream_key`. Anything unreadable is simply "no key"."""
+async def _read_hook_fields(request: Request) -> tuple[str | None, str | None]:
+    """(stream name, key) from the body, reading at most _MAX_HOOK_BODY bytes. nginx-rtmp posts
+    `application/x-www-form-urlencoded` with `name` (the session id) and `key` (the argument from
+    the publish URL); the mock documents the same two fields as JSON. Anything unreadable is
+    simply "nothing", which the caller refuses."""
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > _MAX_HOOK_BODY:
         raise HTTPException(status_code=413, detail="Body too large")
@@ -424,27 +434,38 @@ async def _read_stream_key(request: Request) -> str | None:
         if len(body) > _MAX_HOOK_BODY:
             raise HTTPException(status_code=413, detail="Body too large")
     if not body:
-        return None
+        return None, None
     try:
         if request.headers.get("content-type", "").startswith("application/json"):
             data = json.loads(body)
-            raw = data.get("name") or data.get("stream_key") if isinstance(data, dict) else None
+            data = data if isinstance(data, dict) else {}
+            raw_name, raw_key = data.get("name"), data.get("key")
         else:
             fields = parse_qs(body.decode("utf-8", errors="replace"))
-            raw = (fields.get("name") or fields.get("stream_key") or [None])[0]
+            raw_name = (fields.get("name") or [None])[0]
+            raw_key = (fields.get("key") or [None])[0]
     except ValueError:
-        return None
+        return None, None
+    return _clean(raw_name), _clean(raw_key)
+
+
+def _clean(raw) -> str | None:
     if not isinstance(raw, str):
         return None
-    key = raw.strip()
-    return key if key and len(key) <= _MAX_KEY_LENGTH else None
+    value = raw.strip()
+    return value if value and len(value) <= _MAX_KEY_LENGTH else None
 
 
-def _by_key(db: Session, key: str | None) -> SatsangSession | None:
-    if not key:
+def _by_name_and_key(db: Session, name: str | None, key: str | None) -> SatsangSession | None:
+    """The session the stream NAME names, but only if the key is that session's. A wrong session,
+    a wrong key, the key used as the name: all simply "no such session". The comparison is of two
+    SHA-256 digests, in constant time."""
+    if not name or not key:
         return None
-    stmt = select(SatsangSession).where(SatsangSession.stream_key_sha256 == hash_stream_key(key))
-    return db.execute(stmt.with_for_update()).scalar_one_or_none()
+    row = _row_or_none(db, name, lock=True)
+    if row is None or not hmac.compare_digest(row.stream_key_sha256, hash_stream_key(key)):
+        return None
+    return row
 
 
 def _refuse(why: str) -> HTTPException:
@@ -453,10 +474,10 @@ def _refuse(why: str) -> HTTPException:
     return HTTPException(status_code=403, detail="Forbidden")
 
 
-def _on_publish(db: Session, key: str | None) -> JSONResponse:
-    row = _by_key(db, key)
+def _on_publish(db: Session, name: str | None, key: str | None) -> JSONResponse:
+    row = _by_name_and_key(db, name, key)
     if row is None:
-        raise _refuse("unknown or empty key")
+        raise _refuse("no session with that name and key")
     if row.status == "live":
         # A phone that dropped and reconnected asks again before the old connection's done-hook
         # has fired. Same speaker, same key: let it through and change nothing.
@@ -480,10 +501,10 @@ def _on_publish(db: Session, key: str | None) -> JSONResponse:
     return JSONResponse({"status": "live"})
 
 
-def _on_done(db: Session, key: str | None) -> JSONResponse:
-    row = _by_key(db, key)
+def _on_done(db: Session, name: str | None, key: str | None) -> JSONResponse:
+    row = _by_name_and_key(db, name, key)
     if row is None:
-        raise _refuse("end-of-stream for an unknown key")
+        raise _refuse("end-of-stream for no session with that name and key")
     if row.status != "live":
         raise HTTPException(status_code=409, detail=f"this satsang is {row.status}")
     row.status = "ended"
@@ -497,13 +518,13 @@ def _on_done(db: Session, key: str | None) -> JSONResponse:
 async def on_publish(request: Request, db: Session = Depends(get_db)) -> JSONResponse:
     """2xx lets the publisher in (and puts a scheduled satsang on the air); anything else drops it."""
     _check_hook_secret(request)
-    key = await _read_stream_key(request)
-    return await run_in_threadpool(_on_publish, db, key)
+    name, key = await _read_hook_fields(request)
+    return await run_in_threadpool(_on_publish, db, name, key)
 
 
 @router.post("/ingest/done")
 async def on_publish_done(request: Request, db: Session = Depends(get_db)) -> JSONResponse:
     """The publisher stopped: the satsang has ended."""
     _check_hook_secret(request)
-    key = await _read_stream_key(request)
-    return await run_in_threadpool(_on_done, db, key)
+    name, key = await _read_hook_fields(request)
+    return await run_in_threadpool(_on_done, db, name, key)
