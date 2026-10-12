@@ -315,7 +315,8 @@ run("a person made the lead just before connecting rejoins with a fresh token th
   const gw = new FakeGateway();
   gw.entries.push({ user_id: "me", state: "leading" }); // already the lead when the token is issued...
   gw.tokenCanPublish = false; // ...but the token (read without the lock) said "cannot publish"
-  const { doc, log, window } = await boot(gw, { rejoinMinMs: 0 });
+  // The screen waits this long after a join before it may rejoin; the test sets the token right after.
+  const { doc, log, window } = await boot(gw, { rejoinMinMs: 250 });
   await click(doc, "T:join");
   gw.tokenCanPublish = true; // what the gateway says when asked again
   await tick(300);
