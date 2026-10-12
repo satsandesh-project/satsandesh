@@ -44,7 +44,11 @@ def _in(minutes: int) -> str:
 def _schedule(client, *, minutes: int = 10, headers=MOD, title="Thursday discourse"):
     resp = client.post(
         "/sessions",
-        json={"title": title, "speaker_user_id": "user-swami-1", "scheduled_start_at": _in(minutes)},
+        json={
+            "title": title,
+            "speaker_user_id": "user-swami-1",
+            "scheduled_start_at": _in(minutes),
+        },
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
