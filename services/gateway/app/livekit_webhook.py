@@ -66,7 +66,9 @@ def _verify(authorization: str | None, body: bytes) -> None:
 
 def _on_join(db: Session, livekit_room: str, identity: str) -> None:
     """Set `identity`'s permission in `livekit_room` to what the database says it should be."""
-    found = db.execute(select(Room.id).where(Room.livekit_room == livekit_room)).scalar_one_or_none()
+    found = db.execute(
+        select(Room.id).where(Room.livekit_room == livekit_room)
+    ).scalar_one_or_none()
     if found is None:
         return  # not a room this gateway made
     room = lock_room(db, found)

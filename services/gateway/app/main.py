@@ -12,6 +12,7 @@ from app.circles import router as circles_router
 from app.config import get_settings
 from app.db.base import check_database_connection
 from app.jobs import run_worker_loop, worker_id
+from app.livekit_webhook import router as livekit_webhook_router
 from app.media import router as media_router
 from app.messages import router as messages_router
 from app.models import User
@@ -21,7 +22,6 @@ from app.pipeline_watchdog import run_pipeline_watchdog_loop
 from app.push import router as push_router
 from app.recovery import recover_pending_fan_outs
 from app.retention import run_retention_sweep_loop
-from app.livekit_webhook import router as livekit_webhook_router
 from app.rooms import router as rooms_router
 from app.users import router as users_router
 from app.ws import router as ws_router

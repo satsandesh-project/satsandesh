@@ -671,7 +671,11 @@ def test_the_lead_who_joins_muted_is_allowed_to_speak(client, w, room_id, lk) ->
     [
         {"event": "participant_left", "room": {"name": "ROOM"}, "participant": {"identity": "x"}},
         {"event": "room_started", "room": {"name": "ROOM"}},
-        {"event": "participant_joined", "room": {"name": "room-not-one-of-ours"}, "participant": {"identity": "x"}},
+        {
+            "event": "participant_joined",
+            "room": {"name": "room-not-one-of-ours"},
+            "participant": {"identity": "x"},
+        },
         {"event": "participant_joined", "room": {"name": "ROOM"}},
     ],
 )
@@ -696,13 +700,17 @@ def test_a_webhook_without_LiveKits_signature_is_refused(client, w, room_id, lk)
     wrong_hash = base64.b64encode(hashlib.sha256(b"another body").digest()).decode()
     cases = {
         "no signature": _webhook(client, event, signed=False),
-        "another secret": _webhook(client, event, secret="another-secret-of-at-least-thirty-two-bytes"),
+        "another secret": _webhook(
+            client, event, secret="another-secret-of-at-least-thirty-two-bytes"
+        ),
         "another issuer": _webhook(client, event, issuer="not-our-key"),
         "body does not match the signed hash": _webhook(client, body, sha=wrong_hash),
     }
     for name, resp in cases.items():
         assert resp.status_code == 401, name
-    assert client.post(WEBHOOK, content=body, headers={"Authorization": "garbage"}).status_code == 401
+    assert (
+        client.post(WEBHOOK, content=body, headers={"Authorization": "garbage"}).status_code == 401
+    )
     assert lk.publishes() == []
 
 
