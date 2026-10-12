@@ -1,0 +1,56 @@
+# LiveKit for bhajan rooms (services/gateway/app/rooms.py). Layer it on the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.livekit.yml up -d livekit gateway
+#
+# (add `-f docker-compose.tls.yml`, and `-f docker-compose.ai.yml` if you use them, exactly as
+# the running stack was started; infra/livekit/README.md has the checklist.)
+#
+# What it adds: one container, LiveKit's SFU. The gateway decides WHO may speak (a join token
+# carries canPublish only for the current lead, and a hand-over changes the connected person's
+# permission through LiveKit's admin API); LiveKit carries the audio. Nothing here lets anyone
+# but the gateway create a room: `room.auto_create: false`, and a join token is scoped to one room.
+#
+# Needs in .env (never commit the secret; generate a pair with
+# `docker run --rm livekit/livekit-server generate-keys`):
+#   LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+#   LIVEKIT_NODE_IP      the address phones can reach this host on (10.110.11.31 on staging):
+#                        the one LiveKit advertises for audio
+#   LIVEKIT_PUBLIC_URL   what the APP connects to, wss://<host>:<port>/livekit (Caddy forwards
+#                        /livekit to LiveKit's signalling port)
+#
+# Ports published on the host: 7881/tcp (audio over TCP when UDP is blocked) and 7882/udp (audio).
+# 7880 (signalling and the admin API) stays inside the compose network; only Caddy and the
+# gateway reach it. TURN over TLS on 443, for networks that block both, is not configured here:
+# it needs a certificate for a real name (see infra/livekit/README.md).
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.9
+    restart: unless-stopped
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET}"
+      LIVEKIT_CONFIG: |
+        port: 7880
+        rtc:
+          tcp_port: 7881
+          udp_port: 7882
+          use_external_ip: false
+          node_ip: ${LIVEKIT_NODE_IP:?set LIVEKIT_NODE_IP}
+        room:
+          auto_create: false
+    ports:
+      - "7881:7881"
+      - "7882:7882/udp"
+    expose:
+      - "7880"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7880/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  gateway:
+    environment:
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET}
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:?set LIVEKIT_PUBLIC_URL}
+      LIVEKIT_INTERNAL_URL: http://livekit:7880

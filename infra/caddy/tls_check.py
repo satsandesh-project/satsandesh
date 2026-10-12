@@ -72,6 +72,8 @@ try:
             "/moderation/messages/x/events",
             "/onboarding/qr/junk",
             "/push/subscribe",
+            "/rooms",
+            "/livekit/rtc",
             "/",
         )
     }
@@ -106,6 +108,12 @@ try:
         "/moderation/messages/<id>/events reaches the gateway",
         got["/moderation/messages/x/events"].startswith("GATEWAY"),
         got["/moderation/messages/x/events"],
+    )
+    check("/rooms reaches the gateway", got["/rooms"].startswith("GATEWAY"), got["/rooms"])
+    check(
+        "/livekit/rtc reaches LiveKit with the /livekit prefix stripped",
+        got["/livekit/rtc"] == "LIVEKIT /rtc",
+        got["/livekit/rtc"],
     )
     check("everything else reaches the elder-app", got["/"].startswith("ELDER-APP"), got["/"])
 except Exception as e:  # noqa: BLE001

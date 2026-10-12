@@ -86,6 +86,18 @@
 	handle /moderation* {
 		reverse_proxy gateway:8000
 	}
+	# Bhajan rooms (services/gateway/app/rooms.py): the gateway decides who may speak.
+	handle /rooms* {
+		reverse_proxy gateway:8000
+	}
+	# LiveKit's signalling (docker-compose.livekit.yml): the app connects to wss://<host>/livekit
+	# and LiveKit sees /rtc, so the prefix is stripped. WebSockets pass through reverse_proxy
+	# as they are. Only SIGNALLING comes this way; the audio itself goes straight to the host on
+	# 7882/udp (or 7881/tcp), which Caddy does not carry. With no LiveKit running, only this path
+	# answers 502; nothing else is affected.
+	handle_path /livekit/* {
+		reverse_proxy livekit:7880
+	}
 
 	# Everything else -- both the elder-app frontend itself (compiled
 	# pages, JS bundles) AND Reflex's own internal backend paths (/ping,
