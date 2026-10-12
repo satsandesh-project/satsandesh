@@ -33,7 +33,14 @@ def configured(monkeypatch):
 
 
 def _decode(token: str) -> dict:
-    return jwt.decode(token, SECRET, algorithms=["HS256"], options={"verify_aud": False})
+    # The signature is what is checked; a test that mints a token at a fixed past time must not
+    # fail because that time has since passed.
+    return jwt.decode(
+        token,
+        SECRET,
+        algorithms=["HS256"],
+        options={"verify_aud": False, "verify_exp": False, "verify_nbf": False},
+    )
 
 
 def _admin(handler) -> LiveKitAdmin:
@@ -191,6 +198,18 @@ def test_a_timeout_raises(configured) -> None:
 def test_create_room_failure_raises(configured) -> None:
     with pytest.raises(LiveKitUnavailable):
         _admin(lambda request: httpx.Response(500)).create_room("room-1")
+
+
+def test_delete_room_needs_the_create_grant_as_well_as_admin(configured) -> None:
+    # Found by infra/livekit/smoke.sh against a real LiveKit: with roomAdmin alone DeleteRoom is a 401.
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["claims"] = _decode(request.headers["authorization"].removeprefix("Bearer "))
+        return httpx.Response(200, json={})
+
+    _admin(handler).delete_room("room-1")
+    assert seen["claims"]["video"] == {"roomAdmin": True, "room": "room-1", "roomCreate": True}
 
 
 def test_delete_room_treats_already_gone_as_done(configured) -> None:

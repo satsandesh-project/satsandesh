@@ -171,7 +171,9 @@ class LiveKitAdmin:
 
     def delete_room(self, name: str) -> None:
         """Disconnect everyone and remove the room (a 404: it was already gone)."""
-        response = self._call("DeleteRoom", {"room": name}, room=name)
+        # DeleteRoom needs the same grant as CreateRoom (`roomCreate`); `roomAdmin` alone is a 401, which
+        # the smoke test against a real LiveKit found.
+        response = self._call("DeleteRoom", {"room": name}, room=name, create=True)
         if response.status_code not in (200, 404):
             raise LiveKitUnavailable(f"LiveKit DeleteRoom answered {response.status_code}")
 
