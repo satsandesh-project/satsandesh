@@ -457,7 +457,7 @@ def test_cancelling_and_ending_are_for_moderators_and_a_missing_id_is_404(
 def test_publishing_with_a_valid_key_puts_a_scheduled_satsang_on_the_air(
     client, db_session, admin, swami, hook
 ) -> None:
-    made = _schedule(client, admin, swami)
+    made = _schedule(client, admin, swami, minutes=5)  # inside the go-live window
     resp = _publish(client, made.stream_key)
     assert 200 <= resp.status_code < 300, resp.text
     row = _fresh(db_session, made.session.id)
