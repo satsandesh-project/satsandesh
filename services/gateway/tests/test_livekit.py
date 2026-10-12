@@ -101,6 +101,20 @@ def test_a_join_token_is_signed_scoped_and_expires(configured) -> None:
     }
 
 
+def test_a_token_that_can_publish_is_short_lived_and_a_listener_token_is_not(configured) -> None:
+    # A hand-over cannot reach a token already issued (LiveKit re-applies a token's grants on every
+    # join), so the token that can speak must expire quickly. Found by the review of #151.
+    issued = datetime(2026, 10, 1, 9, 30, tzinfo=UTC)
+    lead = _decode(
+        livekit.join_token(identity="u", name="n", room="r", can_publish=True, now=issued)[0]
+    )
+    listener = _decode(
+        livekit.join_token(identity="u", name="n", room="r", can_publish=False, now=issued)[0]
+    )
+    assert lead["exp"] - lead["nbf"] <= 120
+    assert listener["exp"] - listener["nbf"] == 3600
+
+
 def test_only_can_publish_changes_between_a_listener_and_a_lead(configured) -> None:
     listener = _decode(livekit.join_token(identity="u", name="n", room="r", can_publish=False)[0])
     lead = _decode(livekit.join_token(identity="u", name="n", room="r", can_publish=True)[0])

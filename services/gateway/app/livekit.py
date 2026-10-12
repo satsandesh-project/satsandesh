@@ -3,8 +3,14 @@ and the server calls it makes to change who may speak.
 
 Two things are enforced HERE, on the server, never by the app:
 
-1. **A join token carries `canPublish` only for the current lead.** Everyone else joins with
-   `canPublish: false`, so even a modified app cannot put its microphone on the air.
+1. **A join token carries `canPublish` only for the current lead, and that token is short-lived.**
+   Everyone else joins with `canPublish: false`, so even a modified app cannot put its microphone
+   on the air. A token's grants are applied again every time someone joins with it, and
+   `UpdateParticipant` changes only the live session, so a lead's old token would let them speak
+   again after their turn. The publish-capable token therefore lives `PUBLISH_TOKEN_TTL_S`
+   (two minutes); the listener token lives an hour. The app fetches a fresh token on every join.
+   What this does not close: someone can still rejoin inside those two minutes. The full answer
+   is checking on join (a LiveKit `participant_joined` webhook) -- OPEN_QUESTIONS #35.
 2. **When the lead changes, the gateway changes the connected person's permission** through
    LiveKit's admin API (`UpdateParticipant`), so a hand-over does not need anyone to rejoin: the
    old lead is silenced and the new one is allowed, by the server.
@@ -37,6 +43,10 @@ MAX_PARTICIPANTS = 50
 # A room nobody is in is closed by LiveKit after this long (seconds); the gateway's own
 # `rooms.status` is what says whether the room is open.
 EMPTY_TIMEOUT_S = 600
+# How long a token lives. A token that can publish is kept short, because LiveKit applies a token's
+# grants whenever someone joins with it, and a hand-over cannot reach a token already issued.
+PUBLISH_TOKEN_TTL_S = 120
+LISTEN_TOKEN_TTL_S = 3600
 _TWIRP = "/twirp/livekit.RoomService/"
 
 
@@ -63,15 +73,18 @@ def join_token(
     name: str,
     room: str,
     can_publish: bool,
-    ttl_seconds: int = 3600,
+    ttl_seconds: int | None = None,
     now: datetime | None = None,
 ) -> tuple[str, datetime]:
     """A token that lets `identity` join `room` -- and speak only if `can_publish`.
 
     `canPublishData` is always false: nobody in a room sends data messages, and a listener
-    must not be able to. The token is scoped to one room."""
+    must not be able to. The token is scoped to one room. Unless `ttl_seconds` says otherwise, a
+    token that can publish lasts `PUBLISH_TOKEN_TTL_S` and one that cannot lasts an hour."""
     settings = get_settings()
     issued = now or datetime.now(UTC)
+    if ttl_seconds is None:
+        ttl_seconds = PUBLISH_TOKEN_TTL_S if can_publish else LISTEN_TOKEN_TTL_S
     expires = issued + timedelta(seconds=ttl_seconds)
     token = _encode(
         {
