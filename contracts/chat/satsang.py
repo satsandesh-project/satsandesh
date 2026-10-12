@@ -138,7 +138,10 @@ class SatsangSessionCreated(VersionedModel):
 
     **The only payload anywhere that carries the stream key.** Shown once; it cannot be fetched
     again, because the gateway stores only its SHA-256. `ingest_url` is the whole
-    `rtmp://host:port/live/<key>` line, so the console can offer it as a QR for the speaker's
+    `rtmp://host:port/live/<session id>?key=<key>` line. The stream is NAMED by the session id
+    and the key travels only as an argument, because the RTMP server names the HLS playlist and
+    segments after the stream name: named by the key, every listener's URL would carry the
+    speaker's secret (seen on a real nginx-rtmp). The console can offer it as a QR for the speaker's
     broadcasting app instead of asking anyone to type a 43-character credential."""
 
     session: SatsangSessionOut
