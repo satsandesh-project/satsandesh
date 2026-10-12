@@ -5,7 +5,9 @@ Revises: a7c2e91f4b36
 Create Date: 2026-10-12 00:00:00.000000
 
 The table holds only a SHA-256 of the stream key, never the key (see app/db/satsang.py), and a
-partial unique index lets at most one session be live at a time.
+partial unique index lets at most one session be live at a time. A trigger refuses any status
+move other than scheduled->live, scheduled->cancelled and live->ended: the CHECKs hold a status
+and its timestamps consistent, but ended->live is consistent too once ended_at is cleared.
 
 Follows a7c2e91f4b36 (bhajan rooms), which merged first: both were written against
 f1a7c3e92b05, and two migrations with one parent are two heads, so the second to merge takes
@@ -79,8 +81,37 @@ def upgrade() -> None:
     op.create_index(
         "ix_sessions_status_scheduled_start_at", "sessions", ["status", "scheduled_start_at"]
     )
+    # Which MOVE is legal, not just which states are consistent. The WHEN clause means a change to
+    # the reminder or the title is never a transition.
+    op.execute(
+        """
+        CREATE FUNCTION sessions_check_status_transition() RETURNS trigger AS $$
+        BEGIN
+            IF NOT (
+                (OLD.status = 'scheduled' AND NEW.status IN ('live', 'cancelled'))
+                OR (OLD.status = 'live' AND NEW.status = 'ended')
+            ) THEN
+                RAISE EXCEPTION 'illegal satsang status transition: % -> %', OLD.status, NEW.status
+                    USING ERRCODE = 'check_violation';
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER trg_sessions_status_transition
+        BEFORE UPDATE OF status ON sessions
+        FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
+        EXECUTE FUNCTION sessions_check_status_transition()
+        """
+    )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_table("sessions")
+    op.drop_table("sessions")  # takes the trigger with it
+    op.execute(
+        "DROP FUNCTION sessions_check_status_transition()"
+    )  # the function stays unless dropped

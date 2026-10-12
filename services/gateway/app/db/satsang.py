@@ -17,6 +17,11 @@ Two rules the database holds on its own, so a bug in a route cannot break them:
   requests racing to go on air cannot both win. This is global because a satsang is one-to-many
   to the whole community (proposal section 7.4), not scoped to a circle.
 
+- **Only legal moves.** A trigger (created by the migration; SQLAlchemy cannot declare one)
+  refuses any change of `status` other than scheduled->live, scheduled->cancelled and
+  live->ended. The CHECKs hold a status and its timestamps consistent, but ended->live is
+  consistent too once `ended_at` is cleared, so something has to say which MOVES are allowed.
+
 What is NOT here, because it compares against the clock and a CHECK needs an immutable
 expression: "a session may go live from 60 minutes before its start". That is the gateway's rule,
 and its test.
