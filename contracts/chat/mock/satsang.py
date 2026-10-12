@@ -3,7 +3,8 @@
 before the real routes exist.
 
 Same rules as the real gateway, so a client written against this works there: only a moderator
-or admin schedules, cancels and rotates a key; **at most one session is live at a time**; a
+or admin schedules, cancels and ends; the speaker or a moderator may re-key, and anyone else is
+told the session does not exist; **at most one session is live at a time**; a
 session may go live from 60 minutes before its start and at any time after (a late speaker is
 still giving that satsang); and an elder never receives the stream key, the speaker's internal
 id, or our bookkeeping.
@@ -170,17 +171,44 @@ def cancel_session(
     return _admin_view(row)
 
 
+@router.post("/{session_id}/end", response_model=SatsangSessionOut)
+def end_session(
+    session_id: str,
+    x_mock_role: str | None = Header(default=None),
+) -> SatsangSessionOut:
+    """A moderator ends a live satsang by hand: the speaker's phone died and the end-of-stream hook
+    never came, or someone has to be cut off. Only from `live`; one that never went on the air is
+    cancelled, not ended."""
+    _require_moderator(x_mock_role)
+    row = _row(session_id)
+    if row["status"] is not SatsangStatus.LIVE:
+        raise HTTPException(
+            status_code=409, detail=f"a {row['status'].value} satsang cannot be ended"
+        )
+    row["status"] = SatsangStatus.ENDED
+    row["ended_at"] = datetime.now(timezone.utc)
+    return _admin_view(row)
+
+
 @router.post("/{session_id}/key", response_model=SatsangSessionCreated)
 def rotate_stream_key(
     session_id: str,
+    x_mock_user_id: str = Header(default="mock-user-1"),
     x_mock_role: str | None = Header(default=None),
 ) -> SatsangSessionCreated:
-    """A new key, shown once. The old one stops working immediately -- which is the point: it is
-    how a leaked key is dealt with, and the only way to recover one nobody wrote down."""
-    _require_moderator(x_mock_role)
-    row = _row(session_id)
-    if row["status"] in (SatsangStatus.ENDED, SatsangStatus.CANCELLED):
-        raise HTTPException(status_code=409, detail=f"a {row['status'].value} satsang needs no key")
+    """A new key, shown once; the old one stops working at once. That is how a leaked key is dealt
+    with, and the only way to recover one nobody wrote down. Open to the satsang's speaker and to a
+    moderator; anyone else gets the 404 a missing session gets, body and all (a 403 would confirm
+    that a guessable id is real). Not while live: the running stream's end-of-stream hook would then
+    carry a key nobody recognises."""
+    row = _sessions.get(session_id)
+    is_moderator = (x_mock_role or "").lower() in _MOD_ROLES
+    if row is None or not (is_moderator or row["speaker_user_id"] == x_mock_user_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row["status"] is not SatsangStatus.SCHEDULED:
+        raise HTTPException(
+            status_code=409, detail=f"a {row['status'].value} satsang cannot be re-keyed"
+        )
     row["stream_key"] = secrets.token_urlsafe(STREAM_KEY_BYTES)
     return _created(row)
 
