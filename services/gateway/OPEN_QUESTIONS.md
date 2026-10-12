@@ -647,3 +647,12 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     because browsers cannot set headers on a handshake), so it can appear in proxy and access
     logs; a short-lived ticket exchanged over HTTP first would avoid that. An unknown `sub`
     is a 401 and is not provisioned, which is the intended change from the stub.
+
+35. **A bhajan-room lead can rejoin as a speaker for up to two minutes after their turn.** A token's
+    `canPublish` is applied again whenever someone joins with it, and the hand-over's
+    `UpdateParticipant` changes only the live session, so the publish-capable token is kept to two
+    minutes (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`) and the listener token to an hour. That
+    shrinks the window; it does not close it. Closing it needs a check on join: a LiveKit
+    `participant_joined` webhook that silences anyone who is not the current lead. Not built.
+    Found by M2's review of #151, who showed it on a real LiveKit. **Owner:** M1 (webhook route
+    and the gateway side), before bhajan rooms are used outside a demo.

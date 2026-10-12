@@ -477,6 +477,11 @@ def test_a_listener_token_cannot_publish_and_a_lead_token_can(client, w, room_id
     assert _claims(listener.token)["video"]["canPublish"] is False
     assert _claims(waiting.token)["video"]["canPublish"] is False
     assert _claims(lead.token)["video"]["canPublish"] is True
+    # The lead's token is short-lived: a hand-over cannot reach a token already issued, and
+    # LiveKit re-applies its grants on every join (review of #151).
+    lead_claims = _claims(lead.token)
+    assert lead_claims["exp"] - lead_claims["nbf"] <= 120
+    assert _claims(listener.token)["exp"] - _claims(listener.token)["nbf"] == 3600
 
 
 def test_a_token_is_scoped_to_one_room_one_person_and_cannot_send_data(
