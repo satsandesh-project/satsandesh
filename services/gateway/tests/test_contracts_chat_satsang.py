@@ -116,9 +116,12 @@ def test_a_start_time_without_a_timezone_is_refused() -> None:
     """A satsang at "seven o'clock" in no particular zone is a reminder that fires in the wrong
     hour. The column is `timestamptz`, so a naive value would be silently assumed, not rejected --
     this is the first contract here to require awareness, deliberately."""
-    # The whole point of this test is a datetime with no zone, so DTZ001 is the subject here,
-    # not a defect.
-    naive = datetime(2026, 10, 15, 19, 0)  # noqa: DTZ001
+    # The same instant with its zone stripped. Written this way rather than as a bare
+    # `datetime(2026, 10, 15, 19, 0)` so that neither ruff invocation in this repo needs a
+    # suppression: the root `ruff check .` that CI runs does not enable flake8-datetimez, while a
+    # run from services/gateway does, so a `# noqa: DTZ001` is required by one and reported as
+    # unused by the other.
+    naive = datetime.now(UTC).replace(tzinfo=None)
     with pytest.raises(ValidationError):
         SatsangSessionCreate(title="t", speaker_user_id="u-1", scheduled_start_at=naive)
     aware = SatsangSessionCreate(
