@@ -89,7 +89,7 @@ def test_an_elder_is_never_told_the_key_the_speakers_internal_id_or_our_bookkeep
 
 
 def test_the_elder_listing_holds_only_elder_facing_sessions() -> None:
-    """The list type is the public shape, so a widening of the admin shape cannot leak through it."""
+    """The list is typed to the public shape, so widening the admin shape cannot leak through."""
     assert SatsangSessionList.model_fields["items"].annotation == list[SatsangSessionPublic]
     assert SatsangSessionAdminList.model_fields["items"].annotation == list[SatsangSessionOut]
 
@@ -119,8 +119,8 @@ def test_a_start_time_without_a_timezone_is_refused() -> None:
     # The same instant with its zone stripped. Written this way rather than as a bare
     # `datetime(2026, 10, 15, 19, 0)` so that neither ruff invocation in this repo needs a
     # suppression: the root `ruff check .` that CI runs does not enable flake8-datetimez, while a
-    # run from services/gateway does, so a `# noqa: DTZ001` is required by one and reported as
-    # unused by the other.
+    # run from services/gateway does, so a per-line DTZ001 suppression is required by one and
+    # reported as unused by the other.
     naive = datetime.now(UTC).replace(tzinfo=None)
     with pytest.raises(ValidationError):
         SatsangSessionCreate(title="t", speaker_user_id="u-1", scheduled_start_at=naive)

@@ -180,9 +180,7 @@ def rotate_stream_key(
     _require_moderator(x_mock_role)
     row = _row(session_id)
     if row["status"] in (SatsangStatus.ENDED, SatsangStatus.CANCELLED):
-        raise HTTPException(
-            status_code=409, detail=f"a {row['status'].value} satsang needs no key"
-        )
+        raise HTTPException(status_code=409, detail=f"a {row['status'].value} satsang needs no key")
     row["stream_key"] = secrets.token_urlsafe(STREAM_KEY_BYTES)
     return _created(row)
 
