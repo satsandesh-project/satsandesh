@@ -14,7 +14,8 @@ Two things are faithful to the real server rather than convenient:
 - **Going live is not a user action.** `POST /sessions/ingest/publish` is the hook the RTMP
   server itself calls (nginx-rtmp's `on_publish`), carrying the stream NAME (the session id) and
   the key as a separate argument; `.../ingest/done` is `on_publish_done`. The stream is named by
-  the session, not the key, because nginx-rtmp names the HLS files after the stream name. The key is what authorises going on air, which is why it is a
+  the session, not the key, because nginx-rtmp names the HLS files after the stream name.
+  The key is what authorises going on air, which is why it is a
   credential. An app developer who needs a live session drives these two.
 - **The key is returned exactly once**, by create and by rotate. There is no route that reads
   it back, because the real gateway stores only its SHA-256 and could not answer one.
