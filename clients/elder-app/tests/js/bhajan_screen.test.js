@@ -242,6 +242,34 @@ run("a moderator sees skip buttons, can hand over, and closes the room after con
   assert.ok(gw.calls.includes("POST /rooms/r1/close"));
 });
 
+run("each skip button says whom it skips, and the moderator controls have a heading", async () => {
+  const gw = new FakeGateway();
+  gw.moderator = true;
+  gw.entries.push({ user_id: "anand", state: "leading" }, { user_id: "bhavya", state: "waiting" });
+  const { doc } = await boot(gw);
+  await click(doc, "T:join");
+  const skip = [...doc.querySelectorAll("button")].find((b) => b.textContent === "T:skip");
+  assert.ok(skip.getAttribute("aria-label").includes("T:skip_name"), skip.outerHTML);
+  assert.ok(doc.body.textContent.includes("T:moderator_controls"));
+});
+
+run("an ordinary member sees no moderator heading and no skip buttons", async () => {
+  const gw = new FakeGateway();
+  gw.entries.push({ user_id: "anand", state: "leading" }, { user_id: "bhavya", state: "waiting" });
+  const { doc } = await boot(gw);
+  await click(doc, "T:join");
+  assert.ok(!doc.body.textContent.includes("T:moderator_controls"));
+  assert.ok(!buttons(doc).includes("T:skip"));
+});
+
+run("who is singing is announced to a screen reader when it changes", async () => {
+  const gw = new FakeGateway();
+  const { doc } = await boot(gw);
+  await click(doc, "T:join");
+  const now = [...doc.querySelectorAll("[aria-live]")].filter((n) => n.getAttribute("aria-live") === "polite");
+  assert.ok(now.length >= 2, "both the 'singing now' line and the 'you are live' line are live regions");
+});
+
 run("closing is not sent if the moderator says no", async () => {
   const gw = new FakeGateway();
   gw.moderator = true;

@@ -348,6 +348,7 @@
     v.now = text("", { fontSize: "30px", fontWeight: "700", color: c.ink, margin: "14px 0 4px" });
     v.live = text("", { fontSize: "20px", fontWeight: "700", color: c.deep_green, margin: "4px 0" });
     v.live.setAttribute("aria-live", "polite");
+    v.now.setAttribute("aria-live", "polite"); // a screen reader says who is singing when it changes
     v.buttons = el("div");
     v.queueTitle = text(T("waiting_list"), { fontSize: "20px", fontWeight: "700", color: c.green_ink, margin: "16px 0 4px" });
     v.queue = el("div");
@@ -458,6 +459,8 @@
       row.appendChild(text(entry.position + ". " + entry.name));
       if (state.you.can_manage) {
         const skip = bigButton(T("skip"), function (b) { act("/queue/" + entry.user_id + "/skip", "POST", b); });
+        // Several "Skip" buttons in a row: say whom each one skips, for a screen reader.
+        skip.setAttribute("aria-label", T("skip_name", { name: entry.name }));
         skip.style.width = "auto";
         skip.style.minHeight = "48px";
         skip.style.fontSize = "18px";
@@ -466,6 +469,7 @@
       v.queue.appendChild(row);
     });
     if (state.you.can_manage) {
+      v.manage.appendChild(text(T("moderator_controls"), { fontSize: "20px", fontWeight: "700", color: cfg.colors.green_ink, margin: "20px 0 6px" }));
       v.manage.appendChild(
         bigButton(T("close_room"), function (b) {
           if (window.confirm(T("confirm_close"))) act("/close", "POST", b).then(showList);

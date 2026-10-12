@@ -42,6 +42,11 @@ def test_the_place_in_line_keeps_its_number_slot_in_both_languages() -> None:
         assert "{n}" in page.TEXTS[lang]["your_place"]
 
 
+def test_the_skip_label_keeps_its_name_slot_in_both_languages() -> None:
+    for lang in ("en", "te"):
+        assert "{name}" in page.TEXTS[lang]["skip_name"]
+
+
 def test_the_boot_script_carries_the_gateway_the_colours_and_the_words() -> None:
     js = page.boot_js()
     config = json.loads(js[js.index("const config = ") + len("const config = ") : js.index(";\n")])
