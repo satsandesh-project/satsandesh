@@ -12,8 +12,10 @@ id, or our bookkeeping.
 Two things are faithful to the real server rather than convenient:
 
 - **Going live is not a user action.** `POST /sessions/ingest/publish` is the hook the RTMP
-  server itself calls (nginx-rtmp's `on_publish`), carrying the stream key; `.../ingest/done`
-  is `on_publish_done`. The key is what authorises going on air, which is why it is a
+  server itself calls (nginx-rtmp's `on_publish`), carrying the stream NAME (the session id) and
+  the key as a separate argument; `.../ingest/done` is `on_publish_done`. The stream is named by
+  the session, not the key, because nginx-rtmp names the HLS files after the stream name.
+  The key is what authorises going on air, which is why it is a
   credential. An app developer who needs a live session drives these two.
 - **The key is returned exactly once**, by create and by rotate. There is no route that reads
   it back, because the real gateway stores only its SHA-256 and could not answer one.
@@ -109,7 +111,7 @@ def _created(row: dict) -> SatsangSessionCreated:
     return SatsangSessionCreated(
         session=_admin_view(row),
         stream_key=row["stream_key"],
-        ingest_url=f"{MOCK_INGEST_BASE}/{row['stream_key']}",
+        ingest_url=f"{MOCK_INGEST_BASE}/{row['id']}?key={row['stream_key']}",
     )
 
 
@@ -216,21 +218,24 @@ def rotate_stream_key(
 # --- the ingest hooks: what the RTMP server calls, not what a person taps ----------------------
 
 
-def _by_key(stream_key: str) -> dict:
-    row = next((r for r in _sessions.values() if r["stream_key"] == stream_key), None)
-    # 403 and not 404: a wrong key must not reveal whether some session has it.
-    if row is None:
+def _by_name_and_key(name: str, key: str) -> dict:
+    """The stream NAME is the session id and the key comes as a separate argument -- what
+    nginx-rtmp actually sends for rtmp://host/live/<session id>?key=<key>."""
+    row = _sessions.get(name)
+    # 403 and not 404, and the same 403 for a wrong session or a wrong key: a caller must not learn
+    # whether some session exists, or which half of the pair was wrong.
+    if row is None or not key or not secrets.compare_digest(row["stream_key"], key):
         raise HTTPException(status_code=403, detail="unknown stream key")
     return row
 
 
 @router.post("/ingest/publish", response_model=SatsangSessionOut)
-def on_publish(stream_key: str = Body(..., embed=True)) -> SatsangSessionOut:
+def on_publish(name: str = Body(...), key: str = Body(...)) -> SatsangSessionOut:
     """nginx-rtmp's `on_publish`: a valid key has started pushing audio, so that session is live.
 
     Refuses if another satsang is already live (the real gateway has a partial unique index for
     this), or if the session is not `scheduled`, or if it is more than an hour early."""
-    row = _by_key(stream_key)
+    row = _by_name_and_key(name, key)
     if row["status"] is not SatsangStatus.SCHEDULED:
         raise HTTPException(status_code=409, detail=f"this satsang is {row['status'].value}")
     if any(r["status"] is SatsangStatus.LIVE for r in _sessions.values()):
@@ -244,9 +249,9 @@ def on_publish(stream_key: str = Body(..., embed=True)) -> SatsangSessionOut:
 
 
 @router.post("/ingest/done", response_model=SatsangSessionOut)
-def on_publish_done(stream_key: str = Body(..., embed=True)) -> SatsangSessionOut:
+def on_publish_done(name: str = Body(...), key: str = Body(...)) -> SatsangSessionOut:
     """nginx-rtmp's `on_publish_done`: the speaker stopped, so the session has ended."""
-    row = _by_key(stream_key)
+    row = _by_name_and_key(name, key)
     if row["status"] is not SatsangStatus.LIVE:
         raise HTTPException(status_code=409, detail=f"this satsang is {row['status'].value}")
     row["status"] = SatsangStatus.ENDED
