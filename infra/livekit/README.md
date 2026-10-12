@@ -6,3 +6,4 @@ LiveKit carries the audio of bhajan rooms; the gateway (`services/gateway/app/ro
 2. Add `-f docker-compose.livekit.yml` to the compose command the stack was started with, then `up -d livekit gateway`. Caddy must be restarted once to pick up the `/livekit` route.
 3. Open 7881/tcp and 7882/udp to phones. A network that blocks both needs TURN over TLS on 443, which needs a certificate for a real name; it is not configured here.
 4. `infra/livekit/smoke.sh` starts LiveKit alone and checks the gateway's tokens and admin calls against it.
+5. `infra/livekit/webhook_check.sh` checks, against a real LiveKit, that its `participant_joined` webhook reaches the gateway's signature check (the gateway then sets who may speak when someone joins).
