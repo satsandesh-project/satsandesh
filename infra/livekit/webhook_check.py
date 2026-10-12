@@ -4,6 +4,7 @@
 room name and the person's identity the gateway reads? It joins with LiveKit's official Python SDK,
 a real WebRTC connection: a signalling-only WebSocket join does NOT produce the event (tried).
 Checks the event and the signature only; it does not run the gateway or change any permission."""
+
 import asyncio
 import json
 import os
@@ -67,10 +68,25 @@ if joined:
         _verify(auth, body)
         check("the gateway's own signature check accepts LiveKit's real signature", True)
     except Exception as exc:  # noqa: BLE001
-        check("the gateway's own signature check accepts LiveKit's real signature", False, repr(exc))
+        check(
+            "the gateway's own signature check accepts LiveKit's real signature", False, repr(exc)
+        )
     event = json.loads(body)
-    check("the event names the room we created", (event.get("room") or {}).get("name") == "room-hook", event.get("room"))
-    check("the event names the person by identity", (event.get("participant") or {}).get("identity") == "u-hook", event.get("participant"))
-    print("fields in the event:", sorted(event), "| participant fields:", sorted(event.get("participant", {})))
+    check(
+        "the event names the room we created",
+        (event.get("room") or {}).get("name") == "room-hook",
+        event.get("room"),
+    )
+    check(
+        "the event names the person by identity",
+        (event.get("participant") or {}).get("identity") == "u-hook",
+        event.get("participant"),
+    )
+    print(
+        "fields in the event:",
+        sorted(event),
+        "| participant fields:",
+        sorted(event.get("participant", {})),
+    )
 print("ALL PASSED" if not failed else f"{failed} FAILED")
 sys.exit(1 if failed else 0)
