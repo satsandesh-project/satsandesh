@@ -149,10 +149,39 @@ def test_rotating_the_key_gives_a_new_one_and_retires_the_old(client) -> None:
     assert _publish(client, rotated.stream_key).status_code == 200
 
 
-def test_only_a_moderator_rotates_or_cancels(client) -> None:
+def test_only_a_moderator_cancels_or_ends(client) -> None:
     made = _schedule(client)
-    assert client.post(f"/sessions/{made.session.id}/key", headers=ELDER).status_code == 403
     assert client.post(f"/sessions/{made.session.id}/cancel", headers=ELDER).status_code == 403
+    assert client.post(f"/sessions/{made.session.id}/end", headers=ELDER).status_code == 403
+
+
+def test_the_speaker_or_a_moderator_may_rekey_and_anyone_else_is_told_it_does_not_exist(
+    client,
+) -> None:
+    """404, not 403, matching the real gateway (and app/media.py for held audio): a 403 would
+    confirm that a guessable id is a real satsang. Indistinguishable from a missing one, body too."""
+    made = _schedule(client)
+    speaker = {"X-Mock-User-Id": "user-swami-1"}
+    assert client.post(f"/sessions/{made.session.id}/key", headers=speaker).status_code == 200
+    assert client.post(f"/sessions/{made.session.id}/key", headers=MOD).status_code == 200
+    stranger = client.post(f"/sessions/{made.session.id}/key", headers=ELDER)
+    missing = client.post("/sessions/no-such-session/key", headers=ELDER)
+    assert stranger.status_code == missing.status_code == 404
+    assert stranger.json() == missing.json()
+
+
+def test_a_live_satsang_cannot_be_rekeyed_and_a_moderator_can_end_it(client) -> None:
+    made = _schedule(client)
+    _publish(client, made.stream_key)
+    assert client.post(f"/sessions/{made.session.id}/key", headers=MOD).status_code == 409
+    ended = SatsangSessionOut.model_validate(
+        client.post(f"/sessions/{made.session.id}/end", headers=MOD).json()
+    )
+    assert ended.status is SatsangStatus.ENDED and ended.ended_at is not None
+    # ended -> ended, and a satsang that never went on the air, cannot be ended
+    assert client.post(f"/sessions/{made.session.id}/end", headers=MOD).status_code == 409
+    never_live = _schedule(client, title="never live")
+    assert client.post(f"/sessions/{never_live.session.id}/end", headers=MOD).status_code == 409
 
 
 # --- going live ---------------------------------------------------------------------------------
