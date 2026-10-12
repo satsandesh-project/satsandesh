@@ -47,7 +47,9 @@ class QueueState(str, Enum):
     WAITING = "waiting"  # hand raised, not yet their turn
     LEADING = "leading"  # the one live microphone
     DONE = "done"  # had a turn, or left
-    REMOVED = "removed"  # skipped by a moderator
+    # Skipped by a moderator. This means "not this turn": the person may raise their hand again at
+    # once. It is not a ban for the evening; that would need a separate rule.
+    REMOVED = "removed"
 
 
 class RoomPerson(VersionedModel):
@@ -130,8 +132,13 @@ class RoomTokenOut(VersionedModel):
     """Response for `POST /rooms/{id}/token`: what the app needs to join the audio room.
 
     `can_publish` is true only if the caller is the current lead when the token is issued. The
-    gateway also changes a connected person's permission when the lead changes, so the app does
-    not need a new token for a handoff; it only needs one to (re)join."""
+    gateway also changes a connected person's permission when the lead changes, so a hand-over
+    needs no new token for someone who stays connected.
+
+    **Fetch a new token on every join and every rejoin; never keep or reuse one.** LiveKit applies
+    a token's permissions again whenever someone joins with it, and the hand-over cannot reach a
+    token already issued, so a token that can publish is short-lived (about two minutes) and a
+    listener's lasts an hour. Check `expires_at`."""
 
     token: str
     url: str  # the LiveKit signalling URL the app connects to (wss://...)
