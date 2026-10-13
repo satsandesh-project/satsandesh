@@ -1,7 +1,8 @@
-"""Typed chat messages for a reader of another language (elder_app.py, the chat script).
+"""Typed chat messages for a reader of another language, and audio fetching (elder_app.py, the chat
+script).
 
-The behaviour lives in JavaScript and is checked in tests/js/chat_text.test.js under Node with
-jsdom; this renders the page script into a file and runs it, and is skipped when node or jsdom is
+The behaviour lives in JavaScript and is checked in tests/js/chat_text.test.js and
+tests/js/chat_audio.test.js under Node with jsdom; this renders the page script into a file and runs it, and is skipped when node or jsdom is
 not installed (as the bhajan rooms tests are). The plain Python checks below always run.
 """
 
@@ -64,7 +65,13 @@ def _jsdom_dir() -> Path | None:
     return None
 
 
-def test_typed_messages_show_the_translation_and_the_original_in_jsdom(tmp_path) -> None:
+def test_the_audio_is_fetched_a_few_at_a_time() -> None:
+    js = _render_chat_js()
+    assert "const MAX_AUDIO_FETCHES = 3;" in js
+    assert "withAudioSlot(() => fetchAudioBlob(id))" in js
+
+
+def test_typed_messages_and_audio_fetching_work_in_jsdom(tmp_path) -> None:
     node = shutil.which("node")
     modules = _jsdom_dir()
     if not node or not modules:
@@ -72,7 +79,7 @@ def test_typed_messages_show_the_translation_and_the_original_in_jsdom(tmp_path)
     chat_js = tmp_path / "chat.js"
     chat_js.write_text(_render_chat_js(), encoding="utf-8")
     result = subprocess.run(
-        [node, "--test", str(JS_TESTS / "chat_text.test.js")],
+        [node, "--test", str(JS_TESTS / "chat_text.test.js"), str(JS_TESTS / "chat_audio.test.js")],
         env={**os.environ, "CHAT_JS": str(chat_js), "NODE_PATH": str(modules)},
         capture_output=True,
         text=True,
