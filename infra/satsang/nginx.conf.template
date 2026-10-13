@@ -33,11 +33,13 @@ rtmp {
             hls_cleanup on;
             # THE latency/robustness tradeoff. A player starts about three fragments behind the
             # live edge, so the delay is roughly 3 x fragment + encode + buffering: with 4 s,
-            # 12-15 s. The proposal accepts 10-20 s for a discourse. A 1-second fragment would cut
-            # that to ~4 s but make a phone on 3G fetch one segment per second, each with its own
-            # round trip, and one slow response stalls the player: it would not survive 3G.
-            # 4 s keeps the request rate low and gives a segment room to arrive late. The 32 s
-            # playlist is 8 fragments: a listener who stalls up to ~20 s can still catch up.
+            # 12-15 s. The proposal accepts 10-20 s for a discourse. A 1-second fragment cuts that
+            # to ~4-5 s but asks the phone for one segment per second, each with its own round
+            # trip. Measured (one listener, a shaped link with no loss and no jitter, NOT a radio):
+            # at 400 kbit/s and 300 ms RTT 1 s fragments held with 0.6 s to spare; at 128 kbit/s and
+            # 600 ms RTT they stalled 7 times in 2 minutes. 4 s never stalled (worst margin 2.6 s).
+            # Real 3G has loss, so the 1 s margin is the thinner one. The 32 s playlist is 8
+            # fragments: a listener who stalls up to ~20 s can still catch up without a reload.
             hls_fragment @HLS_FRAGMENT@;
             hls_playlist_length @HLS_PLAYLIST@;
         }
