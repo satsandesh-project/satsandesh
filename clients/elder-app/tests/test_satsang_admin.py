@@ -602,6 +602,34 @@ def test_scheduling_success_opens_the_secret_panel_names_the_satsang_and_reloads
     assert s.notice_is_error is False and "Thursday discourse" in s.notice
 
 
+@pytest.mark.parametrize("first", ["schedule", "key", "action", "copy"])
+def test_the_message_for_what_you_just_did_survives_the_reload_that_follows_it(first):
+    """Found in the browser, not by the per-handler tests: scheduling says 'copy the address now'
+    and then reloads the list, and a successful reload used to wipe that sentence."""
+    s = SatsangAdminState()
+    if first == "schedule":
+        s.after_schedule(ok({"id": SID, "title": "Thursday"}, 201))
+    elif first == "key":
+        s.after_key(ok({"id": SID, "title": "Thursday"}))
+    elif first == "action":
+        s.acting = "end"
+        s.after_action(ok({"id": SID}))
+    else:
+        s.after_copy(ok())
+    said = s.notice
+    assert said and not s.notice_is_error
+    s.after_load(ok([row()]))
+    assert s.notice == said
+
+
+def test_a_successful_reload_does_clear_an_earlier_error():
+    s = SatsangAdminState()
+    s.after_load(failed(500))
+    assert s.notice_is_error is True
+    s.after_load(ok([row()]))
+    assert s.notice == "" and s.notice_is_error is False
+
+
 def test_scheduling_failure_says_what_to_fix_and_opens_nothing():
     s = SatsangAdminState()
     s.after_schedule(failed(0, "invalid:speaker"))

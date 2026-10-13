@@ -488,7 +488,10 @@ class SatsangAdminState(rx.State):
         r = _decode(result)
         if r["ok"]:
             self.upcoming, self.past = shape_sessions(r["data"])
-            self._say("")
+            # A reload usually follows something the person just did, and its message ("Scheduled
+            # ... copy the address now") must stay. Only an earlier problem is cleared: it is over.
+            if self.notice_is_error:
+                self._say("")
             return None
         self._say(describe_failure("load", r), error=True)
         if r["status"] == 401:
