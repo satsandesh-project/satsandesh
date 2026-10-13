@@ -285,10 +285,12 @@
     summary.textContent = T("start_title");
     details.appendChild(summary);
 
-    const title = el("input", { width: "100%", minHeight: "56px", fontSize: "20px", padding: "0 14px", margin: "10px 0", borderRadius: "12px", border: "1px solid " + c.warm_border, boxSizing: "border-box" });
+    // A field's edge must be seen against the cream: warm_border on cream is 1.2:1, muted_ink is 5.4:1.
+    const field = { width: "100%", minHeight: "56px", fontSize: "20px", borderRadius: "12px", border: "2px solid " + c.muted_ink, background: c.card_cream, color: c.ink, boxSizing: "border-box" };
+    const title = el("input", Object.assign({}, field, { padding: "0 14px", margin: "10px 0" }));
     title.placeholder = T("room_name");
     title.setAttribute("aria-label", T("room_name"));
-    const circle = el("select", { width: "100%", minHeight: "56px", fontSize: "20px", margin: "6px 0", borderRadius: "12px", boxSizing: "border-box" });
+    const circle = el("select", Object.assign({}, field, { margin: "6px 0" }));
     circle.setAttribute("aria-label", T("circle"));
     details.appendChild(title);
     details.appendChild(circle);
@@ -587,8 +589,19 @@
 
   // ---- start -------------------------------------------------------------------------------------
 
+  /** A clear focus ring for keyboard use: the browser's default is weak on cream. */
+  function addFocusStyle() {
+    const style = document.createElement("style");
+    style.id = "bhajan-focus-style";
+    style.textContent =
+      "#bhajan-root button:focus-visible, #bhajan-root input:focus-visible, #bhajan-root select:focus-visible, #bhajan-root summary:focus-visible" +
+      " { outline: 4px solid " + cfg.colors.deep_green + "; outline-offset: 3px; }";
+    document.head.appendChild(style);
+  }
+
   function start(config) {
     cfg = config;
+    addFocusStyle();
     lang = chosenLanguage();
     rootEl = document.getElementById("bhajan-root");
     if (!rootEl) return;

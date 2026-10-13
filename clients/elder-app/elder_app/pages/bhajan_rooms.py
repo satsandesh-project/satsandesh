@@ -170,6 +170,9 @@ def bhajan_rooms_page() -> rx.Component:
             "background": COLOR["cream_canvas"],
             "font_family": FONT_LATIN,
             "color": COLOR["ink"],
+            # The page paints its own cream and ink; without this a dark-mode phone turns the native
+            # fields and drop-downs dark on cream (the console's browser pass found the same).
+            "color_scheme": "light",
         },
     )
 
