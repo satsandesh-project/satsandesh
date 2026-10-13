@@ -10,6 +10,7 @@ esac
 sed -e "s|@HOOK_SECRET@|$SATSANG_HOOK_SECRET|g" \
     -e "s|@HLS_FRAGMENT@|${SATSANG_HLS_FRAGMENT:-4s}|" \
     -e "s|@HLS_PLAYLIST@|${SATSANG_HLS_PLAYLIST:-32s}|" \
+    -e "s|@DROP_IDLE@|${SATSANG_DROP_IDLE_PUBLISHER:-30s}|" \
     /etc/nginx/satsang.conf.template > /tmp/satsang.conf
 chmod 600 /tmp/satsang.conf
 nginx -t -c /tmp/satsang.conf >/dev/null

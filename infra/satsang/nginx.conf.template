@@ -16,6 +16,13 @@ rtmp {
             live on;
             record off;
             deny play all;          # the only way to hear it is the HLS below
+            # A publisher that goes silent WITHOUT closing its connection (a phone leaving coverage)
+            # is otherwise kept forever: measured, the session stayed `live` for the whole 2 minutes
+            # it was watched, and only one session can be live at a time, so it would block the next
+            # satsang. A phone's encoder sends audio continuously, so 30 s of nothing is a dead link.
+            # Dropping it fires the done hook, and a satsang that has ended stays ended
+            # (services/gateway/OPEN_QUESTIONS.md #36 says what that costs a speaker who comes back).
+            drop_idle_publisher @DROP_IDLE@;
             notify_method post;
             # Both go through the local proxy below, which adds the shared secret and finds the
             # gateway by name at request time. Nothing secret sits in these two lines.
