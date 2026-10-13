@@ -119,9 +119,15 @@ def test_the_colours_the_screen_uses_are_readable_against_each_other() -> None:
     for fg, bg in text_pairs:
         assert _contrast(COLOR[fg], COLOR[bg]) >= 4.5, (fg, bg)
     assert _contrast("#8A3E0F", "#FBEFE6") >= 4.5  # the danger button's text
-    for edge, ground in [("muted_ink", "card_cream"), ("muted_ink", "cream_canvas"), ("deep_green", "cream_canvas")]:
+    for edge, ground in [
+        ("muted_ink", "card_cream"),
+        ("muted_ink", "cream_canvas"),
+        ("deep_green", "cream_canvas"),
+    ]:
         assert _contrast(COLOR[edge], COLOR[ground]) >= 3.0, (edge, ground)
-    assert _contrast(COLOR["warm_border"], COLOR["cream_canvas"]) < 3.0  # why it must not be a field edge
+    assert (
+        _contrast(COLOR["warm_border"], COLOR["cream_canvas"]) < 3.0
+    )  # why it must not be a field edge
 
 
 def test_fields_do_not_use_the_pale_border_and_the_page_asks_for_light_controls() -> None:
