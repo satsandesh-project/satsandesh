@@ -1,0 +1,111 @@
+{
+ "candidate": "madlad-3b",
+ "threads": 8,
+ "rows": [
+  {
+   "id": 1,
+   "en": "It's seven o'clock in the evening today.",
+   "t_en_s": 4.22,
+   "hi": " इस दिन सुबह7बजे से शाम7बजे तक मेला लगता है।",
+   "t_hi_s": 6.51,
+   "hi_route": "direct"
+  },
+  {
+   "id": 2,
+   "en": "Please everyone come on time.",
+   "t_en_s": 2.46,
+   "hi": "कृपया सभी समय पर आओ.",
+   "t_hi_s": 3.15,
+   "hi_route": "direct"
+  },
+  {
+   "id": 3,
+   "en": "There's no party tomorrow morning.",
+   "t_en_s": 3.59,
+   "hi": "कल सुबह कोई सभा नहीं होगी.",
+   "t_hi_s": 2.55,
+   "hi_route": "direct"
+  },
+  {
+   "id": 4,
+   "en": "I'm not in good health today, I can't come.",
+   "t_en_s": 4.94,
+   "hi": "मैं आज स्वस्थ नहीं हूँ, मैं नहीं आ सकता.",
+   "t_hi_s": 3.99,
+   "hi_route": "direct"
+  },
+  {
+   "id": 5,
+   "en": "May God bless you all.",
+   "t_en_s": 2.51,
+   "hi": "आप सभी पर ईश्वर की कृपा हो।",
+   "t_hi_s": 3.73,
+   "hi_route": "direct"
+  },
+  {
+   "id": 6,
+   "en": "Bring your own bowl to take the offering.",
+   "t_en_s": 3.69,
+   "hi": "अपने स्वयं के बर्तन लेकर आओ।",
+   "t_hi_s": 3.25,
+   "hi_route": "direct"
+  },
+  {
+   "id": 7,
+   "en": "On Sunday there is a big puja in the temple, you must come.",
+   "t_en_s": 5.22,
+   "hi": "रविवार को मंदिर में बड़ी पूजा होती है, आप अवश्य आएं।",
+   "t_hi_s": 4.89,
+   "hi_route": "direct"
+  },
+  {
+   "id": 8,
+   "en": "Mom, have you eaten?",
+   "t_en_s": 2.56,
+   "hi": "माँ, आप खाना खाया है?",
+   "t_hi_s": 3.22,
+   "hi_route": "direct"
+  },
+  {
+   "id": 9,
+   "en": "Our grandson got good marks in the exams.",
+   "t_en_s": 3.97,
+   "hi": "हमारे पोते को परीक्षाओं में अच्छे अंक मिले हैं।",
+   "t_hi_s": 4.3,
+   "hi_route": "direct"
+  },
+  {
+   "id": 10,
+   "en": "The event was postponed until next week due to rain.",
+   "t_en_s": 4.67,
+   "hi": " इसका परिणाम यह हुआ कि अगले सत्र के लिए कार्यक्रम स्थगित कर दिया गया।",
+   "t_hi_s": 5.98,
+   "hi_route": "direct"
+  },
+  {
+   "id": 11,
+   "en": "The doctor told me to take these drugs twice a day.",
+   "t_en_s": 4.62,
+   "hi": "डॉक्टर ने कहा कि इस दवा को दिन में दो बार लें।",
+   "t_hi_s": 5.21,
+   "hi_route": "direct"
+  },
+  {
+   "id": 12,
+   "en": "How well you sing! Your voice is so sweet.",
+   "t_en_s": 3.68,
+   "hi": "कितना अच्छा गाया! आपकी आवाज बहुत मीठा है.",
+   "t_hi_s": 5.15,
+   "hi_route": "direct"
+  },
+  {
+   "id": 13,
+   "en": "There is a bhajan in the temple at 7:00pm today. Please come on time and bring your own bowls to receive the blessings.",
+   "t_en_s": 10.76,
+   "hi": "आज शाम7बजे मंदिर में भजन है, कृपया सभी समय पर आएं, प्रसाद लेने के लिए अपना-अपना गिलास लेकर आएं।",
+   "t_hi_s": 10.83,
+   "hi_route": "direct"
+  }
+ ],
+ "load_s": 133.19
+}

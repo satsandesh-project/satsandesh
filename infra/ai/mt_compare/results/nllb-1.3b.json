@@ -1,0 +1,111 @@
+{
+ "candidate": "nllb-1.3b",
+ "threads": 8,
+ "rows": [
+  {
+   "id": 1,
+   "en": "There is a worship service in the temple today at 7 pm.",
+   "t_en_s": 3.56,
+   "hi": "आज शाम को सात बजे मंदिर में पूजा होगी।",
+   "t_hi_s": 2.77,
+   "hi_route": "direct"
+  },
+  {
+   "id": 2,
+   "en": "Please come on time.",
+   "t_en_s": 1.65,
+   "hi": "कृपया सभी समय पर आएं।",
+   "t_hi_s": 1.98,
+   "hi_route": "direct"
+  },
+  {
+   "id": 3,
+   "en": "There will be no satsang tomorrow morning.",
+   "t_en_s": 2.53,
+   "hi": "कल सुबह सत्संगा नहीं होगी।",
+   "t_hi_s": 2.44,
+   "hi_route": "direct"
+  },
+  {
+   "id": 4,
+   "en": "I'm not well today, I can't come.",
+   "t_en_s": 3.86,
+   "hi": "मैं आज बीमार हूँ, मैं नहीं आ सकता।",
+   "t_hi_s": 2.95,
+   "hi_route": "direct"
+  },
+  {
+   "id": 5,
+   "en": "Grace be with you all. Amen.",
+   "t_en_s": 2.39,
+   "hi": "आप पर ईश्वर की कृपा बनी रहे।",
+   "t_hi_s": 2.51,
+   "hi_route": "direct"
+  },
+  {
+   "id": 6,
+   "en": "Bring your own bowl to take the offering.",
+   "t_en_s": 2.88,
+   "hi": "प्रसाद लेने के लिए अपना खुद का कटोरा लाओ।",
+   "t_hi_s": 3.6,
+   "hi_route": "direct"
+  },
+  {
+   "id": 7,
+   "en": "There will be a big worship service in the church on Sunday, be sure to come.",
+   "t_en_s": 3.35,
+   "hi": "रविवार को मस्जिद में बड़ी पूजा होगी, आप ज़रूर आएं।",
+   "t_hi_s": 3.4,
+   "hi_route": "direct"
+  },
+  {
+   "id": 8,
+   "en": "Mom, did you have lunch?",
+   "t_en_s": 1.51,
+   "hi": "माँ, क्या तुमने खाना खाया है?",
+   "t_hi_s": 1.77,
+   "hi_route": "direct"
+  },
+  {
+   "id": 9,
+   "en": "Our grandson got good marks in the exams.",
+   "t_en_s": 2.4,
+   "hi": "हमारे पोते को परीक्षा में अच्छे अंक मिले हैं।",
+   "t_hi_s": 2.41,
+   "hi_route": "direct"
+  },
+  {
+   "id": 10,
+   "en": "The event was postponed to next week due to rain.",
+   "t_en_s": 2.7,
+   "hi": "बारिश के कारण कार्यक्रम को अगले सप्ताह के लिए स्थगित कर दिया गया है।",
+   "t_hi_s": 3.1,
+   "hi_route": "direct"
+  },
+  {
+   "id": 11,
+   "en": "The doctor said that these medicines should be administered twice a day.",
+   "t_en_s": 3.06,
+   "hi": "डॉक्टर ने कहा कि इन दवाओं को दिन में दो बार लेना चाहिए।",
+   "t_hi_s": 3.03,
+   "hi_route": "direct"
+  },
+  {
+   "id": 12,
+   "en": "How well you sing! Your voice is so sweet.",
+   "t_en_s": 2.33,
+   "hi": "कितनी अच्छी तरह से गाती हो! तुम्हारी आवाज़ बहुत मधुर है।",
+   "t_hi_s": 2.7,
+   "hi_route": "direct"
+  },
+  {
+   "id": 13,
+   "en": "At seven o'clock in the evening there is a worship service in the temple. Please come on time and bring your own bowl for the offering.",
+   "t_en_s": 5.88,
+   "hi": "आज शाम को सात बजे मंदिर में पूजा है, कृपया सभी समय पर आएं और प्रसाद लेने के लिए अपना कटोरा लाएं।",
+   "t_hi_s": 5.52,
+   "hi_route": "direct"
+  }
+ ],
+ "load_s": 66.87
+}
