@@ -2,8 +2,9 @@
 script).
 
 The behaviour lives in JavaScript and is checked in tests/js/chat_text.test.js and
-tests/js/chat_audio.test.js under Node with jsdom; this renders the page script into a file and runs it, and is skipped when node or jsdom is
-not installed (as the bhajan rooms tests are). The plain Python checks below always run.
+tests/js/chat_audio.test.js under Node with jsdom; this renders the page script into a file and
+runs it, and is skipped when node or jsdom is not installed (as the bhajan rooms tests are). The
+plain Python checks below always run.
 """
 
 import json
