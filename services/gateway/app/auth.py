@@ -71,12 +71,22 @@ def user_from_token(token: str | None, db: Session) -> User:
     # has to happen before the retry can run any query at all.
     try:
         get_or_create_user(
-            db, user_id=parsed, name="Test Elder", preferred_language="te", role="elder"
+            db,
+            user_id=parsed,
+            name="Test Elder",
+            preferred_language="te",
+            role="elder",
+            commit_new=True,
         )
     except OperationalError:
         db.rollback()
         get_or_create_user(
-            db, user_id=parsed, name="Test Elder", preferred_language="te", role="elder"
+            db,
+            user_id=parsed,
+            name="Test Elder",
+            preferred_language="te",
+            role="elder",
+            commit_new=True,
         )
     return User(id=token, name="Test Elder", preferred_language="te", role="elder")
 
