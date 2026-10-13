@@ -694,3 +694,14 @@ the server for its DB-backed tests (the local Python lacks
   have run, end to end (#102, 2026-10-04):** MT and render work and a note became the
   right renderings for its readers. The weak link turned out to be the real ASR on Telugu
   (wrong script, wrong meaning, erratic latency), which is M3's and is recorded on #98.
+
+## Week 9 -- a test that introspected the wrong thing almost passed while checking nothing
+
+- The satsang contract's mock test enumerated routes from `app.routes` to prove no GET returns
+  the stream key. In FastAPI 0.143 `include_router` appends one opaque `_IncludedRouter` object
+  instead of flattening child routes, so **every router-mounted path is invisible there**: the
+  filter found zero paths. It failed only because I had asserted the list was non-empty first.
+  Without that one guard it would have iterated nothing and reported green. Rewritten to
+  enumerate `app.openapi()["paths"]`, which does see all six, with the guard kept.
+- The lesson is the guard, not the framework: a test that searches for something bad must first
+  prove it is searching somewhere.
