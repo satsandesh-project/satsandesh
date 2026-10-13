@@ -307,3 +307,303 @@ def test_cli_requires_lang_and_rejects_unknown_engine(tmp_path: Path) -> None:
         ac.main([str(tmp_path / "a.wav")])
     with pytest.raises(SystemExit):
         ac.main([str(tmp_path / "a.wav"), "--lang", "te", "--engines", "whisper-medium"])
+
+
+# ---- WER / CER evaluation (references.csv) -------------------------------------------
+
+TE2 = "నమస్కారం ఎలా ఉన్నారు"  # 3 words
+HI_DANDA = "नमस्ते, आप कैसे हैं।"
+
+
+def test_edit_distance_basics() -> None:
+    assert ac.edit_distance(list("abc"), list("abc")) == 0
+    assert ac.edit_distance(list("abc"), list("abd")) == 1  # substitution
+    assert ac.edit_distance(list("abc"), list("ac")) == 1  # deletion
+    assert ac.edit_distance(list("ac"), list("abc")) == 1  # insertion
+    assert ac.edit_distance([], list("ab")) == 2 and ac.edit_distance(list("ab"), []) == 2
+
+
+def test_identical_text_scores_zero() -> None:
+    s = ac.score_pair(TE2, TE2, "te")
+    assert (s.status, s.wer, s.cer) == ("scored", 0.0, 0.0)
+
+
+def test_wer_counts_one_substitution_deletion_insertion() -> None:
+    ref = "a b c d"
+    assert ac.score_pair(ref, "a x c d", "en").wer == pytest.approx(0.25)
+    assert ac.score_pair(ref, "a b d", "en").wer == pytest.approx(0.25)
+    assert ac.score_pair(ref, "a b c d e", "en").wer == pytest.approx(0.25)
+
+
+def test_wer_on_telugu_words_and_cer_on_code_points() -> None:
+    hyp = "నమస్కారం ఎలా ఉన్నారా"  # last word differs by one code point (ు -> ా)
+    s = ac.score_pair(TE2, hyp, "te")
+    assert s.wer == pytest.approx(1 / 3)
+    assert s.cer == pytest.approx(1 / len(ac.normalize(TE2, "te")))  # code points, not graphemes
+    assert len(ac.normalize(TE2, "te")) == len(TE2)  # already NFC, no punctuation
+
+
+def test_empty_hypothesis_against_a_reference_is_total_error() -> None:
+    s = ac.score_pair(TE2, "", "te")
+    assert (s.status, s.wer, s.cer) == ("scored", 1.0, 1.0)
+
+
+def test_empty_reference_empty_hypothesis_is_non_speech_ok() -> None:
+    s = ac.score_pair("", "", "te")
+    assert (s.status, s.wer, s.cer) == ("non-speech ok", 0.0, 0.0)
+    assert ac.score_pair("", "  ,। ", "hi").status == "non-speech ok"  # only punctuation
+
+
+def test_empty_reference_non_empty_hypothesis_is_hallucinated() -> None:
+    s = ac.score_pair("", "thank you", "en")
+    assert s.status == "hallucinated" and s.hyp == "thank you" and s.wer is None
+
+
+def test_normalize_nfc_and_whitespace() -> None:
+    assert ac.normalize("é", "en") == "é"  # e + combining acute -> precomposed
+    assert ac.normalize("  a \t b\n\nc  ", "te") == "a b c"
+
+
+def test_normalize_strips_latin_danda_and_other_punctuation() -> None:
+    assert ac.normalize(HI_DANDA, "hi") == "नमस्ते आप कैसे हैं"
+    assert ac.normalize("నమస్కారం॥ ఎలా? ఉన్నారు!", "te") == TE2
+    assert ac.normalize("“हाँ”… ठीक—है", "hi") == "हाँ ठीक है"
+
+
+def test_normalize_casefolds_only_english() -> None:
+    assert ac.normalize("Hello WORLD", "en") == "hello world"
+    assert ac.normalize("Hello", "te") == "Hello"  # no case folding outside English
+    assert ac.normalize("Hello", "hi") == "Hello"
+
+
+def test_normalize_does_not_convert_digits() -> None:
+    assert ac.normalize("౧౨౩ 123 १२३", "te") == "౧౨౩ 123 १२३"
+    assert ac.score_pair("123", "౧౨౩", "te").wer == 1.0  # different strings, no conversion
+
+
+def test_punctuation_differences_do_not_cost_errors() -> None:
+    assert ac.score_pair(HI_DANDA, "नमस्ते आप कैसे हैं", "hi").wer == 0.0
+
+
+# ---- references.csv reader --------------------------------------------------------------
+
+
+def _csv(path: Path, text: str, bom: bool = False) -> Path:
+    path.write_bytes((b"\xef\xbb\xbf" if bom else b"") + text.encode("utf-8"))
+    return path
+
+
+CSV_TEXT = f"filename,language,reference_text\nte_short_1.wav,te,{TE2}\nhi_long_1.wav,hi,{HI}\n"
+
+
+@pytest.mark.parametrize("bom", [False, True])
+def test_read_refs_utf8_with_and_without_bom(tmp_path: Path, bom: bool) -> None:
+    refs, problem = ac.read_refs(_csv(tmp_path / "r.csv", CSV_TEXT, bom))
+    assert problem is None
+    assert refs["te_short_1.wav"] == ("te", TE2) and refs["hi_long_1.wav"] == ("hi", HI)
+
+
+def test_read_refs_missing_file_is_a_message_not_a_crash(tmp_path: Path) -> None:
+    refs, problem = ac.read_refs(tmp_path / "nope.csv")
+    assert refs == {} and problem is not None and "nope.csv" in problem
+
+
+def test_read_refs_missing_columns_is_a_clear_message(tmp_path: Path) -> None:
+    refs, problem = ac.read_refs(_csv(tmp_path / "r.csv", "file,text\na.wav,x\n"))
+    assert refs == {} and problem is not None and "reference_text" in problem
+
+
+def test_read_refs_keeps_quoted_commas(tmp_path: Path) -> None:
+    text = 'filename,language,reference_text\na.wav,hi,"नमस्ते, आप"\n'
+    refs, _ = ac.read_refs(_csv(tmp_path / "r.csv", text))
+    assert refs["a.wav"][1] == "नमस्ते, आप"
+
+
+# ---- clip classification --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "forced", "from_dir", "expected"),
+    [
+        ("te_short_1.wav", None, True, "te"),
+        ("hi_med_2.wav", None, True, "hi"),
+        ("en_long_3.wav", None, True, "en"),
+        ("ns_silence.wav", None, True, None),
+        ("ns_hi_noise.wav", None, True, "hi"),
+        ("mystery.wav", None, True, None),
+        ("mystery.wav", "te", True, "te"),  # --lang is the fallback for a directory
+        ("hi_med_2.wav", "te", True, "hi"),  # ...but the prefix wins there
+        ("hi_med_2.wav", "te", False, "te"),  # a single file: --lang wins, as before
+    ],
+)
+def test_clip_language(name: str, forced: str | None, from_dir: bool, expected: str | None) -> None:
+    assert ac.clip_language(name, forced, from_dir) == expected
+
+
+def test_length_bucket_and_condition_come_from_the_filename() -> None:
+    assert ac.length_bucket("te_short_01.wav") == "short"
+    assert ac.length_bucket("te_med_noisy_01.wav") == "med"
+    assert ac.length_bucket("te_long_01.wav") == "long"
+    assert ac.length_bucket("te_01.wav") == "other"
+    assert ac.condition("te_short_noisy_01.wav") == "noisy"
+    assert ac.condition("te_short_01.wav") == "clean"
+    assert ac.is_nonspeech("ns_room.wav") and not ac.is_nonspeech("te_ns.wav")
+
+
+# ---- summary --------------------------------------------------------------------------
+
+
+def _scored(file: str, engine: str, score: ac.Score, lang: str = "te", denoise=False) -> ac.Result:
+    r = ac.Result(file, engine, "-", denoise, 1.0, [0.1], False, [score.hyp], "v", lang=lang)
+    r.score = score
+    return r
+
+
+def _s(wer: float, cer: float) -> ac.Score:
+    return ac.Score("scored", wer, cer)
+
+
+def _table_rows(md: str) -> set[tuple[str, ...]]:
+    return {
+        tuple(c.strip() for c in line.strip("|").split("|"))
+        for line in md.splitlines()
+        if line.startswith("|")
+    }
+
+
+def test_summary_averages_per_engine_bucket_and_condition_and_excludes_no_ref() -> None:
+    results = [
+        _scored("te_short_1.wav", "e1", _s(0.2, 0.1)),
+        _scored("te_short_noisy_2.wav", "e1", _s(0.6, 0.3)),
+        _scored("te_long_3.wav", "e1", _s(1.0, 0.5)),
+        _scored("te_long_4.wav", "e1", ac.Score("no ref")),
+        _scored("ns_a.wav", "e1", ac.Score("non-speech ok", 0.0, 0.0)),
+        _scored("ns_b.wav", "e1", ac.Score("hallucinated", None, None, "hi there")),
+        _scored("te_short_1.wav", "e2", _s(0.0, 0.0)),
+    ]
+    md = ac.render_summary(results)
+    rows = _table_rows(md)
+    # per engine: lang | engine | scored | no ref | non-speech ok | hallucinated | WER | CER
+    assert ("te", "e1", "3", "1", "1", "1", "60.0%", "30.0%") in rows
+    assert ("te", "e2", "1", "0", "0", "0", "0.0%", "0.0%") in rows
+    # per length bucket: lang | engine | bucket | scored | WER | CER
+    assert ("te", "e1", "short", "2", "40.0%", "20.0%") in rows
+    assert ("te", "e1", "long", "1", "100.0%", "50.0%") in rows
+    # per condition
+    assert ("te", "e1", "noisy", "1", "60.0%", "30.0%") in rows
+    assert ("te", "e1", "clean", "2", "60.0%", "30.0%") in rows
+    assert "excluded" in md.lower()
+
+
+def test_summary_keeps_denoise_variants_and_languages_apart() -> None:
+    results = [
+        _scored("te_short_1.wav", "e", _s(0.5, 0.5)),
+        _scored("te_short_1.wav", "e", _s(0.1, 0.1), denoise=True),
+        _scored("hi_short_1.wav", "e", _s(0.9, 0.9), lang="hi"),
+    ]
+    md = ac.render_summary(results)
+    assert "e +denoise" in md and "| hi | e |" in md and "| te | e |" in md
+
+
+def test_summary_is_empty_without_scores() -> None:
+    assert ac.render_summary([_result(TE)]) == ""
+
+
+def test_markdown_wer_cer_columns_and_non_speech_cells() -> None:
+    ok, bad, miss, good = _result(""), _result("Thank you"), _result(TE), _result(TE)
+    ok.score = ac.Score("non-speech ok", 0.0, 0.0)
+    bad.score = ac.Score("hallucinated", None, None, "Thank you")
+    miss.score = ac.Score("no ref")
+    good.score = ac.Score("scored", 0.125, 0.05)
+    md = ac.render_markdown([ok, bad, miss, good], [], "te", runs=3)
+    header = [c.strip() for c in md.splitlines()[-6].strip("|").split("|")]
+    assert "WER" in header and "CER" in header
+    body = md.splitlines()[-4:]
+    assert "empty ok" in body[0] and "HALLUCINATED: Thank you" in body[1]
+    assert "no ref | no ref" in body[2] and "12.5% | 5.0%" in body[3]
+
+
+def test_markdown_without_scores_has_no_wer_columns() -> None:
+    assert "WER" not in ac.render_markdown([_result(TE)], [], "te", runs=3)
+
+
+# ---- CLI: --refs / --audio-dir / --lang en ---------------------------------------------
+
+
+def _audio_dir(tmp_path: Path, names: list[str]) -> Path:
+    d = tmp_path / "audio"
+    d.mkdir()
+    for n in names:
+        _write_wav(d / n, np.zeros(16000), 16000)
+    return d
+
+
+def test_cli_lang_en_runs_whisper_only(
+    tmp_path: Path, fake_models, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wav = tmp_path / "a.wav"
+    _write_wav(wav, np.zeros(16000), 16000)
+    assert ac.main([str(wav), "--lang", "en"]) == 0
+    out = capsys.readouterr().out
+    rows = [line for line in out.splitlines() if line.startswith("| a.wav")]
+    assert fake_models == ["whisper-small"] and len(rows) == 1 and "whisper-small" in rows[0]
+
+
+def test_cli_audio_dir_infers_language_scores_and_summarises(
+    tmp_path: Path, fake_models, capsys: pytest.CaptureFixture[str]
+) -> None:
+    d = _audio_dir(tmp_path, ["te_short_1.wav", "hi_long_1.wav", "ns_room.wav", "notes.wav"])
+    refs = _csv(
+        tmp_path / "r.csv",
+        f"filename,language,reference_text\nte_short_1.wav,te,{TE}\nhi_long_1.wav,hi,{HI}\n",
+    )
+    assert ac.main(["--audio-dir", str(d), "--refs", str(refs)]) == 0
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    # the fake IndicConformer says TE, which equals the te reference -> 0%
+    te_ctc = next(x for x in lines if x.startswith("| te_short_1.wav") and "/ctc" in x)
+    assert "0.0% | 0.0%" in te_ctc
+    assert "HALLUCINATED: Beep" in out  # ns_room.wav through the fake whisper
+    assert "notes.wav" not in out  # no language prefix: skipped, not guessed
+    assert "## Summary" in out
+    assert fake_models.count("indic") == 2  # the te group and the hi group each load once
+
+
+def test_cli_missing_ref_row_shows_no_ref_and_run_continues(
+    tmp_path: Path, fake_models, capsys: pytest.CaptureFixture[str]
+) -> None:
+    d = _audio_dir(tmp_path, ["te_short_1.wav"])
+    refs = _csv(tmp_path / "r.csv", "filename,language,reference_text\nother.wav,te,x\n")
+    assert ac.main(["--audio-dir", str(d), "--refs", str(refs), "--engines", "whisper-small"]) == 0
+    out = capsys.readouterr().out
+    assert "no ref | no ref" in out and "## Summary" in out
+
+
+def test_cli_missing_refs_file_is_reported_and_rows_say_no_ref(
+    tmp_path: Path, fake_models, capsys: pytest.CaptureFixture[str]
+) -> None:
+    d = _audio_dir(tmp_path, ["te_short_1.wav"])
+    args = [
+        "--audio-dir",
+        str(d),
+        "--refs",
+        str(tmp_path / "gone.csv"),
+        "--engines",
+        "whisper-small",
+    ]
+    assert ac.main(args) == 0
+    out = capsys.readouterr().out
+    assert "no ref | no ref" in out and "gone.csv" in out
+
+
+def test_cli_audio_dir_en_clip_skips_indicconformer(tmp_path: Path, fake_models) -> None:
+    d = _audio_dir(tmp_path, ["en_short_1.wav"])
+    assert ac.main(["--audio-dir", str(d)]) == 0
+    assert fake_models == ["whisper-small"]
+
+
+def test_cli_needs_some_audio(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        ac.main(["--lang", "te"])
+    with pytest.raises(SystemExit):
+        ac.main(["--audio-dir", str(tmp_path / "missing")])

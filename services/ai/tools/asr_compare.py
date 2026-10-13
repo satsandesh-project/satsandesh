@@ -33,18 +33,28 @@ never written anywhere). With HF_HUB_OFFLINE=1 and the weights cached, no token 
 
 The Markdown table goes to stdout (progress goes to stderr); `--out` also writes it to a
 file. Do not commit the output: it contains transcripts of real recordings.
+
+With reference transcripts the tool also scores them (WER and CER per row, then a summary):
+
+    .\\.venv\\Scripts\\python.exe tools/asr_compare.py --audio-dir clips --refs references.csv
+
+`--audio-dir` takes every .wav in a folder and reads the language from the filename prefix
+(te_ / hi_ / en_); ns_* clips are non-speech and must come back empty. See services/ai/README.md.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import importlib
 import os
 import platform
+import re
 import sys
 import time
+import unicodedata
 import wave
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -58,7 +68,8 @@ if str(_REPO_ROOT) not in sys.path:
 TARGET_SAMPLE_RATE_HZ = 16000
 ALL_ENGINES = ("indic-ctc", "indic-rnnt", "whisper-small")
 PERCENTILE_MIN_RUNS = 5
-EXPECTED_SCRIPT = {"te": "Telugu", "hi": "Devanagari"}
+EXPECTED_SCRIPT = {"te": "Telugu", "hi": "Devanagari", "en": "Latin"}
+LANGS = ("te", "hi", "en")
 
 # ---- script detection ---------------------------------------------------------------
 
@@ -159,6 +170,202 @@ def load_audio(path: Path) -> tuple[np.ndarray, str | None]:
         raise ValueError(str(exc)) from exc
 
 
+# ---- scoring against reference transcripts ------------------------------------------
+
+SCORED, NON_SPEECH_OK, HALLUCINATED, NO_REF = "scored", "non-speech ok", "hallucinated", "no ref"
+_LANG_PREFIX = re.compile(r"(te|hi|en)_")
+_NS_LANG_PREFIX = re.compile(r"ns_(te|hi|en)_")
+
+
+@dataclass
+class Score:
+    """WER/CER of one transcript. wer/cer are None unless status == "scored" (or the
+    non-speech case, where they are 0.0). `hyp` is kept for the hallucination message."""
+
+    status: str
+    wer: float | None = None
+    cer: float | None = None
+    hyp: str = ""
+
+
+def normalize(text: str, lang: str) -> str:
+    """NFC; punctuation (any Unicode P* category, so also the danda and double danda) becomes
+    a space and apostrophes are dropped; whitespace collapsed; casefolded for English ONLY.
+    Digits are left exactly as typed (no Telugu/Devanagari <-> ASCII conversion)."""
+    text = unicodedata.normalize("NFC", text).replace("'", "").replace("’", "")
+    text = "".join(" " if unicodedata.category(c).startswith("P") else c for c in text)
+    if lang == "en":
+        text = text.casefold()
+    return " ".join(text.split())
+
+
+def edit_distance(a: Sequence[str], b: Sequence[str]) -> int:
+    """Levenshtein distance (substitution, insertion, deletion all cost 1)."""
+    prev = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        cur = [i]
+        for j, y in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x != y)))
+        prev = cur
+    return prev[-1]
+
+
+def score_pair(ref: str, hyp: str, lang: str) -> Score:
+    """WER (whitespace-split words) and CER (Unicode code points after NFC, spaces included)
+    of `hyp` against `ref`, both normalised first. Rates are not capped at 1.0 (insertions
+    can push them over). An empty reference is the non-speech case: an empty hypothesis is
+    fine, any text is a hallucination."""
+    ref_n, hyp_n = normalize(ref, lang), normalize(hyp, lang)
+    if not ref_n:
+        return Score(NON_SPEECH_OK, 0.0, 0.0) if not hyp_n else Score(HALLUCINATED, hyp=hyp_n)
+    wer = edit_distance(ref_n.split(), hyp_n.split()) / len(ref_n.split())
+    cer = edit_distance(ref_n, hyp_n) / len(ref_n)
+    return Score(SCORED, wer, cer, hyp_n)
+
+
+def read_refs(path: Path) -> tuple[dict[str, tuple[str, str]], str | None]:
+    """references.csv (filename,language,reference_text; UTF-8 with or without BOM) ->
+    ({filename: (language, reference_text)}, problem). A missing/unusable file gives an empty
+    mapping and a message, never an exception: the run carries on with every row "no ref"."""
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as fh:
+            reader = csv.DictReader(fh)
+            fields = [(f or "").strip().lower() for f in (reader.fieldnames or [])]
+            if "filename" not in fields or "reference_text" not in fields:
+                return {}, (
+                    f"{path}: needs columns filename,language,reference_text "
+                    f"(found: {', '.join(fields) or 'none'})"
+                )
+            reader.fieldnames = fields
+            refs: dict[str, tuple[str, str]] = {}
+            for row in reader:
+                name = Path((row.get("filename") or "").strip()).name
+                if name:
+                    refs[name] = (
+                        (row.get("language") or "").strip().lower(),
+                        row["reference_text"] or "",
+                    )
+            return refs, None
+    except FileNotFoundError:
+        return {}, f"references file not found: {path}"
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        return {}, f"could not read {path} ({type(exc).__name__}: {exc})"
+
+
+def is_nonspeech(name: str) -> bool:
+    return name.lower().startswith("ns_")
+
+
+def clip_language(name: str, forced: str | None, from_dir: bool) -> str | None:
+    """Language of a clip. te_/hi_/en_ prefix, or ns_<lang>_ for non-speech. For a file found
+    in --audio-dir the prefix wins and --lang is only the fallback; for a file named on the
+    command line --lang wins, as it always did."""
+    low = name.lower()
+    m = (_NS_LANG_PREFIX if is_nonspeech(low) else _LANG_PREFIX).match(low)
+    inferred = m.group(1) if m else None
+    return (inferred or forced) if from_dir else (forced or inferred)
+
+
+def _tokens(name: str) -> list[str]:
+    return re.split(r"[_\-.\s]+", Path(name).stem.lower())
+
+
+def length_bucket(name: str) -> str:
+    """short / med / long, from a filename token; "other" when there is none."""
+    return next((b for b in ("short", "med", "long") if b in _tokens(name)), "other")
+
+
+def condition(name: str) -> str:
+    return "noisy" if "_noisy" in name.lower() else "clean"
+
+
+def _engine_label(r: Result) -> str:
+    return r.engine + (f"/{r.mode}" if r.mode != "-" else "") + (" +denoise" if r.denoise else "")
+
+
+def _mean_pct(values: list[float]) -> str:
+    return f"{100 * sum(values) / len(values):.1f}%" if values else "-"
+
+
+def _md_table(cols: list[str], rows: list[list[str]]) -> list[str]:
+    out = ["| " + " | ".join(cols) + " |", "|" + "|".join("---" for _ in cols) + "|"]
+    return out + ["| " + " | ".join(_md_cell(c) for c in row) + " |" for row in rows]
+
+
+def render_summary(results: list[Result]) -> str:
+    """Markdown averages of WER/CER per (language, engine), per length bucket and per
+    condition. Unweighted means over clips; clips with no reference are excluded and counted;
+    non-speech clips are counted (ok / hallucinated) but never averaged."""
+    scored = [r for r in results if r.score is not None]
+    if not scored:
+        return ""
+    keys = list(dict.fromkeys((r.lang, _engine_label(r)) for r in scored))
+
+    def stats(rows: list[Result]) -> tuple[str, str, int]:
+        ok = [r.score for r in rows if r.score and r.score.status == SCORED]
+        return (
+            _mean_pct([s.wer for s in ok if s.wer is not None]),
+            _mean_pct([s.cer for s in ok if s.cer is not None]),
+            len(ok),
+        )
+
+    def count(rows: list[Result], status: str) -> int:
+        return sum(1 for r in rows if r.score and r.score.status == status)
+
+    per_engine = []
+    for lang, eng in keys:
+        rows = [r for r in scored if (r.lang, _engine_label(r)) == (lang, eng)]
+        wer, cer, n = stats(rows)
+        per_engine.append(
+            [lang, eng, str(n), str(count(rows, NO_REF)), str(count(rows, NON_SPEECH_OK)),
+             str(count(rows, HALLUCINATED)), wer, cer]
+        )  # fmt: skip
+    out = [
+        "## Summary",
+        "",
+        (
+            "Unweighted mean over clips. Clips with no reference are excluded from the averages "
+            "(counted in `no ref`); non-speech (`ns_*`) clips are counted, never averaged."
+        ),
+        "",
+        *_md_table(
+            ["lang", "engine", "scored", "no ref (excluded)", "non-speech ok", "hallucinated",
+             "mean WER", "mean CER"],
+            per_engine,
+        ),
+    ]  # fmt: skip
+    speech = [r for r in scored if not is_nonspeech(r.file)]
+    for title, label, fn, order in (
+        ("By length bucket", "bucket", length_bucket, ("short", "med", "long", "other")),
+        ("By condition", "condition", condition, ("clean", "noisy")),
+    ):
+        rows_out = []
+        for lang, eng in keys:
+            for value in order:
+                rows = [
+                    r for r in speech
+                    if (r.lang, _engine_label(r)) == (lang, eng) and fn(r.file) == value
+                ]  # fmt: skip
+                if rows:
+                    wer, cer, n = stats(rows)
+                    rows_out.append([lang, eng, value, str(n), wer, cer])
+        out += ["", f"### {title}", "", *_md_table(
+            ["lang", "engine", label, "scored", "mean WER", "mean CER"], rows_out
+        )]  # fmt: skip
+    return "\n".join(out) + "\n"
+
+
+def _score_cells(score: Score | None) -> tuple[str, str]:
+    if score is None or score.status == NO_REF:
+        return "no ref", "no ref"
+    if score.status == NON_SPEECH_OK:
+        return "empty ok", "-"
+    if score.status == HALLUCINATED:
+        return f"HALLUCINATED: {score.hyp}", "-"
+    assert score.wer is not None and score.cer is not None
+    return f"{100 * score.wer:.1f}%", f"{100 * score.cer:.1f}%"
+
+
 # ---- results ------------------------------------------------------------------------
 
 
@@ -177,6 +384,7 @@ class Result:
     model_version: str
     lang: str = "te"
     my_verdict: str = field(default="", init=False)
+    score: Score | None = field(default=None, init=False)  # set only when scoring is on
 
     @property
     def transcript(self) -> str:
@@ -239,33 +447,23 @@ def _md_cell(value: object) -> str:
     return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
-def render_markdown(results: list[Result], header_lines: list[str], lang: str, runs: int) -> str:
+def _table_lines(results: list[Result], lang: str, runs: int) -> list[str]:
     expected = EXPECTED_SCRIPT[lang]
     show_pct = runs >= PERCENTILE_MIN_RUNS
+    show_score = any(r.score is not None for r in results)
+    # English: the expected script IS Latin, so do not repeat that column.
+    share_cols = (
+        [expected, "Devanagari"] if expected == "Latin" else [expected, "Devanagari", "Latin"]
+    )
     cols = ["file", "engine", "denoise", "first run (s)", "all runs (s)"]
     if show_pct:
         cols += ["p50 (s)", "p90 (s)"]
-    cols += [
-        "RTF",
-        f"{expected} %",
-        "Devanagari %",
-        "Latin %",
-        "transcript",
-        "stable",
-        "my verdict",
-    ]
+    cols += ["RTF", *(f"{c} %" for c in share_cols)]
+    if show_score:
+        cols += ["WER", "CER"]
+    cols += ["transcript", "stable", "my verdict"]
 
-    out = ["# ASR comparison", ""] + [f"- {line}" for line in header_lines]
-    out += [
-        "",
-        (
-            "No ground truth: nothing here says which engine is more accurate. faster-whisper "
-            "small is the reference, not the answer. `my verdict` is yours to fill in."
-        ),
-        "",
-        "| " + " | ".join(cols) + " |",
-        "|" + "|".join("---" for _ in cols) + "|",
-    ]
+    out = ["| " + " | ".join(cols) + " |", "|" + "|".join("---" for _ in cols) + "|"]
     for r in results:
         shares = script_shares(r.transcript)
         engine = r.engine + (f"/{r.mode}" if r.mode != "-" else "")
@@ -281,16 +479,42 @@ def render_markdown(results: list[Result], header_lines: list[str], lang: str, r
             p = r.percentiles()
             cells += [f"{p[0]:.2f}", f"{p[1]:.2f}"] if p else ["-", "-"]
         mean_s = sum(r.run_times_s) / len(r.run_times_s)
+        cells += [f"{mean_s / r.audio_s:.2f}" if r.audio_s > 0 else "-"]
+        cells += [_pct(shares[c]) for c in share_cols]
+        if show_score:
+            cells += _score_cells(r.score)
         cells += [
-            f"{mean_s / r.audio_s:.2f}" if r.audio_s > 0 else "-",
-            _pct(shares[expected]),
-            _pct(shares["Devanagari"]),
-            _pct(shares["Latin"]),
             r.transcript or "(empty)",
             "yes" if r.consistent else "NO: runs differ",
             r.my_verdict,
         ]
         out.append("| " + " | ".join(_md_cell(c) for c in cells) + " |")
+    return out
+
+
+def render_markdown(results: list[Result], header_lines: list[str], lang: str, runs: int) -> str:
+    """One table, or one table per language (each under its own heading) when the results
+    span several. `lang` is used when the results do not say otherwise."""
+    langs = list(dict.fromkeys(r.lang for r in results))
+    out = ["# ASR comparison", ""] + [f"- {line}" for line in header_lines]
+    out += [
+        "",
+        (
+            "No ground truth: nothing here says which engine is more accurate. faster-whisper "
+            "small is the reference, not the answer. `my verdict` is yours to fill in."
+        ),
+        "",
+    ]
+    if len(langs) <= 1:
+        out += _table_lines(results, lang, runs)
+    else:
+        for lg in langs:
+            out += [
+                f"## {lg}",
+                "",
+                *_table_lines([r for r in results if r.lang == lg], lg, runs),
+                "",
+            ]
     return "\n".join(out) + "\n"
 
 
@@ -402,8 +626,27 @@ def _log(msg: str) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("audio", type=Path, nargs="+", help="one or more audio files")
-    parser.add_argument("--lang", choices=["te", "hi"], required=True)
+    parser.add_argument("audio", type=Path, nargs="*", help="audio files (or use --audio-dir)")
+    parser.add_argument(
+        "--lang",
+        choices=LANGS,
+        default=None,
+        help="language of the files named on the command line (and the fallback for --audio-dir "
+        "files with no te_/hi_/en_ prefix). 'en' runs faster-whisper only.",
+    )
+    parser.add_argument(
+        "--audio-dir",
+        type=Path,
+        default=None,
+        help="run every .wav in this folder; language from the filename prefix te_/hi_/en_, "
+        "ns_* = non-speech (must come back empty)",
+    )
+    parser.add_argument(
+        "--refs",
+        type=Path,
+        default=None,
+        help="references.csv (filename,language,reference_text): adds WER/CER and a summary",
+    )
     parser.add_argument("--runs", type=int, default=3, help="runs per file/variant (default 3)")
     parser.add_argument("--denoise", action="store_true", help="also run every engine denoised")
     parser.add_argument(
@@ -416,6 +659,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+@dataclass
+class ClipInfo:
+    lang: str
+    nonspeech: bool
+    ref: str | None  # None = no usable reference; ignored for non-speech clips
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -425,9 +675,36 @@ def main(argv: list[str] | None = None) -> int:
     unknown = [e for e in wanted if e not in ALL_ENGINES]
     if unknown:
         parser.error(f"unknown engine(s): {unknown}")
+    if not args.audio and args.audio_dir is None:
+        parser.error("give audio files and --lang, or --audio-dir")
+    if args.audio_dir is not None and not args.audio_dir.is_dir():
+        parser.error(f"--audio-dir {args.audio_dir} is not a directory")
+    if args.audio and args.lang is None:
+        bad = [p.name for p in args.audio if clip_language(p.name, None, False) is None]
+        if bad:
+            parser.error(f"--lang is required (no te_/hi_/en_ prefix on: {', '.join(bad)})")
 
-    clips: list[tuple[str, np.ndarray]] = []
-    for path in args.audio:
+    scoring = args.refs is not None or args.audio_dir is not None
+    refs: dict[str, tuple[str, str]] = {}
+    refs_problem: str | None = None
+    if args.refs is not None:
+        refs, refs_problem = read_refs(args.refs)
+        if refs_problem:
+            _log(f"REFS: {refs_problem}; every row will show 'no ref'")
+
+    sources = [(p, False) for p in args.audio]
+    if args.audio_dir is not None:
+        sources += [(p, True) for p in sorted(args.audio_dir.glob("*.wav"))]
+
+    clips_by_lang: dict[str, list[tuple[str, np.ndarray]]] = {}
+    infos: dict[str, ClipInfo] = {}
+    for path, from_dir in sources:
+        lang = clip_language(path.name, args.lang, from_dir)
+        if lang is None and is_nonspeech(path.name):
+            lang = "te"  # ns_* with no language: the engines still need one; any will do
+        if lang is None:
+            _log(f"SKIP {path.name}: no te_/hi_/en_ prefix and no --lang")
+            continue
         try:
             audio, note = load_audio(path)
         except ValueError as exc:
@@ -435,18 +712,41 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if note:
             _log(f"NOTE {path.name}: {note}")
-        clips.append((path.name, audio))
-    if not clips:
+        nonspeech = is_nonspeech(path.name)
+        ref: str | None = None
+        if scoring and not nonspeech:
+            if path.name not in refs:
+                if not refs_problem:
+                    _log(f"NOTE {path.name}: no row in the references file")
+            elif refs[path.name][1].strip():
+                ref = refs[path.name][1]
+            else:
+                _log(f"NOTE {path.name}: reference_text is empty")
+        clips_by_lang.setdefault(lang, []).append((path.name, audio))
+        infos[path.name] = ClipInfo(lang, nonspeech, ref)
+    if not clips_by_lang:
         _log("no usable audio files")
         return 1
 
+    def attach_score(r: Result) -> None:
+        info = infos[r.file]
+        if info.nonspeech:
+            r.score = score_pair("", r.transcript, info.lang)
+        elif info.ref is None:
+            r.score = Score(NO_REF)
+        else:
+            r.score = score_pair(info.ref, r.transcript, info.lang)
+
     denoise_fn = get_denoise_fn() if args.denoise else None
+    langs = list(clips_by_lang)
+    n_clips = sum(len(c) for c in clips_by_lang.values())
 
     header = [
         f"date: {datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"CPU: {cpu_model()} ({os.cpu_count()} logical cores)",
         (
-            f"language: {args.lang}; files: {len(clips)}; runs per variant: {args.runs}; "
+            f"{'language' if len(langs) == 1 else 'languages'}: {', '.join(langs)}; "
+            f"files: {n_clips}; runs per variant: {args.runs}; "
             f"denoise column: {'yes' if args.denoise else 'no'}"
         ),
         (
@@ -460,35 +760,59 @@ def main(argv: list[str] | None = None) -> int:
             else f"p50/p90 omitted: needs --runs >= {PERCENTILE_MIN_RUNS}."
         ),
     ]
-
-    groups: list[tuple[str, Callable[[], list[LoadedEngine]]]] = []
-    indic_modes = [m for m in ("ctc", "rnnt") if f"indic-{m}" in wanted]
-    if indic_modes:
-        groups.append(("indicconformer", lambda: _load_indic(indic_modes, args.lang)))
-    if "whisper-small" in wanted:
-        groups.append(("whisper-small", lambda: [_load_whisper("small", args.lang, args.threads)]))
+    if args.refs is not None:
+        header.append(
+            f"references: {args.refs.name} ({refs_problem})"
+            if refs_problem
+            else f"references: {args.refs.name} ({len(refs)} rows)"
+        )
 
     results: list[Result] = []
     load_lines: list[str] = []
-    for label, loader in groups:
-        _log(f"loading {label} ...")
-        try:
-            engines = loader()
-        except Exception as exc:  # noqa: BLE001 - report it and carry on with the next engine
-            msg = f"{label}: SKIPPED, could not load ({type(exc).__name__}: {exc})"
-            _log(msg)
-            load_lines.append(msg)
-            continue
-        for eng in engines:
-            load_lines.append(
-                f"{eng.name}{'/' + eng.mode if eng.mode != '-' else ''}: "
-                f"{eng.model_version}, model load {eng.load_s:.1f}s"
-            )
-            _log(f"running {eng.name} {eng.mode} ...")
-            run_engine(eng, clips, denoise_fn, args.runs, args.lang, results.append)
-        del engines
 
-    table = render_markdown(results, header + load_lines, args.lang, args.runs)
+    def collect(r: Result) -> None:
+        if scoring:
+            attach_score(r)
+        results.append(r)
+
+    for lang, clips in clips_by_lang.items():
+        tag = f"[{lang}] " if len(langs) > 1 else ""
+        lang_wanted = wanted
+        if lang == "en":
+            lang_wanted = [e for e in wanted if e == "whisper-small"]
+            if len(lang_wanted) < len(wanted):
+                load_lines.append(f"{tag}IndicConformer has no English: faster-whisper only")
+            if not lang_wanted:
+                _log("en clips need --engines to include whisper-small; skipped")
+        groups: list[tuple[str, Callable[[], list[LoadedEngine]]]] = []
+        indic_modes = [m for m in ("ctc", "rnnt") if f"indic-{m}" in lang_wanted]
+        if indic_modes:
+            groups.append(("indicconformer", lambda m=indic_modes, lg=lang: _load_indic(m, lg)))
+        if "whisper-small" in lang_wanted:
+            groups.append(
+                ("whisper-small", lambda lg=lang: [_load_whisper("small", lg, args.threads)])
+            )
+        for label, loader in groups:
+            _log(f"loading {label} ({lang}) ...")
+            try:
+                engines = loader()
+            except Exception as exc:  # noqa: BLE001 - report it and carry on with the next engine
+                msg = f"{tag}{label}: SKIPPED, could not load ({type(exc).__name__}: {exc})"
+                _log(msg)
+                load_lines.append(msg)
+                continue
+            for eng in engines:
+                load_lines.append(
+                    f"{tag}{eng.name}{'/' + eng.mode if eng.mode != '-' else ''}: "
+                    f"{eng.model_version}, model load {eng.load_s:.1f}s"
+                )
+                _log(f"running {eng.name} {eng.mode} ({lang}) ...")
+                run_engine(eng, clips, denoise_fn, args.runs, lang, collect)
+            del engines
+
+    table = render_markdown(results, header + load_lines, langs[0], args.runs)
+    if scoring:
+        table += "\n" + render_summary(results)
     print(table)
     if args.out:
         args.out.write_text(table, encoding="utf-8")
