@@ -101,9 +101,12 @@
 	# Satsang broadcast listening (docker-compose.satsang.yml): the HLS playlist and segments the
 	# media server cuts from the speaker's RTMP stream, e.g. /hls/<session id>.m3u8. `handle`, not
 	# handle_path: the media server serves them under /hls/ too, so the path stays as it is. Only
-	# LISTENING comes this way. The speaker publishes to the media server's own port 1935, and the
-	# media server's callbacks to the gateway do not come through here (see /sessions/ingest below).
-	# With no media server running, only this path answers 502.
+	# LISTENING comes this way. The speaker publishes to the media server's own port 1935, and its
+	# callbacks to the gateway (/sessions/ingest/*) do not come through here: /sessions is
+	# deliberately NOT routed, so from outside those hooks land on the elder-app's 404, never on
+	# the gateway. With no media server running, only this path answers 502.
+	# Phase 4 update: /sessions now reaches the gateway for scheduling and listing; the
+	# /sessions/ingest* handle below still blocks the media server's private hooks outside compose.
 	handle /hls* {
 		reverse_proxy satsang:8080
 	}

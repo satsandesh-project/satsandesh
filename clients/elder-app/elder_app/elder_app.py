@@ -90,8 +90,6 @@ import os
 import reflex as rx
 from rxconfig import config
 
-from elder_app.pages import satsang_admin
-
 GATEWAY_PUBLIC_URL = os.environ.get("GATEWAY_PUBLIC_URL", "http://localhost")
 
 # Mirrors services/gateway/app/config.py's Settings.UNDO_WINDOW_SECONDS
@@ -4073,4 +4071,4 @@ def index() -> rx.Component:
 
 app = rx.App(stylesheets=STYLESHEETS)
 app.add_page(index, title=f"{config.app_name}")
-app.add_page(satsang_admin.page, route=satsang_admin.ROUTE, title=satsang_admin.TITLE)
+app.add_page(*__import__("elder_app.pages.satsang_admin", fromlist=["REGISTRATION"]).REGISTRATION)

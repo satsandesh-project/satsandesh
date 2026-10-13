@@ -1017,3 +1017,7 @@ def page() -> rx.Component:
             "color": COLOR["ink"],
         },
     )
+
+
+# Registration tuple keeps elder_app.py wiring to a single add_page line.
+REGISTRATION = (page, ROUTE, TITLE)

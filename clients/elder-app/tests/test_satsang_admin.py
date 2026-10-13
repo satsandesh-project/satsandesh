@@ -796,7 +796,7 @@ def test_the_token_field_is_a_password_field_and_not_remembered_by_the_browser()
 
 
 # ---------------------------------------------------------------------------------------------
-# 4. registration: the edit to elder_app.py is two lines and nothing else
+# 4. registration: elder_app.py gains just one add_page line
 # ---------------------------------------------------------------------------------------------
 
 
@@ -812,17 +812,13 @@ def test_the_app_serves_both_the_elder_screen_and_the_admin_page():
     assert "index" in routes and "satsang-admin" in routes
 
 
-def test_elder_app_py_only_gained_the_import_and_the_add_page_line():
-    """Two lines mention the page: the import (add_page needs the function in scope) and the
-    add_page call. There is a navigation structure (the elders' bottom tabs, which already has a
-    Satsang tab for the listener screen), and the admin page deliberately has NO entry in it: an
-    elder is never shown a way into an admin page."""
+def test_elder_app_py_only_gained_one_add_page_line():
+    """Page registration is one line, with no admin entry in elder navigation."""
     source = ELDER_APP_PY.read_text(encoding="utf8")
     lines = [ln for ln in source.splitlines() if "satsang_admin" in ln or "satsang-admin" in ln]
-    assert len(lines) == 2, lines
-    assert any(ln.startswith("from elder_app.pages") and "import" in ln for ln in lines)
-    assert sum("add_page(" in ln for ln in lines) == 1
-    assert "/satsang-admin" not in source  # the route is named once, in the page's own file
+    assert len(lines) == 1, lines
+    assert "app.add_page(" in lines[0]
+    assert "/satsang-admin" not in source  # route is named in the page module
 
 
 def test_the_page_module_does_not_import_the_elder_app_it_is_kept_independent_of():
