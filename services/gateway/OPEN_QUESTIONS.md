@@ -608,6 +608,12 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     the token in my own server `.env`; staging's token was not checked).
 
 
+    **UPDATE (2026-10-12):** the wrong-script guard is now **ON on staging** (M1's `.env`, since 9 Oct). On 11 Oct it
+    held six Telugu notes (reasons such as "only 0% of its letters are Telugu"); the sender sees only "held". Interim
+    sender wording was drafted for M4 to approve in #149 and is not built. The speech service now detects only among
+    en/hi/te (#140, merged; not on staging yet). A text-only comparison (`infra/ai/mt_compare/README.md`) found the
+    translator accurate on typed Telugu, so the garbling is the transcript.
+
     **BUILT, all off (2026-10-08, `feat/m2-indicconformer-image`):** (a) `infra/ai/Dockerfile.speech_indicconformer`
     and a compose service `speech-indic` behind the `indic` profile (a plain `up` and `staging-ai.sh`
     never start it); (b) `AI_TRANSCRIBE_URLS_BY_LANGUAGE`, a JSON map from the sender's DECLARED language
@@ -648,11 +654,26 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     logs; a short-lived ticket exchanged over HTTP first would avoid that. An unknown `sub`
     is a 401 and is not provisioned, which is the intended change from the stub.
 
-35. **A bhajan-room lead can rejoin as a speaker for up to two minutes after their turn.** A token's
+34. **A devotional word was translated into an unrelated one, and nothing flags it.** On typed Telugu
+    (`infra/ai/mt_compare/README.md`, 2026-10-12) the production chain's English→Hindi step turned "There will be no
+    satsang tomorrow morning" into "कल सुबह कोई शतरंज नहीं होगा" ("no chess tomorrow morning"). *bhajan*, *puja* and
+    *prasad* survived in the same run, so this is that word, not devotional vocabulary in general; others may exist. The
+    Telugu→English step was right on all 13 sentences, so the translator is not the source of the garbled notes (the
+    transcript is). **Owner: M3** (`services/ai/render`): a small list of protected terms kept out of translation, or a
+    check that a known term survives, would remove it without a new model. Not built; the gateway cannot tell a wrong
+    translation from a right one. Related and also unfixed: the Hindi sometimes slips tense ("a bhajan happens").
+    Larger or newer open models were compared and none beat the current one on this data (Sarvam-Translate 4B fixes the
+    word but invented a fact and addresses elders as "tum"); the IndicTrans2 1B and Indic→Indic models could not be
+    tested because the Hugging Face terms are not accepted on the account behind the token (403).
+
+35. **A bhajan-room lead can rejoin as a speaker for about three minutes after their turn.** A token's
     `canPublish` is applied again whenever someone joins with it, and the hand-over's
     `UpdateParticipant` changes only the live session, so the publish-capable token is kept to two
-    minutes (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`) and the listener token to an hour. That
-    shrinks the window; it does not close it. Closing it needs a check on join: a LiveKit
+    minutes (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`) and the listener token to an hour. **LiveKit
+    v1.13.9 also accepts an expired token for exactly 60 more seconds** (measured by M2 on a throwaway
+    LiveKit: accepted up to 59 s past expiry, refused from 60 s, with a fresh-token control valid on
+    every row), so the real window is the token's life plus 60 s: about three minutes, not two.
+    That shrinks the window; it does not close it. Closing it needs a check on join: a LiveKit
     `participant_joined` webhook that silences anyone who is not the current lead. Not built.
     Found by M2's review of #151, who showed it on a real LiveKit. **Owner:** M1 (webhook route
     and the gateway side), before bhajan rooms are used outside a demo.

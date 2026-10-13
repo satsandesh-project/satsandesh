@@ -413,7 +413,13 @@ def count_circle_deliveries(session: Session, *, message_id: uuid.UUID) -> int:
 
 
 def get_or_create_user(
-    session: Session, *, user_id: uuid.UUID, name: str, preferred_language: str, role: str
+    session: Session,
+    *,
+    user_id: uuid.UUID,
+    name: str,
+    preferred_language: str,
+    role: str,
+    commit_new: bool = False,
 ) -> User:
     """Provisions a `users` row for a token-derived id if one doesn't exist
     yet. app/auth.py's user_from_token stub (its "Week 3 Phase 7 widening")
@@ -447,6 +453,19 @@ def get_or_create_user(
             raise
         session.expunge(user)
         user = session.execute(select(User).where(User.id == user_id)).scalar_one()
+    else:
+        if commit_new:
+            # The authentication path asks for this (app/auth.py). Left uncommitted until the
+            # request ends, a second request for the same brand-new token does not hit the
+            # IntegrityError above: its INSERT WAITS on this uncommitted row. get_current_user and
+            # the WebSocket route are `async def` and run this blocking call on the event loop, and
+            # finishing this request's transaction needs that same loop, so the waiting INSERT
+            # blocks the very thing it waits for. Only Postgres's statement timeout (15 s) ended
+            # it, and a new browser sends a dozen requests at once: staging froze for minutes on
+            # 2026-10-12. Committed, the second request simply finds the row. Not the default:
+            # _create_message_impl provisions a DM's target in the middle of creating a message,
+            # which must stay one transaction.
+            session.commit()
     return user
 
 
