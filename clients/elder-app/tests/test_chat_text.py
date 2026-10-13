@@ -1,8 +1,8 @@
 """Typed chat messages for a reader of another language (elder_app.py, the chat script).
 
-The behaviour lives in JavaScript and is checked in tests/js/chat_text.test.js under Node with jsdom;
-this renders the page script into a file and runs it, and is skipped when node or jsdom is not
-installed (as the bhajan rooms tests are). The plain Python checks below always run.
+The behaviour lives in JavaScript and is checked in tests/js/chat_text.test.js under Node with
+jsdom; this renders the page script into a file and runs it, and is skipped when node or jsdom is
+not installed (as the bhajan rooms tests are). The plain Python checks below always run.
 """
 
 import json

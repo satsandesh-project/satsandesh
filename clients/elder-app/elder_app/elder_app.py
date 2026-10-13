@@ -808,9 +808,12 @@ window.__satsandeshWsInit = true;
     // Typed text (not a voice note) in another person's language: the reader sees the translation,
     // and may always switch to what the sender actually typed (or, for a reader of another
     // language, to the English version). The mode is kept per message in __satTextMode.
-    const textMode = msg.kind === "text" && rendering ? window.__satTextMode[key] || "translation" : null;
+    const typed = msg.kind === "text" && !!rendering;
+    const textMode = typed ? window.__satTextMode[key] || "translation" : null;
     const canToggle = !textMode && !!rendering && lang !== "en";
-    const showOriginal = textMode ? false : !rendering || (canToggle && !!window.__satShowOriginal[key]);
+    const showOriginal = textMode
+      ? false
+      : !rendering || (canToggle && !!window.__satShowOriginal[key]);
     // The sender's real recording, under a translation. A translation replaces the words, not the
     // voice: the person who sent it should always be one tap away, without opening anything. (An
     // English reader gets the recording as their play button below, so it is not added twice.)
