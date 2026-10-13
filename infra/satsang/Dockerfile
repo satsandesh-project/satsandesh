@@ -6,6 +6,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends nginx libnginx-mod-rtmp \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/hls
-COPY infra/satsang/nginx.conf.template /etc/nginx/satsang.conf.template
-COPY infra/satsang/entrypoint.sh /entrypoint.sh
+COPY nginx.conf.template /etc/nginx/satsang.conf.template
+COPY entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/bin/sh", "/entrypoint.sh"]

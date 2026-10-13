@@ -24,8 +24,8 @@
 services:
   satsang:
     build:
-      context: .
-      dockerfile: infra/satsang/Dockerfile
+      # Its own directory as the context, not the repo root: the root .dockerignore excludes infra/.
+      context: ./infra/satsang
     restart: unless-stopped
     environment:
       SATSANG_HOOK_SECRET: ${SATSANG_HOOK_SECRET:?set SATSANG_HOOK_SECRET}
