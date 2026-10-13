@@ -710,3 +710,4 @@ the server for its DB-backed tests (the local Python lacks
   Phase 1 table finished; the Phase 2 transition tests showed nine illegal moves going straight
   through, and a trigger was needed. The tests rewrite the timestamps to match each new status, so
   only the transition rule can object.
+- Phase 3, the real media server: the first recreate-the-gateway test printed "address changed: NO" and so proved nothing; a second run parked a container on the old address, and a control with the hostname resolved once at start got the 502 that the resolver prevents. The same run showed a refused duplicate publish ending a live satsang, which no mock could have shown.
