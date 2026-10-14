@@ -669,6 +669,13 @@ def test_the_upcoming_screen_tells_failures_apart():
     assert s.error_text == TEXTS["en"]["need_identity_title"]
 
 
+def test_opening_the_list_screen_forgets_what_the_last_visit_showed():
+    s = SatsangUpcomingState()
+    s.after_load(loaded([item("a", "live", -5)], lang="te"))
+    s.boot()
+    assert (s.status, s.items, s.lang) == ("loading", [], "en")
+
+
 def test_a_refresh_of_the_list_screen_does_not_blank_it_first():
     s = SatsangUpcomingState()
     s.after_load(loaded([item("a", "live", -5)]))
