@@ -19,12 +19,12 @@ Time is injected, never slept: two clocks are swapped for one the test controls,
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import app.satsang_reminder as reminder
 import pytest
 from contracts.chat.satsang import SatsangSessionCreated
 from sqlalchemy import select
 
 import app.jobs as jobs_module
+import app.satsang_reminder as reminder
 from app.config import get_settings
 from app.db import repository
 from app.db.models import Job, PushSubscription
