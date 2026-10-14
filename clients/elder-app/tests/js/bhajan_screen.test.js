@@ -270,6 +270,20 @@ run("who is singing is announced to a screen reader when it changes", async () =
   assert.ok(now.length >= 2, "both the 'singing now' line and the 'you are live' line are live regions");
 });
 
+run("the start form's fields have a visible edge and their own colours, and keyboard focus has a ring", async () => {
+  const gw = new FakeGateway();
+  const { doc } = await boot(gw);
+  const input = doc.querySelector("input");
+  const select = doc.querySelector("select");
+  for (const field of [input, select]) {
+    assert.ok(field.style.border.includes("2px"), field.outerHTML);
+    assert.ok(!field.style.border.includes("#EADCC4") && !field.style.border.toLowerCase().includes("rgb(234, 220, 196)"), "not the pale decorative border: " + field.style.border);
+    assert.ok(field.style.background && field.style.color, "its own background and text colour, so a dark-mode device cannot change them");
+  }
+  const focus = doc.getElementById("bhajan-focus-style");
+  assert.ok(focus && focus.textContent.includes("focus-visible") && focus.textContent.includes("outline"), "a focus ring is defined");
+});
+
 run("closing is not sent if the moderator says no", async () => {
   const gw = new FakeGateway();
   gw.moderator = true;

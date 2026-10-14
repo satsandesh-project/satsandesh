@@ -93,3 +93,50 @@ def test_the_screen_logic_passes_under_node() -> None:
         timeout=60,
     )
     assert done.returncode == 0, done.stdout[-1500:] + done.stderr[-500:]
+
+
+def _luminance(hex_color: str) -> float:
+    r, g, b = (int(hex_color.lstrip("#")[i : i + 2], 16) / 255 for i in (0, 2, 4))
+
+    def channel(c: float) -> float:
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def _contrast(a: str, b: str) -> float:
+    la, lb = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def test_the_colours_the_screen_uses_are_readable_against_each_other() -> None:
+    """WCAG contrast of the pairs the screen draws: 4.5:1 for text, 3:1 for a field's edge and a
+    focus ring. The pale `warm_border` is 1.2:1 on the cream and is for decoration only (#153)."""
+    from elder_app.elder_app import COLOR
+
+    text_pairs = [
+        ("ink", "cream_canvas"),
+        ("ink", "card_cream"),
+        ("muted_ink", "cream_canvas"),
+        ("green_ink", "green_tint"),
+        ("card_cream", "deep_green"),
+    ]
+    for fg, bg in text_pairs:
+        assert _contrast(COLOR[fg], COLOR[bg]) >= 4.5, (fg, bg)
+    assert _contrast("#8A3E0F", "#FBEFE6") >= 4.5  # the danger button's text
+    for edge, ground in [
+        ("muted_ink", "card_cream"),
+        ("muted_ink", "cream_canvas"),
+        ("deep_green", "cream_canvas"),
+    ]:
+        assert _contrast(COLOR[edge], COLOR[ground]) >= 3.0, (edge, ground)
+    assert (
+        _contrast(COLOR["warm_border"], COLOR["cream_canvas"]) < 3.0
+    )  # why it must not be a field edge
+
+
+def test_fields_do_not_use_the_pale_border_and_the_page_asks_for_light_controls() -> None:
+    source = (ASSETS / "bhajan_rooms.js").read_text(encoding="utf-8")
+    field = next(line for line in source.splitlines() if line.strip().startswith("const field ="))
+    assert "c.muted_ink" in field and "warm_border" not in field
+    assert '"color_scheme": "light"' in Path(page.__file__).read_text(encoding="utf-8")
