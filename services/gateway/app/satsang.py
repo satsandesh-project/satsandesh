@@ -112,7 +112,7 @@ from contracts.chat.satsang import (
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -124,7 +124,12 @@ from app.db.base import get_db
 from app.db.models import User as DbUser
 from app.db.satsang import SatsangSession
 from app.models import User
-from app.satsang_reminder import enqueue_reminder
+from app.satsang_reminder import (
+    SatsangReminderOut,
+    enqueue_reminder,
+    read_reminder,
+    read_reminder_audio,
+)
 from app.tokens import looks_like_jwt
 
 logger = logging.getLogger(__name__)
@@ -338,6 +343,41 @@ def list_sessions_for_console(
     rows = list(db.execute(stmt).scalars())
     names = _names(db, {r.speaker_user_id for r in rows})
     return SatsangSessionAdminList(items=[_admin_view(r, names) for r in rows])
+
+
+# --- the reminder, as a member reads it -----------------------------------------------------------
+
+
+def _reader(db: Session, user: User) -> DbUser:
+    row = db.get(DbUser, uuid.UUID(user.id))
+    if row is None:
+        raise _NOT_FOUND
+    return row
+
+
+@router.get("/{session_id}/reminder", response_model=SatsangReminderOut)
+def get_reminder(
+    session_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> SatsangReminderOut:
+    """The satsang's reminder in the caller's own language (or the English source, which says so).
+    404 until the reminder has been sent, and for a satsang that does not exist."""
+    reminder = read_reminder(db, session_id, _reader(db, user))
+    if reminder is None:
+        raise _NOT_FOUND
+    return reminder
+
+
+@router.get("/{session_id}/reminder/audio")
+def get_reminder_audio(
+    session_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> Response:
+    """The spoken reminder in the caller's language. 404 when there is none: it was not made, the
+    caller turned speech off in their settings, or retention has swept it."""
+    audio = read_reminder_audio(db, session_id, _reader(db, user))
+    if audio is None:
+        raise _NOT_FOUND
+    data, content_type = audio
+    return Response(content=data, media_type=content_type)
 
 
 # --- status moves a person makes ------------------------------------------------------------------
