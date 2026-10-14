@@ -710,3 +710,4 @@ the server for its DB-backed tests (the local Python lacks
   Phase 1 table finished; the Phase 2 transition tests showed nine illegal moves going straight
   through, and a trigger was needed. The tests rewrite the timestamps to match each new status, so
   only the transition rule can object.
+- Week 10, the reminder clock: the brief and `register_handler`'s own docstring both said `transcribe_media` is wired through it in `app/main.py`, and reading the code showed `register_handler` is called nowhere (both real handlers sit in the static `_HANDLERS` dict) and that registering inside the lifespan would crash every second `TestClient`, so the one line went at module level; a sabotage run then found the row lock had no test, so a two-thread test was written for it.
