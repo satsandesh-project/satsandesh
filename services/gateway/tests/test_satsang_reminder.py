@@ -67,7 +67,7 @@ def sent(monkeypatch):
     """Replaces the delivery with a recorder: (session title, minutes left, reminder_sent_at seen)."""
     calls: list[tuple[str, int, object]] = []
 
-    def record(session, row, minutes_left):
+    def record(session, row, minutes_left, *_rendered):
         calls.append((row.title, minutes_left, row.reminder_sent_at))
 
     monkeypatch.setattr(reminder, "deliver", record)
@@ -366,7 +366,7 @@ def test_a_send_that_fails_leaves_the_timestamp_empty_so_the_retry_sends(
     made, row = _scheduled(client, db_session, admin, swami)
     clock.at(row.scheduled_start_at - LEAD)
 
-    def boom(session, row, minutes_left):
+    def boom(session, row, minutes_left, *_rendered):
         raise RuntimeError("push service down")
 
     monkeypatch.setattr(reminder, "deliver", boom)
@@ -376,7 +376,7 @@ def test_a_send_that_fails_leaves_the_timestamp_empty_so_the_retry_sends(
     assert _row(db_session, made.session.id).reminder_sent_at is None
 
     calls = []
-    monkeypatch.setattr(reminder, "deliver", lambda s, r, m: calls.append(m))
+    monkeypatch.setattr(reminder, "deliver", lambda s, r, m, *_: calls.append(m))
     _run_handler(db_session, made.session.id)
     assert calls == [30]
 
@@ -445,7 +445,7 @@ def test_a_failing_send_retries_with_backoff_and_dead_letters_after_max_attempts
     made, row = _scheduled(client, db_session, admin, swami)
     db_session.commit()
 
-    def boom(session, row, minutes_left):
+    def boom(session, row, minutes_left, *_rendered):
         raise RuntimeError("push service down")
 
     monkeypatch.setattr(reminder, "deliver", boom)
@@ -500,6 +500,8 @@ def pushes(monkeypatch):
         "send_push",
         lambda session, *, user_id, title, body: calls.append((user_id, title, body)),
     )
+    # who is pushed is this fixture's subject, not the translation: no AI call (see the delivery tests)
+    monkeypatch.setattr(reminder, "render_for_languages", lambda text, languages: {})
     return calls
 
 
