@@ -742,3 +742,51 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     access control. Fine for an organisation-wide discourse, wrong for a private circle (the
     scoping question Week 10 has to answer). Caddy could check a token per request only with an
     auth subrequest to the gateway; not built. **Owner:** M2, Week 10.
+41. **Week 9 does not remind anyone.** Nothing tells a user that a satsang is about to start: no push,
+    no spoken reminder, no job that looks at `scheduled_start_at`. The sessions table has a
+    `reminder_sent_at` column and nothing writes it. The plan puts the reminder 30 minutes before the
+    start, as push plus TTS audio, in the user's language. **Owner:** M2, Week 10.
+42. **Week 9 has no screen for listeners.** There is no elder-facing "join" screen and no hls.js
+    player: the HLS stream exists and ffmpeg plays it, but no browser has played it (see #39 for the
+    empty video stream every segment declares). `GET /sessions` returns the listing an elder's screen
+    would show; nothing calls it yet. The Satsang tab in the elders' bottom navigation
+    (`elder_app.py`, M1's file) is a placeholder that does nothing; the Week 10 screen is to be built
+    in its own file, as the admin page was. The admin page is deliberately not linked from the elder
+    screens. **Owner:** M2, Week 10.
+43. **A satsang that never ends, and one that ends too soon.** Measured on the real media server
+    (#37, #38): a publisher that goes silent leaves the row `live`; the media server now drops it
+    after 30 s of silence, and a moderator can end a live satsang by hand (`POST /sessions/{id}/end`,
+    and the End button on the admin page, which asks first). Still open: there is no watchdog for a
+    done-hook that never arrives (a gateway down at that moment), so that satsang stays live, and only
+    one can be live, until a moderator ends it; and ending is final, so a speaker whose phone drops
+    for ten seconds cannot come back. A grace period before `ended` is one design that fixes the
+    second and needs the first's watchdog anyway. **Owner:** M2, Week 10 (the decision is the user's).
+44. **A satsang is organisation-wide, not scoped to a circle.** The base setup does not say; decided
+    from the documents: the Month 3-4 plan lists the satsang's data as "sessions (title, speaker, start
+    time, stream key, status, reminder sent)" with no circle, while the bhajan rooms, the listen
+    sessions and the events in the same plan each name one; the proposal describes a satsang as a
+    "scheduled one-to-many broadcast" for the organisation (objective O4, section 7.4), and circles
+    as groups "by locality or seva interest". So every signed-in user sees every scheduled satsang in
+    `GET /sessions`, and anyone who has a session's id can fetch its stream (#40). If the organisation
+    wants a private satsang, the change is a nullable `circle_id`, a filter in the listing, and a
+    token check in front of `/hls`. **Owner:** M2; revisit only if asked.
+45. **Recording and replay are out of scope.** The media server does not record (`record off`), the
+    HLS segments live in memory and are deleted a minute or so after the stream stops (the last two
+    stay until the container restarts, #39), and nothing stores a satsang for later. The base setup
+    does not include it. The Discourse archive in the plan works on recordings an administrator
+    uploads, so it does not need this feature to record anything. Do not assume a satsang can be
+    heard afterwards. **Owner:** nobody in Weeks 9 and 10.
+46. **What a listener who joins late hears.** The playlist keeps 32 seconds (eight 4-second segments:
+    `hls_fragment 4s`, `hls_playlist_length 32s`), and a player starts three segments behind the live
+    edge. So someone who joins mid-discourse hears it from about 12 seconds ago, on a stream that
+    measures 15 to 17 seconds behind the speaker, and cannot go back further: there is no earlier
+    audio to fetch. A listener whose connection stalls for more than about 20 seconds falls off the
+    front of the playlist and must jump to the live edge (not provoked: 0 of 6 runs at the
+    default settings). Someone who opens the page before the satsang starts gets a 404 for the playlist, not a
+    "not yet": the player has to read the session's status and retry. **Owner:** M2, Week 10.
+47. **The admin page is a first cut.** It takes a pasted signed token (there is no login for an
+    administrator in the app, see #32), the speaker is a user id typed in because there is no user
+    directory to pick from, a speaker has no list of their own satsangs (they paste a session code
+    the administrator gives them), and it is in English only. The elder-app tests are not run by CI
+    (`.github/workflows/ci.yml` has no job for them), so they run on a developer's machine, and the
+    browser-script tests need Node. **Owner:** M2, Week 10 for the page; M1 for #32.
