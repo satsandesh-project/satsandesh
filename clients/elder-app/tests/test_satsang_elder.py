@@ -307,6 +307,12 @@ def test_a_stream_address_is_only_taken_from_this_gateway_and_only_if_it_looks_r
     assert parsed([odd])["items"][0]["stream_url"] == ""
 
 
+def test_a_satsang_that_is_not_live_never_gets_a_stream_even_if_the_server_sent_one():
+    odd = item(SID, "scheduled", 60)
+    odd["hls_url"] = f"/hls/{SID}.m3u8"
+    assert parsed([odd])["items"][0]["stream_url"] == ""
+
+
 @pytest.mark.parametrize(
     ("status", "detail", "error"),
     [
@@ -532,6 +538,16 @@ def test_the_player_status_drives_the_words_and_the_stop_button():
     assert (s.phase, s.show_check) == ("stalled_long", True)
 
 
+def test_a_status_the_player_does_not_have_is_read_as_idle_not_trusted():
+    s = listen()
+    s.after_load(loaded([item(SID, "live", -1)]))
+    s.after_status(player("playing"))
+    s.after_status(player("banana"))
+    assert s.player == "idle" and s.phase == "live_ready"
+    s.after_status("not json at all")  # and garbage changes nothing
+    assert s.player == "idle"
+
+
 def test_a_failure_offers_the_button_again_except_when_the_browser_cannot_play_it_at_all():
     s = listen()
     s.after_load(loaded([item(SID, "live", -1)]))
@@ -570,6 +586,22 @@ def test_every_tick_reads_the_player_and_every_fourth_also_refreshes_the_list():
     refreshed = [i + 1 for i, sc in enumerate(scripts) if len(sc) == 2]
     assert refreshed == [common.LIST_EVERY_TICKS, common.LIST_EVERY_TICKS * 2]
     assert "/sessions" in scripts[common.LIST_EVERY_TICKS - 1][1]
+
+
+def test_opening_the_page_takes_the_id_from_the_address_and_asks_for_the_list(monkeypatch):
+    monkeypatch.setattr(SatsangListenState, "_address_id", lambda self: OTHER)
+    s = SatsangListenState()
+    event = s.boot()
+    assert s.valid_id is True and s._sid == OTHER
+    assert "/sessions" in script_of(event)
+    assert "after_load" in callback_of(event)
+
+
+def test_opening_the_page_with_a_nonsense_id_asks_for_nothing_and_says_it_is_gone(monkeypatch):
+    monkeypatch.setattr(SatsangListenState, "_address_id", lambda self: "../../x")
+    s = SatsangListenState()
+    assert s.boot() is None
+    assert (s.valid_id, s.phase) == (False, "gone")
 
 
 def test_the_tick_does_nothing_for_an_invalid_id():
@@ -727,7 +759,8 @@ def test_the_entry_card_on_the_home_screen_is_bilingual_and_goes_to_the_list():
     card = satsang_upcoming.entry_card()
     text = str(card)
     # the rendered page source writes Telugu as \uXXXX escapes, so compare with that spelling
-    assert "/satsang" in text and json.dumps("సత్సంగం")[1:-1] in text  # the Telugu word
+    assert 'to:"/satsang"' in text  # exactly the list, not a longer path that merely starts so
+    assert json.dumps("సత్సంగం")[1:-1] in text  # the Telugu word
     assert "Satsang" in text
     assert px(card, "minHeight") >= 88
 

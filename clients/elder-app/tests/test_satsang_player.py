@@ -155,6 +155,35 @@ def test_after_five_quick_retries_it_keeps_trying_on_a_timer_instead_of_giving_u
     assert after["log"].count("hls.startLoad") == 6  # and the timer really retries
 
 
+def test_a_manifest_failure_after_sound_is_a_drop_not_an_unreachable_stream():
+    """ "Never loaded" is only ever said about a stream that never produced sound."""
+    out = run(play({"audio": "playing"}, {"hls": ["x", MANIFEST_FATAL]}, snap()))
+    assert out["results"][-1]["status"] == "stalled"
+    assert out["log"].count("hls.startLoad") == 1
+
+
+def test_a_network_failure_before_any_sound_is_still_connecting_and_is_retried():
+    out = run(play({"hls": ["x", NETWORK_FATAL]}, {"advance_s": 2}, snap()))
+    assert out["results"][-1] == {"status": "connecting", "waiting_s": 2, "error_kind": ""}
+    assert out["log"].count("hls.startLoad") == 1
+
+
+def test_a_second_stall_counts_from_its_own_start_not_from_the_first():
+    out = run(
+        play(
+            {"audio": "playing"},
+            {"audio": "waiting"},
+            {"advance_s": 40},
+            {"audio": "playing"},
+            {"advance_s": 100},
+            {"audio": "waiting"},
+            {"advance_s": 3},
+            snap(),
+        )
+    )
+    assert out["results"][-1]["waiting_s"] == 3
+
+
 def test_a_non_fatal_error_is_left_to_the_player_to_absorb():
     out = run(play({"audio": "playing"}, {"hls": ["x", NON_FATAL]}, snap()))
     assert out["results"][-1]["status"] == "playing"

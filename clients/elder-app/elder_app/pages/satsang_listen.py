@@ -92,8 +92,11 @@ class SatsangListenState(rx.State):
 
     # -- loading and polling ----------------------------------------------------------------
 
+    def _address_id(self) -> str:
+        return str(self.router._page.params.get("session_id", ""))
+
     def boot(self):
-        self.open_session(str(self.router._page.params.get("session_id", "")))
+        self.open_session(self._address_id())
         if not self.valid_id:
             self.load_state = "ready"
             self.listed = False
