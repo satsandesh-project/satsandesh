@@ -207,9 +207,10 @@ def test_every_screen_the_elder_can_be_on_has_words_in_both_languages(phase):
 def test_the_telugu_is_in_telugu_not_left_in_english():
     allowed_latin = {"Chrome", "Android", "Safari", "iPhone"}
     for key, value in TEXTS["te"].items():
-        letters = [c for c in re.sub(r"\{[a-z_]+\}", "", value) if c.isalpha()]
+        bare = re.sub(r"\{[a-z_]+\}", "", value)  # a placeholder is filled in, not written
+        letters = [c for c in bare if c.isalpha()]
         telugu = [c for c in letters if "ఀ" <= c <= "౿"]
-        words = set(re.findall(r"[A-Za-z]+", value))
+        words = set(re.findall(r"[A-Za-z]+", bare))
         assert telugu or not letters, key
         assert words <= allowed_latin, (key, words - allowed_latin)
 
@@ -350,6 +351,7 @@ def run_js(steps, local=None, fetches=None, tz="UTC"):
         input=json.dumps(payload),
         capture_output=True,
         text=True,
+        encoding="utf8",  # Telugu month names come back; the default on Windows is cp1252
         env={**os.environ, "TZ": tz},
         timeout=60,
     )
@@ -434,10 +436,18 @@ def test_the_page_script_writes_nothing_to_the_browser():
 # ---------------------------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _the_clock_is_NOW(monkeypatch):
+    """Whether a satsang counts as "joined late" depends on the clock; the tests fix it."""
+    monkeypatch.setattr(common, "_now", lambda: NOW)
+
+
 def listen(session_id=SID):
-    """A state as the router would hand it a session id (no router runs in a unit test)."""
+    """A state that has been told which satsang the address names. (No router runs in a unit test;
+    on the page, `boot` reads the id from the address and calls the same method. The state cannot
+    hold the route argument as a var of its own: Reflex refuses a state var that shadows one.)"""
     state = SatsangListenState()
-    state.session_id = session_id
+    state.open_session(session_id)
     return state
 
 
@@ -716,7 +726,8 @@ def test_the_vendored_player_is_not_served_from_a_path_caddy_sends_to_the_media_
 def test_the_entry_card_on_the_home_screen_is_bilingual_and_goes_to_the_list():
     card = satsang_upcoming.entry_card()
     text = str(card)
-    assert "/satsang" in text and "సత్సంగం" in text  # Telugu word
+    # the rendered page source writes Telugu as \uXXXX escapes, so compare with that spelling
+    assert "/satsang" in text and json.dumps("సత్సంగం")[1:-1] in text  # the Telugu word
     assert "Satsang" in text
     assert px(card, "minHeight") >= 88
 
