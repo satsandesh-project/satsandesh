@@ -15,3 +15,12 @@ anywhere yet -- no backend endpoint for voice notes exists. See
 `elder_app/elder_app.py`'s module docstring for the shared-circle vs.
 per-contact-thread scope note, and `elder_app/gateway_ws_proof.py` for
 the original connect/reconnect-with-backoff reference this was built on.
+
+## Satsang screens (Week 10)
+
+`/satsang` (what is on) and `/satsang/<id>` (one big listen button) live in `elder_app/pages/satsang_*.py`.
+The player is plain JS (`assets/satsang_player.js`, with hls.js vendored in `assets/vendor/`).
+Tests: `pytest tests/test_satsang_elder.py tests/test_satsang_player.py` (the player and the request
+run under Node; without Node they are skipped, and pytest says so). Not covered by any test: a real
+phone, an iPhone, and the Telugu wording. Read the module docstring of `satsang_common.py` first.
+

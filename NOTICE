@@ -61,3 +61,13 @@ off by default)
   the package: the pyrnnoise 0.4.5 wheel contains no RNNoise license or copyright file, so
   the BSD terms come from the upstream project, not from these files. Check upstream and
   retain its copyright notice if the compiled library is redistributed.
+
+================================================================================
+hls.js (the satsang listener's HLS player)
+================================================================================
+Used by: clients/elder-app/ (assets/vendor/hls.min.js, loaded by the satsang listen page)
+
+- hls.js 1.5.17, https://github.com/video-dev/hls.js, copyright (c) 2017 Dailymotion.
+  License: Apache-2.0 (the full text ships beside it as assets/vendor/hls.LICENSE.txt).
+  Vendored unmodified, so the player works on a phone with no route to a CDN.
+  sha256 484054e8cd03d3f6d1781fb7f402bdc318d8a4c527f933a95c624e27cc9a9470.

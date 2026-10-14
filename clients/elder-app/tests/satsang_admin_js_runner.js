@@ -3,7 +3,7 @@
 // context so one step can leave something for the next. Read by tests/test_satsang_admin.py.
 //
 //   stdin  : {"steps": [<js string> | {"fire_timers": true}], "dom": {id: {value, textContent, dataset}},
-//             "storage": {...}, "fetches": [{"status": 200, "body": {...}} | {"throw": true}],
+//             "storage": {...} (sessionStorage), "local": {...} (localStorage), "fetches": [{"status": 200, "body": {...}} | {"throw": true}],
 //             "clipboard_fails": false}
 //   stdout : {"results": [...], "calls": [...], "dom": {...}, "store": {...}, "clipboard": ..., "timers": [ms]}
 //
@@ -22,6 +22,7 @@ for (const [id, spec] of Object.entries(input.dom || {})) {
   dom[id].dataset = Object.assign({}, spec.dataset || {});
 }
 const store = Object.assign({}, input.storage || {});
+const localStore = Object.assign({}, input.local || {});
 const queue = (input.fetches || []).slice();
 
 const ctx = {
@@ -33,6 +34,15 @@ const ctx = {
     },
     removeItem: (k) => {
       delete store[k];
+    },
+  },
+  localStorage: {
+    getItem: (k) => (k in localStore ? localStore[k] : null),
+    setItem: (k, v) => {
+      localStore[k] = String(v);
+    },
+    removeItem: (k) => {
+      delete localStore[k];
     },
   },
   navigator: {
@@ -88,6 +98,7 @@ vm.createContext(ctx);
       calls,
       dom,
       store,
+      local: localStore,
       clipboard: clip.text,
       timers: timers.map((t) => t.ms),
     })

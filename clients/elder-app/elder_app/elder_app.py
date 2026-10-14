@@ -90,7 +90,7 @@ import os
 import reflex as rx
 from rxconfig import config
 
-from elder_app.pages import satsang_admin
+from elder_app.pages import satsang_admin, satsang_listen, satsang_upcoming
 
 GATEWAY_PUBLIC_URL = os.environ.get("GATEWAY_PUBLIC_URL", "http://localhost")
 
@@ -3818,6 +3818,7 @@ def home_screen() -> rx.Component:
         rx.box(
             app_header(),
             thought_card(),
+            satsang_upcoming.entry_card(),
             your_id_card(),
             settings_card(),
             section_heading(),
@@ -4074,3 +4075,5 @@ def index() -> rx.Component:
 app = rx.App(stylesheets=STYLESHEETS)
 app.add_page(index, title=f"{config.app_name}")
 app.add_page(satsang_admin.page, route=satsang_admin.ROUTE, title=satsang_admin.TITLE)
+app.add_page(satsang_upcoming.page, route=satsang_upcoming.ROUTE, title=satsang_upcoming.TITLE)
+app.add_page(satsang_listen.page, route=satsang_listen.ROUTE, title=satsang_listen.TITLE)
