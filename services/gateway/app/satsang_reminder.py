@@ -357,7 +357,10 @@ class SatsangReminderOut(BaseModel):
 
 def _reader_row(
     db: Session, session_id: uuid.UUID, user: DbUser
-) -> SatsangReminderRendering | None:
+) -> tuple[SatsangReminderRendering, bool] | None:
+    """(the row this reader gets, whether its text is in the reader's own language). A reader whose
+    language was not rendered at all (nobody reading it was subscribed) gets the English source row,
+    and is told it is not in their language."""
     rows = {
         r.language: r
         for r in db.scalars(
@@ -366,7 +369,11 @@ def _reader_row(
             )
         )
     }
-    return rows.get(_language_of(user)) or rows.get(SOURCE_LANGUAGE)
+    own = rows.get(_language_of(user))
+    if own is not None:
+        return own, own.translated
+    source = rows.get(SOURCE_LANGUAGE)
+    return (source, False) if source is not None else None
 
 
 def read_reminder(db: Session, session_id: str, user: DbUser) -> SatsangReminderOut | None:
@@ -374,15 +381,16 @@ def read_reminder(db: Session, session_id: str, user: DbUser) -> SatsangReminder
         sid = uuid.UUID(session_id)
     except ValueError:
         return None
-    rendering = _reader_row(db, sid, user)
-    if rendering is None:
+    found = _reader_row(db, sid, user)
+    if found is None:
         return None
+    rendering, in_their_language = found
     audio = bool(rendering.audio_media_object_id) and user.tts_on is not False
     return SatsangReminderOut(
         session_id=str(sid),
-        language=rendering.language if rendering.translated else SOURCE_LANGUAGE,
+        language=rendering.language if in_their_language else SOURCE_LANGUAGE,
         text=rendering.text,
-        translated=rendering.translated,
+        translated=in_their_language,
         audio_url=f"/sessions/{sid}/reminder/audio" if audio else None,
         degraded_reason=rendering.degraded_reason,
     )
@@ -395,9 +403,10 @@ def read_reminder_audio(db: Session, session_id: str, user: DbUser) -> tuple[byt
         sid = uuid.UUID(session_id)
     except ValueError:
         return None
-    rendering = _reader_row(db, sid, user)
-    if rendering is None or rendering.audio_media_object_id is None or user.tts_on is False:
+    found = _reader_row(db, sid, user)
+    if found is None or found[0].audio_media_object_id is None or user.tts_on is False:
         return None
+    rendering = found[0]
     media = db.get(MediaObject, rendering.audio_media_object_id)
     if media is None:
         return None

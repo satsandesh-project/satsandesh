@@ -77,12 +77,13 @@ def fake(tmp_path, monkeypatch):
 
     def spoken(pivot_text, language):
         result = original(pivot_text, language)
-        name = result.audio.uri.rsplit("/", 1)[-1]
-        with wave.open(str(tmp_path / name), "wb") as wav:
-            wav.setnchannels(1)
-            wav.setsampwidth(2)
-            wav.setframerate(16000)
-            wav.writeframes(fill.get(language, b"\x05\x00") * 800)
+        if ai.write_audio_files:
+            name = result.audio.uri.rsplit("/", 1)[-1]
+            with wave.open(str(tmp_path / name), "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(fill.get(language, b"\0") * 800)
         return result
 
     ai._spoken = spoken
@@ -266,8 +267,15 @@ def test_the_renderings_are_stored_once_per_language_with_their_audio(
     _member(db_session, "Hi", "hi")
     made, _ = _fire(client, db_session, admin, swami, clock)
     rows = _renderings(db_session, made.session.id)
-    assert sorted(rows) == ["hi", "te"]
-    for language, rendering in rows.items():
+    # the English source row is always stored, for any reader whose language was not rendered
+    assert sorted(rows) == ["en", "hi", "te"]
+    assert (rows["en"].text, rows["en"].translated, rows["en"].audio_media_object_id) == (
+        SOURCE,
+        True,
+        None,
+    )
+    for language in ("hi", "te"):
+        rendering = rows[language]
         assert rendering.text == f"[{language}] {SOURCE}" and rendering.translated is True
         media = db_session.get(MediaObject, rendering.audio_media_object_id)
         assert media is not None and media.format == "wav_pcm16"
@@ -320,7 +328,17 @@ def test_with_the_render_service_down_the_reminder_still_goes_out_in_the_source_
 def test_with_speech_down_the_reminder_is_translated_text_without_audio(
     client, db_session, admin, swami, clock, fake, pushes
 ):
+    original = fake._render
+
+    def translate_without_a_voice(body):
+        """A render service whose voice is down still translates: only the audio is skipped."""
+        out = original(body)
+        for result in out["results"]:
+            result["text"] = f"[{result['language']}] {body['pivot_text']}"
+        return out
+
     fake.tts_languages = set()
+    fake._render = translate_without_a_voice
     telugu = _member(db_session, "Te", "te")
     made, _ = _fire(client, db_session, admin, swami, clock)
     assert [body for _, _, body in pushes] == [f"[te] {SOURCE}"]

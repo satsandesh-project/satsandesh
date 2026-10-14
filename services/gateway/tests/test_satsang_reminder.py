@@ -394,7 +394,7 @@ def test_two_workers_running_the_same_reminder_at_once_send_it_once(
     release = threading.Event()
     calls: list[int] = []
 
-    def slow_deliver(session, row_, minutes_left):
+    def slow_deliver(session, row_, minutes_left, *_rendered):
         calls.append(minutes_left)
         inside.set()
         release.wait(10)
