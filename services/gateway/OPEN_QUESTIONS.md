@@ -702,19 +702,24 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     while a satsang whose done-hook never arrives stays live until a moderator ends it by hand
     (`POST /sessions/{id}/end`); a grace period and a watchdog are one design. #37 and #38 are
     what the real media server showed about (d). **Owner:** M2, Week 10.
-37. **A publish that arrives while the satsang is already live ENDS it.** Measured on the real
-    stack: a second ffmpeg publishing to the same URL while the first connection was still open
-    was accepted by the hook (the rule that allows a reconnect while live), then refused by
-    nginx-rtmp ("Already publishing"), and nginx still sent the done-hook for that refused
-    connection: the gateway logged `ended (publisher stopped)` and the first connection's own
-    done-hook later got 409. A phone that reconnects before the server has noticed the old
-    connection is gone (a hung TCP connection is not noticed for up to 30 s, see #38) ends the
-    satsang for good. Options: (a) refuse a publish while live (403) -- then nginx never sees a
-    started publisher and sends no done, at the price that a lost done-hook leaves the speaker
-    locked out; (b) keep the nginx `clientid` of the accepted publish and ignore a done-hook from
-    any other (needs a column, so a migration); (c) the grace period of #36 (d). Not changed in
-    the infrastructure PR, because it changes the Phase 2 rule and the contract mock.
-    **Owner:** M2, Week 10 (decision: the user).
+37. **A publish that arrives while the satsang is already live used to END it. Fixed: it is now
+    refused.** Measured on the real stack: a second ffmpeg publishing to the same URL while the first
+    connection was still open was accepted by the hook, then refused by nginx-rtmp ("Already
+    publishing"), and nginx still sent the done-hook for that refused connection: the gateway logged
+    `ended (publisher stopped)` and the first connection's own done-hook later got 409. **Decision
+    (the owner delegated it; option A of three): the publish hook refuses a publish for anything but
+    a scheduled satsang.** Checked on the real media server after the change: the second publish gets
+    a 403 from the hook, nginx never starts it, **0** done-hooks are sent for it, the row stays
+    `live`, and the first publisher's own stop sends the one done-hook that ends it. What this does
+    NOT fix, and why it was the cheaper option: a speaker who reconnects while the old connection is
+    still counted as live is refused until it is dropped (the media server drops a silent publisher
+    after 30 s, #38), and a dropped speaker still cannot resume once the satsang has ended. Both
+    need the grace period of #43, which needs a status the table does not have and so a second
+    migration. A lost done-hook now also locks the speaker out, where before they could reconnect;
+    a moderator ends it by hand (`POST /sessions/{id}/end`, and the End button on the admin page).
+    The other two options, for the record: keep nginx's connection id and ignore a done-hook from
+    any other (needs a column, so a migration); or the grace period itself. **Owner:** M2, Week 10
+    (the grace period).
 38. **A publisher that goes silent without closing its connection.** With no idle limit the
     row stayed `live` for the whole 2 minutes it was watched (the HLS playlist started returning
     404 after about 75 s, so listeners got nothing while the app said live), and only one satsang
