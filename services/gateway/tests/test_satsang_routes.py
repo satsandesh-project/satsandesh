@@ -535,16 +535,39 @@ def test_going_live_more_than_an_hour_early_is_refused_but_arbitrarily_late_is_n
     assert _fresh(db_session, late.id).status == "live"
 
 
-def test_the_same_key_publishing_again_while_live_is_accepted_and_changes_nothing(
+def test_a_second_publish_while_live_is_refused_and_changes_nothing(
     client, db_session, admin, swami, hook
 ) -> None:
-    """A phone that drops and reconnects asks again before the old connection's end-of-stream
-    hook has fired. It is the same speaker with the same key, so it must not be refused."""
+    """Measured on the real media server (OPEN_QUESTIONS #37): a second publish to a stream that is
+    already being published is refused by nginx-rtmp ("already publishing"), and nginx still sends
+    the end-of-stream hook for that refused connection, which used to end the live satsang. Refusing
+    it HERE, at the publish hook, means nginx never starts that connection, so it sends no done."""
     made = _schedule(client, admin, swami, minutes=5)
     assert _publish(client, made.session.id, made.stream_key).status_code == 200
     started = _fresh(db_session, made.session.id).started_at
+    assert _publish(client, made.session.id, made.stream_key).status_code == 403
+    after = _fresh(db_session, made.session.id)
+    assert (after.status, after.started_at, after.ended_at) == ("live", started, None)
+
+
+def test_the_publisher_that_is_actually_on_the_air_can_still_end_it_after_a_refused_second(
+    client, db_session, admin, swami, hook
+) -> None:
+    made = _schedule(client, admin, swami, minutes=5)
     assert _publish(client, made.session.id, made.stream_key).status_code == 200
-    assert _fresh(db_session, made.session.id).started_at == started
+    assert _publish(client, made.session.id, made.stream_key).status_code == 403
+    assert _done(client, made.session.id, made.stream_key).status_code == 200
+    assert _fresh(db_session, made.session.id).status == "ended"
+
+
+def test_a_refused_second_publish_does_not_put_the_key_in_the_log(
+    client, db_session, admin, swami, hook, caplog
+) -> None:
+    made = _schedule(client, admin, swami, minutes=5)
+    assert _publish(client, made.session.id, made.stream_key).status_code == 200
+    with caplog.at_level("DEBUG"):
+        assert _publish(client, made.session.id, made.stream_key).status_code == 403
+    assert made.stream_key not in caplog.text
 
 
 def test_the_json_form_the_mock_documents_is_accepted_too(
