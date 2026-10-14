@@ -58,9 +58,11 @@ that dies after the pushes and before that commit sends again on the retry. Afte
 does. A duplicate "starting in 30 minutes" is the cheaper mistake than a missing one, so the push comes
 first and the timestamp second.
 
-**What is NOT here.** The text is English-sourced and the spoken version is only as good as the render
-service's voice (Telugu and Hindi voices are Piper's; nobody who reads Telugu has listened to them).
-There is no per-user opt-out of satsang reminders beyond turning push off.
+**What is NOT here.** English readers get the text and NO audio: the real render service has no
+English voice (measured on 14 Oct: asked for `en` it answers `text_only`, "no TTS voice for this
+language"), which this module records as it is rather than hiding. The Telugu and Hindi voices are
+Piper's, and nobody who reads those languages has listened to them. There is no per-user opt-out of
+satsang reminders beyond turning push off.
 """
 
 from __future__ import annotations

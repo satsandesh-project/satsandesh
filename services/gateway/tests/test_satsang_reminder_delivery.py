@@ -350,6 +350,27 @@ def test_with_speech_down_the_reminder_is_translated_text_without_audio(
     )
 
 
+def test_a_language_with_no_voice_is_text_only_not_a_failure(
+    client, db_session, admin, swami, clock, fake, pushes
+):
+    """The real render service has no English voice: asked for `en` it answers text_only. Measured on
+    the server on 14 Oct; the scripted fake otherwise speaks every language, so this pins it."""
+    fake.tts_languages = {"hi", "te"}
+    english = _member(db_session, "En", "en")
+    telugu = _member(db_session, "Te", "te")
+    made, _ = _fire(client, db_session, admin, swami, clock)
+    assert {uid for uid, _, _ in pushes} == {english.id, telugu.id}  # both are told
+    seen = client.get(f"/sessions/{made.session.id}/reminder", headers=_headers(english)).json()
+    assert (seen["language"], seen["degraded_reason"], seen["audio_url"]) == (
+        "en",
+        "text_only",
+        None,
+    )
+    assert client.get(f"/sessions/{made.session.id}/reminder", headers=_headers(telugu)).json()[
+        "audio_url"
+    ]
+
+
 def test_an_audio_file_that_cannot_be_read_costs_the_audio_not_the_reminder(
     client, db_session, admin, swami, clock, fake, pushes
 ):
