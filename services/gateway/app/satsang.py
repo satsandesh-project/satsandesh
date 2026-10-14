@@ -124,6 +124,7 @@ from app.db.base import get_db
 from app.db.models import User as DbUser
 from app.db.satsang import SatsangSession
 from app.models import User
+from app.satsang_reminder import enqueue_reminder
 from app.tokens import looks_like_jwt
 
 logger = logging.getLogger(__name__)
@@ -289,6 +290,7 @@ def schedule_session(
             if _violated(exc) != _UQ_KEY:
                 raise
             continue  # the generator repeated itself: draw again
+        enqueue_reminder(db, row)  # in this transaction: no satsang without its reminder
         db.commit()
         # The session id only. A user id is a bearer credential in legacy auth mode, so it is
         # not written to a log that other people can read.

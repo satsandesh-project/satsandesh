@@ -5,13 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import satsang_reminder
 from app.admin_org import router as admin_org_router
 from app.audio_labels import router as audio_labels_router
 from app.auth import get_current_user
 from app.circles import router as circles_router
 from app.config import get_settings
 from app.db.base import check_database_connection
-from app.jobs import run_worker_loop, worker_id
+from app.jobs import register_handler, run_worker_loop, worker_id
 from app.media import router as media_router
 from app.messages import router as messages_router
 from app.models import User
@@ -32,6 +33,10 @@ from app.ws import router as ws_router
 settings = get_settings()
 
 logging.basicConfig(level=settings.LOG_LEVEL)
+
+# This job handler is registered here, at import, not in the lifespan: register_handler raises on a
+# second registration and every TestClient context re-runs the lifespan.
+register_handler(satsang_reminder.JOB_TYPE, satsang_reminder.handle_satsang_reminder)
 
 
 @asynccontextmanager

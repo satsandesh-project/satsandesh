@@ -544,7 +544,7 @@ def test_main_py_gained_only_the_import_and_the_register_handler_call():
     source = (Path(__file__).resolve().parent.parent / "app" / "main.py").read_text(encoding="utf8")
     lines = [ln for ln in source.splitlines() if "satsang_reminder" in ln]
     assert len(lines) == 2, lines
-    assert any(ln.startswith("from app.satsang_reminder import") for ln in lines)
+    assert any(ln.startswith("from app import satsang_reminder") for ln in lines)
     assert sum("register_handler(" in ln for ln in lines) == 1
     # at module level, not inside the lifespan: register_handler raises on a second registration and
     # every TestClient context re-runs the lifespan
