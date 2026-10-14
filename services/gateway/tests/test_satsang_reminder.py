@@ -16,12 +16,14 @@ Time is injected, never slept: two clocks are swapped for one the test controls,
 (what `claim_next_job` and `fail_job` read) and the reminder module's own `_now`.
 """
 
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from contracts.chat.satsang import SatsangSessionCreated
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 import app.jobs as jobs_module
 import app.satsang_reminder as reminder
@@ -377,6 +379,46 @@ def test_a_send_that_fails_leaves_the_timestamp_empty_so_the_retry_sends(
     monkeypatch.setattr(reminder, "deliver", lambda s, r, m: calls.append(m))
     _run_handler(db_session, made.session.id)
     assert calls == [30]
+
+
+def test_two_workers_running_the_same_reminder_at_once_send_it_once(
+    client, db_session, admin, swami, clock, monkeypatch, engine
+):
+    """Two jobs for one satsang can both be due (a duplicate, or a reschedule route that also
+    enqueued one). The row lock makes the second wait for the first to commit, then see
+    `reminder_sent_at` and send nothing. Without the lock both read it empty and both send."""
+    made, row = _scheduled(client, db_session, admin, swami)
+    db_session.commit()
+    clock.at(row.scheduled_start_at - LEAD)
+    inside = threading.Event()
+    release = threading.Event()
+    calls: list[int] = []
+
+    def slow_deliver(session, row_, minutes_left):
+        calls.append(minutes_left)
+        inside.set()
+        release.wait(10)
+
+    monkeypatch.setattr(reminder, "deliver", slow_deliver)
+
+    def worker():
+        with Session(engine) as own:
+            reminder.handle_satsang_reminder(own, {"session_id": made.session.id})
+            own.commit()
+
+    first = threading.Thread(target=worker)
+    first.start()
+    assert inside.wait(5), "the first worker never reached the send"
+    second = threading.Thread(target=worker)
+    second.start()
+    second.join(1.0)
+    second_was_waiting = second.is_alive()  # holding at the row lock, not racing past it
+    release.set()
+    first.join(10)
+    second.join(10)
+    assert second_was_waiting
+    assert calls == [30]
+    assert _row(db_session, made.session.id).reminder_sent_at is not None
 
 
 def test_through_the_real_worker_the_timestamp_and_the_completion_commit_together(
