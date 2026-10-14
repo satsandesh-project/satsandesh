@@ -115,7 +115,10 @@ def test_a_due_time_without_a_timezone_is_refused(db_session):
     """A naive datetime would be read in the database session's zone: refuse it, don't guess."""
     with pytest.raises(ValueError, match="timezone"):
         enqueue_job(
-            db_session, job_type="noop", payload={}, next_attempt_at=datetime(2026, 10, 20, 12, 0)
+            db_session,
+            job_type="noop",
+            payload={},
+            next_attempt_at=datetime(2026, 10, 20, 12, 0),  # noqa: DTZ001 -- naive on purpose
         )
 
 
