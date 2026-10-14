@@ -1,22 +1,24 @@
 """assets/satsang_player.js: the satsang listener's player, run for real under Node.
 
-The file is plain JavaScript on purpose (not a string in Python), so these tests load the very file the
-browser loads. It is driven against a fake audio element, a fake `Hls` class that the test can fire
-events into, and a clock the test moves: nothing sleeps, nothing touches a network. If Node is missing
-the tests are SKIPPED, which pytest prints; they are not silently passing.
+The file is plain JavaScript on purpose (not a string in Python), so these tests load the very
+file the browser loads. It is driven against a fake audio element, a fake `Hls` class that the
+test can fire events into, and a clock the test moves: nothing sleeps, nothing touches a network.
+If Node is missing the tests are SKIPPED, which pytest prints; they are not silently passing.
 
 What the player is responsible for, and these tests pin:
 
-- **It starts inside the tap.** `play()` must call `audio.play()` synchronously: iOS Safari refuses to
-  start audio that is not requested during a touch, and a round trip through the Reflex server would
-  lose it. (Whether a real iPhone accepts it was NOT checked: no iPhone was available.)
-- **It reports what it knows and nothing more:** idle, connecting, playing, stalled, failed, with how
-  long it has been waiting and why it failed. The words the elder reads are chosen elsewhere.
-- **It keeps trying** when the network drops mid-discourse, and it gives up only for a reason a retry
-  cannot fix (a stream that never loaded, a browser that cannot play it).
-- **It tells "never loaded" from "dropped".** A manifest that fails before any sound is the signature of
-  a phone that does not trust the site's certificate (or has no route), and is reported as
-  `unreachable` so the screen can say so; the same failure after sound is a drop, and is retried.
+- **It starts inside the tap.** `play()` must call `audio.play()` synchronously: iOS Safari
+  refuses to start audio that is not requested during a touch, and a round trip through the
+  Reflex server would lose it. (Whether a real iPhone accepts it was NOT checked: no iPhone was
+  available.)
+- **It reports what it knows and nothing more:** idle, connecting, playing, stalled, failed, with
+  how long it has been waiting and why it failed. The words the elder reads are chosen elsewhere.
+- **It keeps trying** when the network drops mid-discourse, and it gives up only for a reason a
+  retry cannot fix (a stream that never loaded, a browser that cannot play it).
+- **It tells "never loaded" from "dropped".** A manifest that fails before any sound is the
+  signature of a phone that does not trust the site's certificate (or has no route), and is
+  reported as `unreachable` so the screen can say so; the same failure after sound is a drop,
+  and is retried.
 """
 
 import json
@@ -80,7 +82,7 @@ def test_before_anything_is_tapped_it_is_idle():
 
 def test_a_tap_starts_audio_inside_the_tap_not_later():
     out = run(play())
-    # in this order, all during the one call: nothing waits for a network answer or a server round trip
+    # in this order, all during the one call: nothing waits for the network or the server
     assert out["log"] == [
         "Hls.new",
         f"hls.loadSource:{URL}",
@@ -179,7 +181,8 @@ def test_a_browser_without_hls_js_support_uses_native_hls():
 
 def test_a_native_error_before_sound_is_unreachable():
     """On an iPhone the media stack, not the page, fetches the stream, and it does not honour a
-    certificate warning the page was let through: this is how an untrusted certificate shows up there."""
+    certificate warning the page was let through: this is how an untrusted certificate shows up
+    there."""
     out = run(play({"audio": "error"}, snap()), hls="unsupported", native=True)
     assert out["results"][-1] == {"status": "failed", "waiting_s": 0, "error_kind": "unreachable"}
 
@@ -216,7 +219,11 @@ def test_stopping_tears_everything_down_and_goes_idle():
 
 
 def test_a_late_event_after_stop_changes_nothing():
-    out = run(play({"audio": "playing"}, {"call": "stop"}, {"audio": "waiting"}, {"advance_s": 50}, snap()))
+    out = run(
+        play(
+            {"audio": "playing"}, {"call": "stop"}, {"audio": "waiting"}, {"advance_s": 50}, snap()
+        )
+    )
     assert out["results"][-1]["status"] == "idle"
 
 
