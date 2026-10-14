@@ -746,13 +746,15 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     no spoken reminder, no job that looks at `scheduled_start_at`. The sessions table has a
     `reminder_sent_at` column and nothing writes it. The plan puts the reminder 30 minutes before the
     start, as push plus TTS audio, in the user's language. **Owner:** M2, Week 10.
-42. **Week 9 has no screen for listeners.** There is no elder-facing "join" screen and no hls.js
-    player: the HLS stream exists and ffmpeg plays it, but no browser has played it (see #39 for the
-    empty video stream every segment declares). `GET /sessions` returns the listing an elder's screen
-    would show; nothing calls it yet. The Satsang tab in the elders' bottom navigation
-    (`elder_app.py`, M1's file) is a placeholder that does nothing; the Week 10 screen is to be built
-    in its own file, as the admin page was. The admin page is deliberately not linked from the elder
-    screens. **Owner:** M2, Week 10.
+42. **Week 9 had no screen for listeners; Week 10 added two, and what is still unproven.** The
+    elder app now has `/satsang` (what is on and what is next) and `/satsang/<id>` (one big button;
+    `elder_app/pages/satsang_*.py`), reached from a bilingual card on the home screen. An earlier
+    version of this entry said the "Satsang" tab in the bottom navigation was a placeholder that does
+    nothing. **That was wrong:** the tab shows the circles list, and it is untouched. Played for real
+    in a desktop browser against a stand-in gateway with real HLS (hls.js playing, stopping when the
+    list says ended, recovering when a cut stream came back). **Not done:** no phone, no iPhone, no
+    3G, and the Telugu wording has not been read by a native speaker. The certificate case is
+    reproduced as "the stream never loads", not as an untrusted certificate. **Owner:** M2, Week 10.
 43. **A satsang that never ends, and one that ends too soon.** Measured on the real media server
     (#37, #38): a publisher that goes silent leaves the row `live`; the media server now drops it
     after 30 s of silence, and a moderator can end a live satsang by hand (`POST /sessions/{id}/end`,
@@ -790,3 +792,9 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     the administrator gives them), and it is in English only. The elder-app tests are not run by CI
     (`.github/workflows/ci.yml` has no job for them), so they run on a developer's machine, and the
     browser-script tests need Node. **Owner:** M2, Week 10 for the page; M1 for #32.
+48. **An elder cannot ask for one satsang, only for the list; "ended" is inferred.** There is no
+    `GET /sessions/{id}` for a listener, and the list leaves a satsang out the moment it ends, so the
+    listen screen says "ended" when a satsang it saw live (or was playing) leaves the list, and "not
+    on the list" for an id it never saw. Up to 12 seconds can pass between the end and the words.
+    A single-satsang route that answers `ended` and `cancelled` too would make both exact; it is a
+    contract change (its own PR, mock first), so it is not made here. **Owner:** M2, Week 10 (the decision is the user's).

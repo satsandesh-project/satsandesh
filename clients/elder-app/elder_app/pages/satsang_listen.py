@@ -52,7 +52,7 @@ _LISTENING = {
     "stalled_long",
 }
 _OFFER_PLAY = {"live_ready", "failed_unreachable", "failed_blocked", "failed_other"}
-_LIVE_PHASES = _LISTENING | _OFFER_PLAY | {"failed_unsupported"}
+_LIVE_PHASES = _LISTENING | _OFFER_PLAY
 _OVER = {"ended", "cancelled"}
 
 
@@ -80,6 +80,7 @@ class SatsangListenState(rx.State):
     show_session: bool = False
     show_retry: bool = False
     show_check: bool = False
+    show_home: bool = False
     valid_id: bool = False
     _sid: str = ""
     _ticks: int = 0
@@ -96,13 +97,15 @@ class SatsangListenState(rx.State):
         return str(self.router._page.params.get("session_id", ""))
 
     def boot(self):
+        # Reflex keeps a browser's state between page visits (a reload does not clear it), so a
+        # screen starts from nothing: no stream address, no "seen live", no player left over.
+        self.reset()
         self.open_session(self._address_id())
         if not self.valid_id:
             self.load_state = "ready"
-            self.listed = False
             self._show()
             return None
-        return self.check_again()
+        return [rx.call_script(JS_STOP), self.check_again()]
 
     def check_again(self):
         return rx.call_script(js_load_sessions(), callback=SatsangListenState.after_load)
@@ -188,6 +191,7 @@ class SatsangListenState(rx.State):
         }
         self.show_retry = self.phase == "load_error"
         self.show_check = self.phase == "stalled_long"
+        self.show_home = self.phase == "need_identity"
 
 
 S = SatsangListenState
@@ -261,6 +265,14 @@ def _session_card() -> rx.Component:
     )
 
 
+def _home_link() -> rx.Component:
+    return rx.link(
+        S.t["go_home"],
+        href="/",
+        style={**_quiet_button(), "display": "flex", "align_items": "center", "padding": "0 24px"},
+    )
+
+
 def _notes() -> rx.Component:
     return rx.vstack(
         rx.cond(S.late, rx.text(S.t["late_note"], style={"font_size": "22px"}), rx.fragment()),
@@ -297,13 +309,22 @@ def page() -> rx.Component:
             rx.heading(
                 S.title,
                 as_="h1",
-                style={"font_size": "36px", "color": COLOR["ink"], "margin": "0"},
+                style={
+                    "font_size": "36px",
+                    "color": COLOR["ink"],
+                    "margin": "0",
+                    "line_height": "1.25",
+                    "text_align": "center",
+                },
             ),
-            rx.text(S.body, style={"font_size": "26px", "line_height": "1.4"}),
+            rx.text(
+                S.body, style={"font_size": "26px", "line_height": "1.4", "text_align": "center"}
+            ),
             rx.cond(S.show_play, play_button(), rx.fragment()),
             rx.cond(S.show_stop, stop_button(), rx.fragment()),
             rx.cond(S.show_check, _text_button(S.t["check_again"], S.check_again), rx.fragment()),
             rx.cond(S.show_retry, _text_button(S.t["try_again"], S.check_again), rx.fragment()),
+            rx.cond(S.show_home, _home_link(), rx.fragment()),
             rx.cond(S.show_notes, _notes(), rx.fragment()),
             spacing="5",
             align="center",
@@ -311,6 +332,8 @@ def page() -> rx.Component:
             style={"max_width": "560px", "margin": "0 auto", "padding": "24px 16px 64px"},
         ),
         on_mount=S.boot,
+        # a removed <audio> element keeps playing, so leaving the screen stops the sound
+        on_unmount=S.stop,
         style={
             "min_height": "100vh",
             "background": COLOR["canvas"],

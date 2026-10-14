@@ -86,6 +86,7 @@ CONTRAST_PAIRS = [
     ("the 'on now' badge", COLOR["white"], COLOR["live"], 7.0),
     ("the 'coming up' badge", COLOR["white"], COLOR["green"], 7.0),
     ("a note on its cream box", COLOR["ink"], COLOR["gold"], 7.0),
+    ("secondary text on the cream box", COLOR["muted"], COLOR["gold"], 7.0),
     ("a problem message", COLOR["warn_ink"], COLOR["warn_bg"], 7.0),
     ("a quiet button", COLOR["ink"], COLOR["card"], 7.0),
 ]
@@ -208,6 +209,7 @@ _COMMON_EN = {
     "try_again": "Try again",
     "back_to_list": "All satsangs",
     "back_home": "Back",
+    "go_home": "Open the home page",
     "late_note": (
         "You joined while the satsang was under way. You will hear it from now on; "
         "the part you missed cannot be played again."
@@ -234,6 +236,7 @@ _COMMON_TE = {
     "try_again": "మళ్లీ ప్రయత్నించండి",
     "back_to_list": "అన్ని సత్సంగాలు",
     "back_home": "వెనుకకు",
+    "go_home": "హోమ్ పేజీ తెరవండి",
     "late_note": ("సత్సంగం మొదలైన తర్వాత మీరు చేరారు. ఇప్పటి నుండి మీకు వినిపిస్తుంది; మీరు కోల్పోయిన భాగాన్ని మళ్లీ వినలేరు."),
     "delay_note": ("శబ్దం చిన్న ముక్కలుగా పంపబడుతుంది, కాబట్టి వక్త కంటే కొన్ని సెకన్లు వెనుకగా మీకు వినిపిస్తుంది."),
 }

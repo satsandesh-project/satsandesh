@@ -41,6 +41,10 @@ class SatsangUpcomingState(rx.State):
     _ticks: int = 0
 
     def boot(self):
+        self.reset()  # Reflex keeps state between visits; this screen starts from nothing
+        return self.refresh()
+
+    def refresh(self):
         return rx.call_script(js_load_sessions(), callback=SatsangUpcomingState.after_load)
 
     def after_load(self, raw: str):
@@ -61,7 +65,7 @@ class SatsangUpcomingState(rx.State):
         self._ticks += 1
         if self._ticks % UPCOMING_EVERY_TICKS:
             return None
-        return self.boot()
+        return self.refresh()
 
 
 def _card(entry: dict[str, Any], t: dict[str, str]) -> dict[str, Any]:
@@ -172,7 +176,12 @@ def page() -> rx.Component:
             rx.heading(
                 S.t["upcoming_title"],
                 as_="h1",
-                style={"font_size": "40px", "color": COLOR["ink"], "margin": "0"},
+                style={
+                    "font_size": "40px",
+                    "color": COLOR["ink"],
+                    "margin": "0",
+                    "line_height": "1.25",
+                },
             ),
             rx.cond(
                 S.status == "loading",
@@ -198,8 +207,14 @@ def entry_card() -> rx.Component:
     te, en = TEXTS["te"], TEXTS["en"]
     return rx.link(
         rx.vstack(
-            rx.text(te["entry_title"], style={"font_size": "32px", "font_weight": "800"}),
-            rx.text(en["entry_title"], style={"font_size": "26px", "font_weight": "700"}),
+            rx.text(
+                te["entry_title"],
+                style={"font_size": "32px", "font_weight": "800", "color": COLOR["ink"]},
+            ),
+            rx.text(
+                en["entry_title"],
+                style={"font_size": "26px", "font_weight": "700", "color": COLOR["ink"]},
+            ),
             rx.text(te["entry_hint"], style={"font_size": "22px", "color": COLOR["muted"]}),
             rx.text(en["entry_hint"], style={"font_size": "22px", "color": COLOR["muted"]}),
             spacing="1",

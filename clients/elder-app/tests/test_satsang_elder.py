@@ -515,6 +515,8 @@ def test_a_failed_load_offers_a_retry_and_does_not_pretend():
     s2 = listen()
     s2.after_load(loaded([], ok=False, status=0, detail="no_identity"))
     assert s2.phase == "need_identity"
+    assert (s2.show_home, s2.show_retry) == (True, False)  # the way out is the home page
+    assert s.show_home is False
 
 
 def test_a_session_id_in_the_address_is_checked_before_it_is_used():
@@ -555,6 +557,7 @@ def test_a_failure_offers_the_button_again_except_when_the_browser_cannot_play_i
     assert (s.phase, s.show_play) == ("failed_unreachable", True)
     s.after_status(player("failed", error_kind="unsupported"))
     assert (s.phase, s.show_play) == ("failed_unsupported", False)
+    assert s.show_notes is False  # nothing to hear, so nothing about how it will sound
     s.after_status(player("failed", error_kind="blocked"))
     assert (s.phase, s.show_play) == ("failed_blocked", True)
 
@@ -591,10 +594,32 @@ def test_every_tick_reads_the_player_and_every_fourth_also_refreshes_the_list():
 def test_opening_the_page_takes_the_id_from_the_address_and_asks_for_the_list(monkeypatch):
     monkeypatch.setattr(SatsangListenState, "_address_id", lambda self: OTHER)
     s = SatsangListenState()
-    event = s.boot()
+    stop, load = s.boot()
     assert s.valid_id is True and s._sid == OTHER
-    assert "/sessions" in script_of(event)
-    assert "after_load" in callback_of(event)
+    assert "satsang.stop" in script_of(stop)  # a player left running by an earlier visit is stopped
+    assert "/sessions" in script_of(load)
+    assert "after_load" in callback_of(load)
+
+
+def test_opening_a_screen_forgets_the_last_one_a_satsang_does_not_inherit_the_previous_stream(
+    monkeypatch,
+):
+    """Reflex keeps a browser's state between page visits, and a page reload does not clear it."""
+    s = listen(SID)
+    s.after_load(loaded([item(SID, "live", -30)]))
+    s.after_status(player("playing"))
+    assert s.stream_url and s.seen_live and s.late and s.item
+    monkeypatch.setattr(SatsangListenState, "_address_id", lambda self: OTHER)
+    s.boot()
+    assert (s.stream_url, s.seen_live, s.late, s.item, s.player) == ("", False, False, {}, "idle")
+    assert (s.phase, s.show_play, s.show_stop) == ("loading", False, False)
+    s.after_load(loaded([item(OTHER, "scheduled", 60)]))
+    assert s.phase == "scheduled" and s.stream_url == ""
+
+
+def test_leaving_the_screen_stops_the_sound_a_removed_audio_element_keeps_playing():
+    page = satsang_listen.page()
+    assert "on_unmount" in page.event_triggers and "on_mount" in page.event_triggers
 
 
 def test_opening_the_page_with_a_nonsense_id_asks_for_nothing_and_says_it_is_gone(monkeypatch):
@@ -642,6 +667,15 @@ def test_the_upcoming_screen_tells_failures_apart():
     assert (s.status, s.error_text) == ("error", TEXTS["en"]["load_error_title"])
     s.after_load(loaded([], ok=False, status=0, detail="no_identity"))
     assert s.error_text == TEXTS["en"]["need_identity_title"]
+
+
+def test_a_refresh_of_the_list_screen_does_not_blank_it_first():
+    s = SatsangUpcomingState()
+    s.after_load(loaded([item("a", "live", -5)]))
+    for _ in range(common.UPCOMING_EVERY_TICKS):
+        event = s.tick("")
+    assert event is not None and "/sessions" in script_of(event)
+    assert (s.status, [i["id"] for i in s.items]) == ("ready", ["a"])
 
 
 def test_the_upcoming_screen_refreshes_itself_about_every_half_minute():
