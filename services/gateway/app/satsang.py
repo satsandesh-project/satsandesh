@@ -74,12 +74,19 @@ separate form fields, at publish and at done, and keeps the callback URL's query
 secret) -- all three measured. The hook looks the session up by id and checks the key against its
 stored hash; a key under another session's name, and the key used AS the name, are refused.
 
+A publish is accepted only for a `scheduled` satsang. A second publish while it is `live` is
+REFUSED. It used to be let through, on the thinking that a phone that dropped and reconnected
+asks again before the old connection's done-hook. Measured on the real media server (OPEN_QUESTIONS
+#37): nginx-rtmp refuses a duplicate publish itself ("already publishing") and still sends the
+done-hook for the refused connection, so letting it through ended the live satsang. Refused here,
+nginx never starts that connection and sends no done.
+
 Known limit, not decided here: when a speaker's connection drops, `on_publish_done` ends the
-satsang, and the key is then dead, so the speaker cannot resume. The same key publishing again
-while the satsang is still live is accepted (a reconnect that arrives before the old connection's
-done-hook), but after the done-hook it is not. A grace period belongs to the watchdog that also
-has to catch the opposite failure, a satsang left live because the done-hook never came. Until
-then a moderator can end one by hand (`POST /sessions/{id}/end`).
+satsang, and the key is then dead, so the speaker cannot resume; and a speaker who reconnects while
+the old connection is still counted as live is refused until it is dropped (the media server drops
+a silent publisher after 30 s). A grace period belongs to the watchdog that also has to catch the
+opposite failure, a satsang left live because the done-hook never came. Until then a moderator can
+end one by hand (`POST /sessions/{id}/end`).
 """
 
 from __future__ import annotations
@@ -478,10 +485,6 @@ def _on_publish(db: Session, name: str | None, key: str | None) -> JSONResponse:
     row = _by_name_and_key(db, name, key)
     if row is None:
         raise _refuse("no session with that name and key")
-    if row.status == "live":
-        # A phone that dropped and reconnected asks again before the old connection's done-hook
-        # has fired. Same speaker, same key: let it through and change nothing.
-        return JSONResponse({"status": "live"})
     if row.status != "scheduled":
         raise _refuse(f"satsang {row.id} is {row.status}")
     early = timedelta(minutes=get_settings().SATSANG_GO_LIVE_EARLY_MINUTES)
