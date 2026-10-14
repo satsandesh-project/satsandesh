@@ -118,7 +118,7 @@ def test_a_due_time_without_a_timezone_is_refused(db_session):
             db_session,
             job_type="noop",
             payload={},
-            next_attempt_at=datetime(2026, 10, 20, 12, 0),  # noqa: DTZ001 -- naive on purpose
+            next_attempt_at=T0.replace(tzinfo=None),  # naive on purpose
         )
 
 
