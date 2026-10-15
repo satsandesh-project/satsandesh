@@ -11,7 +11,7 @@
 #
 # What it is, and is not (infra/satsang/README.md has the short version):
 #   - RTMP is CLEARTEXT: the stream key crosses the network unencrypted from the phone to this
-#     host (services/gateway/OPEN_QUESTIONS.md #36). Fine on a trusted network, not on the internet.
+#     host (services/gateway/OPEN_QUESTIONS.md #50). Fine on a trusted network, not on the internet.
 #   - HLS goes out through Caddy, over HTTPS when the tls layer is on. The HLS URL carries no
 #     login: anyone who knows a session's id can listen. The playlist is named by the session
 #     id, never by the key.

@@ -666,42 +666,37 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     word but invented a fact and addresses elders as "tum"); the IndicTrans2 1B and Indic→Indic models could not be
     tested because the Hugging Face terms are not accepted on the account behind the token (403).
 
-35. **A bhajan-room lead can rejoin as a speaker for about three minutes after their turn.** A token's
-    `canPublish` is applied again whenever someone joins with it, and the hand-over's
-    `UpdateParticipant` changes only the live session, so the publish-capable token is kept to two
-    minutes (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`) and the listener token to an hour. **LiveKit
-    v1.13.9 also accepts an expired token for exactly 60 more seconds** (measured by M2 on a throwaway
-    LiveKit: accepted up to 59 s past expiry, refused from 60 s, with a fresh-token control valid on
-    every row), so the real window is the token's life plus 60 s: about three minutes, not two.
-    That shrinks the window; it does not close it. Closing it needs a check on join: a LiveKit
-    `participant_joined` webhook that silences anyone who is not the current lead. Not built.
-    Found by M2's review of #151, who showed it on a real LiveKit. **Owner:** M1 (webhook route
-    and the gateway side), before bhajan rooms are used outside a demo.
+35. **A bhajan-room lead could rejoin as a speaker after their turn.** A token's `canPublish` is
+    applied again whenever someone joins with it, and the hand-over's `UpdateParticipant` changes
+    only the live session. Two layers now: the publish-capable token lives two minutes
+    (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`; the listener's an hour; **LiveKit v1.13.9 also accepts
+    an expired token for exactly 60 more seconds**, measured by M2 on a throwaway LiveKit, so on its
+    own the token leaves a window of about three minutes), and LiveKit's `participant_joined`
+    webhook (`app/livekit_webhook.py`, `/internal/livekit/webhook`, signed with the API secret,
+    reachable only inside the compose network) makes the gateway set the joiner's permission to what
+    the database says, under the room lock. It also lets a lead who joined muted speak. **Shown
+    against a real LiveKit** (`infra/livekit/webhook_check.sh`): after a real WebRTC join LiveKit
+    sends `participant_joined` (a signalling-only join sends nothing), the gateway's own signature
+    check accepts its signature, and the event carries the room name and the person's identity.
+    **Not shown:** the whole chain end to end (the permission really changing on a live session) and
+    the time between a join and that change, during which audio could leak. If LiveKit cannot be
+    reached the answer is a 502 and the person keeps what their token gave them, so the short token is
+    still the first line of defence. Found by M2's review of #151. **Owner:** M1, to show it on a real
+    LiveKit with real devices (deferred, see #36).
 
-36. **A satsang's stream key crosses the campus network in clear, and the ingest hook's secret sits
-    in a URL.** The hook (`POST /sessions/ingest/publish`, called by the RTMP server) is
-    protected by a shared secret, the stream key and what the key is worth (`app/satsang.py`
-    module docstring), and for the hook that is enough: an attacker without a valid key changes
-    nothing, and one with a key could already broadcast by publishing to the RTMP port. The weak
-    point is the key. **RTMP on 1935 carries it unencrypted** (`infra/satsang/INGEST_FINDING.md`),
-    so anyone who can watch one publish handshake on the same network learns a key that works
-    until that satsang ends. Its life is bounded (only while the satsang is scheduled or live,
-    only from an hour before the start, dead after it ends, one live at a time), which shortens
-    the exposure and does not remove it. RTMPS or WHIP would, and both need a trusted certificate,
-    which waits on the domain decision.
-    Smaller, all true now: (a) the secret is in the callback's query string, so it appears in the
-    gateway's own access log (measured on a real stack: 8 access-log lines carried it) and is
-    one value for both hooks (the media server now adds it itself, so it is in the gateway's
-    access log and in the media server's rendered config, nowhere else; 0 lines in the media
-    server's, Caddy's and Postgres's logs, measured); (b) Caddy must never route
-    `/sessions/ingest*`: it does not (`/sessions` is not routed at all), and
-    `infra/caddy/tls_check.py` now fails if it ever is; (c) nginx-rtmp keeps the callback's
-    query string and posts form fields `name` and `key` (the URL's argument): **measured**, and
-    the reason the stream is named by the session id and not by the key (see `app/satsang.py`);
-    (d) a speaker whose connection drops ends the satsang (the done-hook fires) and cannot resume,
-    while a satsang whose done-hook never arrives stays live until a moderator ends it by hand
-    (`POST /sessions/{id}/end`); a grace period and a watchdog are one design. #37 and #38 are
-    what the real media server showed about (d). **Owner:** M2, Week 10.
+36. **Bhajan rooms: what is not done, and why.** (a) *TURN over TLS on 443* (the plan's fallback for
+    networks that block UDP and TCP 7881): not built. Ports below 1024 are not ours on the shared
+    server (no root; `:80` is the system Apache; see `infra/satsang/INGEST_FINDING.md`) and TLS
+    needs a certificate for a real name, which we do not have (the domain question is open).
+    A high port would work for some networks but is not what the plan promises. (b) *The
+    "five devices in one room" test* ("done when" for Weeks 9 and 10): deferred by M1 on 12 Oct,
+    because no phones and not enough people with devices are available; to be run in about two
+    months. Whether the college firewall (Sophos) lets LiveKit's UDP 7882 or TCP 7881 through is
+    only knowable then. When it is run: LiveKit added to staging with the `LIVEKIT_*` values and
+    a Caddy restart, the gateway rebuilt (#155 first), one lead and four listeners on separate
+    devices with headphones, check that only the lead is heard, that a hand-over is one tap, and
+    that the old lead cannot speak after (also by rejoining). **Until then Weeks 9 and 10 are
+    built and tested in software, not demonstrated.** **Owner:** M1.
 37. **A publish that arrives while the satsang is already live used to END it. Fixed: it is now
     refused.** Measured on the real stack: a second ffmpeg publishing to the same URL while the first
     connection was still open was accepted by the hook, then refused by nginx-rtmp ("Already
@@ -725,7 +720,7 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     404 after about 75 s, so listeners got nothing while the app said live), and only one satsang
     can be live, so it blocks the next. The media server now drops a publisher silent for 30 s
     (`drop_idle_publisher`, overridable): measured, the row ended at about +30 s. The cost is the
-    same as #36 (d): that satsang is over, and a speaker who comes back with the same URL is
+    same as #50 (d): that satsang is over, and a speaker who comes back with the same URL is
     refused. The freeze was a stopped process (SIGSTOP), **not a real radio drop**; how a real
     phone behaves (does its OS close the socket? after how long?) is unmeasured.
     **Owner:** M2, Week 10.
@@ -790,3 +785,27 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     the administrator gives them), and it is in English only. The elder-app tests are not run by CI
     (`.github/workflows/ci.yml` has no job for them), so they run on a developer's machine, and the
     browser-script tests need Node. **Owner:** M2, Week 10 for the page; M1 for #32.
+50. **A satsang's stream key crosses the campus network in clear, and the ingest hook's secret sits
+    in a URL.** The hook (`POST /sessions/ingest/publish`, called by the RTMP server) is
+    protected by a shared secret, the stream key and what the key is worth (`app/satsang.py`
+    module docstring), and for the hook that is enough: an attacker without a valid key changes
+    nothing, and one with a key could already broadcast by publishing to the RTMP port. The weak
+    point is the key. **RTMP on 1935 carries it unencrypted** (`infra/satsang/INGEST_FINDING.md`),
+    so anyone who can watch one publish handshake on the same network learns a key that works
+    until that satsang ends. Its life is bounded (only while the satsang is scheduled or live,
+    only from an hour before the start, dead after it ends, one live at a time), which shortens
+    the exposure and does not remove it. RTMPS or WHIP would, and both need a trusted certificate,
+    which waits on the domain decision.
+    Smaller, all true now: (a) the secret is in the callback's query string, so it appears in the
+    gateway's own access log (measured on a real stack: 8 access-log lines carried it) and is
+    one value for both hooks (the media server now adds it itself, so it is in the gateway's
+    access log and in the media server's rendered config, nowhere else; 0 lines in the media
+    server's, Caddy's and Postgres's logs, measured); (b) Caddy must never route
+    `/sessions/ingest*`: it does not (`/sessions` is not routed at all), and
+    `infra/caddy/tls_check.py` now fails if it ever is; (c) nginx-rtmp keeps the callback's
+    query string and posts form fields `name` and `key` (the URL's argument): **measured**, and
+    the reason the stream is named by the session id and not by the key (see `app/satsang.py`);
+    (d) a speaker whose connection drops ends the satsang (the done-hook fires) and cannot resume,
+    while a satsang whose done-hook never arrives stays live until a moderator ends it by hand
+    (`POST /sessions/{id}/end`); a grace period and a watchdog are one design. #37 and #38 are
+    what the real media server showed about (d). **Owner:** M2, Week 10.

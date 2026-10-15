@@ -60,7 +60,7 @@ the RTMP server consults. So what has to be protected is the key, and its weakne
 carries the key in clear**, and the ingest port is on the campus network (infra/satsang/
 INGEST_FINDING.md). Anyone who can watch one publish handshake -- on the same Wi-Fi, say -- learns
 a key that works until that satsang ends. Bounding the key's life (point 4) shortens that; it does
-not close it. Recorded as OPEN_QUESTIONS #36, with two smaller things true of the secret: it is
+not close it. Recorded as OPEN_QUESTIONS #50, with two smaller things true of the secret: it is
 in the query string, so it appears in the gateway's own access log (whoever can read that log
 holds it), and it is one value shared by both hooks.
 
