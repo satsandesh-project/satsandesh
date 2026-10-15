@@ -691,11 +691,54 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     which waits on the domain decision.
     Smaller, all true now: (a) the secret is in the callback's query string, so it appears in the
     gateway's own access log (measured on a real stack: 8 access-log lines carried it) and is
-    one value for both hooks; (b) Caddy must never route
-    `/sessions/ingest*`, which the module cannot enforce, so the infrastructure phase has to add the
-    refusal and a check for it in `infra/caddy/tls_check.py`; (c) that nginx-rtmp keeps the
-    callback's query string and posts the stream name in a field called `name` is from its
-    documentation and **not verified** until a media server runs; (d) a speaker whose connection
-    drops ends the satsang (the done-hook fires) and cannot resume, while a satsang whose done-hook
-    never arrives stays live until a moderator ends it by hand (`POST /sessions/{id}/end`); a
-    grace period and a watchdog are one design. **Owner:** M2, Week 10.
+    one value for both hooks (the media server now adds it itself, so it is in the gateway's
+    access log and in the media server's rendered config, nowhere else; 0 lines in the media
+    server's, Caddy's and Postgres's logs, measured); (b) Caddy must never route
+    `/sessions/ingest*`: it does not (`/sessions` is not routed at all), and
+    `infra/caddy/tls_check.py` now fails if it ever is; (c) nginx-rtmp keeps the callback's
+    query string and posts form fields `name` and `key` (the URL's argument): **measured**, and
+    the reason the stream is named by the session id and not by the key (see `app/satsang.py`);
+    (d) a speaker whose connection drops ends the satsang (the done-hook fires) and cannot resume,
+    while a satsang whose done-hook never arrives stays live until a moderator ends it by hand
+    (`POST /sessions/{id}/end`); a grace period and a watchdog are one design. #37 and #38 are
+    what the real media server showed about (d). **Owner:** M2, Week 10.
+37. **A publish that arrives while the satsang is already live used to END it. Fixed: it is now
+    refused.** Measured on the real stack: a second ffmpeg publishing to the same URL while the first
+    connection was still open was accepted by the hook, then refused by nginx-rtmp ("Already
+    publishing"), and nginx still sent the done-hook for that refused connection: the gateway logged
+    `ended (publisher stopped)` and the first connection's own done-hook later got 409. **Decision
+    (the owner delegated it; option A of three): the publish hook refuses a publish for anything but
+    a scheduled satsang.** Checked on the real media server after the change: the second publish gets
+    a 403 from the hook, nginx never starts it, **0** done-hooks are sent for it, the row stays
+    `live`, and the first publisher's own stop sends the one done-hook that ends it. What this does
+    NOT fix, and why it was the cheaper option: a speaker who reconnects while the old connection is
+    still counted as live is refused until it is dropped (the media server drops a silent publisher
+    after 30 s, #38), and a dropped speaker still cannot resume once the satsang has ended. Both
+    need the grace period of #43, which needs a status the table does not have and so a second
+    migration. A lost done-hook now also locks the speaker out, where before they could reconnect;
+    a moderator ends it by hand (`POST /sessions/{id}/end`, and the End button on the admin page).
+    The other two options, for the record: keep nginx's connection id and ignore a done-hook from
+    any other (needs a column, so a migration); or the grace period itself. **Owner:** M2, Week 10
+    (the grace period).
+38. **A publisher that goes silent without closing its connection.** With no idle limit the
+    row stayed `live` for the whole 2 minutes it was watched (the HLS playlist started returning
+    404 after about 75 s, so listeners got nothing while the app said live), and only one satsang
+    can be live, so it blocks the next. The media server now drops a publisher silent for 30 s
+    (`drop_idle_publisher`, overridable): measured, the row ended at about +30 s. The cost is the
+    same as #36 (d): that satsang is over, and a speaker who comes back with the same URL is
+    refused. The freeze was a stopped process (SIGSTOP), **not a real radio drop**; how a real
+    phone behaves (does its OS close the socket? after how long?) is unmeasured.
+    **Owner:** M2, Week 10.
+39. **What a listener sees when a satsang ends.** The playlist never gets `#EXT-X-ENDLIST`: it
+    freezes for about 64 s, then returns 404, and the last two segments stay in the media
+    server's memory until its container restarts (about 40 KB each; harmless, but fetchable by
+    anyone who knows the session id). A player therefore stalls and then errors; the listener's
+    screen has to learn that the satsang ended from the session listing, not from the stream.
+    Also: every segment declares an empty H.264 video stream next to the audio (ffprobe: 0x0, no
+    frames) because nginx-rtmp always writes both; ffmpeg plays it, **no browser has been tried**.
+    **Owner:** M2, Week 10 (the join screen and player).
+40. **`/hls` has no login.** Anyone who knows or guesses a session id can listen; ids are random
+    UUIDs and the listing that shows them needs a signed token, so this is a capability URL, not
+    access control. Fine for an organisation-wide discourse, wrong for a private circle (the
+    scoping question Week 10 has to answer). Caddy could check a token per request only with an
+    auth subrequest to the gateway; not built. **Owner:** M2, Week 10.

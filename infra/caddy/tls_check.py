@@ -9,7 +9,9 @@ Proves four things about the HTTPS endpoint, and prints one line each:
   3. the certificate is valid for the address we connected to (a SAN match, checked by the
      TLS library, not by eye)
   4. the same routes answer as on plain HTTP (/me/settings and /moderation -> gateway, everything
-     else -> the elder-app catch-all), proving the transform did not change routing
+     else -> the elder-app catch-all), proving the transform did not change routing; and that
+     /hls reaches the satsang media server while the RTMP hooks (/sessions/ingest/*) are NOT
+     reachable from outside
 Exits 0 only if every check passed.
 """
 
@@ -74,6 +76,8 @@ try:
             "/push/subscribe",
             "/rooms",
             "/livekit/rtc",
+            "/hls/some-session.m3u8",
+            "/sessions/ingest/publish",
             "/",
         )
     }
@@ -114,6 +118,18 @@ try:
         "/livekit/rtc reaches LiveKit with the /livekit prefix stripped",
         got["/livekit/rtc"] == "LIVEKIT /rtc",
         got["/livekit/rtc"],
+    )
+    check(
+        "/hls/<session>.m3u8 reaches the satsang media server with the path intact (not the "
+        "elder app's 404 page)",
+        got["/hls/some-session.m3u8"] == "SATSANG /hls/some-session.m3u8",
+        got["/hls/some-session.m3u8"],
+    )
+    check(
+        "the RTMP hooks (/sessions/ingest/*) are not reachable from outside: they must not "
+        "reach the gateway",
+        not got["/sessions/ingest/publish"].startswith("GATEWAY"),
+        got["/sessions/ingest/publish"],
     )
     check("everything else reaches the elder-app", got["/"].startswith("ELDER-APP"), got["/"])
 except Exception as e:  # noqa: BLE001
