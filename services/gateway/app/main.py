@@ -12,6 +12,7 @@ from app.circles import router as circles_router
 from app.config import get_settings
 from app.db.base import check_database_connection
 from app.jobs import run_worker_loop, worker_id
+from app.livekit_webhook import router as livekit_webhook_router
 from app.media import router as media_router
 from app.messages import router as messages_router
 from app.models import User
@@ -108,6 +109,7 @@ app.include_router(moderation_router)
 app.include_router(users_router)
 app.include_router(admin_org_router)
 app.include_router(rooms_router)
+app.include_router(livekit_webhook_router)
 
 
 @app.get("/health")

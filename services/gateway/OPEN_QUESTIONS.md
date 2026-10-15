@@ -666,14 +666,34 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     word but invented a fact and addresses elders as "tum"); the IndicTrans2 1B and Indic→Indic models could not be
     tested because the Hugging Face terms are not accepted on the account behind the token (403).
 
-35. **A bhajan-room lead can rejoin as a speaker for about three minutes after their turn.** A token's
-    `canPublish` is applied again whenever someone joins with it, and the hand-over's
-    `UpdateParticipant` changes only the live session, so the publish-capable token is kept to two
-    minutes (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`) and the listener token to an hour. **LiveKit
-    v1.13.9 also accepts an expired token for exactly 60 more seconds** (measured by M2 on a throwaway
-    LiveKit: accepted up to 59 s past expiry, refused from 60 s, with a fresh-token control valid on
-    every row), so the real window is the token's life plus 60 s: about three minutes, not two.
-    That shrinks the window; it does not close it. Closing it needs a check on join: a LiveKit
-    `participant_joined` webhook that silences anyone who is not the current lead. Not built.
-    Found by M2's review of #151, who showed it on a real LiveKit. **Owner:** M1 (webhook route
-    and the gateway side), before bhajan rooms are used outside a demo.
+35. **A bhajan-room lead could rejoin as a speaker after their turn.** A token's `canPublish` is
+    applied again whenever someone joins with it, and the hand-over's `UpdateParticipant` changes
+    only the live session. Two layers now: the publish-capable token lives two minutes
+    (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`; the listener's an hour; **LiveKit v1.13.9 also accepts
+    an expired token for exactly 60 more seconds**, measured by M2 on a throwaway LiveKit, so on its
+    own the token leaves a window of about three minutes), and LiveKit's `participant_joined`
+    webhook (`app/livekit_webhook.py`, `/internal/livekit/webhook`, signed with the API secret,
+    reachable only inside the compose network) makes the gateway set the joiner's permission to what
+    the database says, under the room lock. It also lets a lead who joined muted speak. **Shown
+    against a real LiveKit** (`infra/livekit/webhook_check.sh`): after a real WebRTC join LiveKit
+    sends `participant_joined` (a signalling-only join sends nothing), the gateway's own signature
+    check accepts its signature, and the event carries the room name and the person's identity.
+    **Not shown:** the whole chain end to end (the permission really changing on a live session) and
+    the time between a join and that change, during which audio could leak. If LiveKit cannot be
+    reached the answer is a 502 and the person keeps what their token gave them, so the short token is
+    still the first line of defence. Found by M2's review of #151. **Owner:** M1, to show it on a real
+    LiveKit with real devices (deferred, see #36).
+
+36. **Bhajan rooms: what is not done, and why.** (a) *TURN over TLS on 443* (the plan's fallback for
+    networks that block UDP and TCP 7881): not built. Ports below 1024 are not ours on the shared
+    server (no root; `:80` is the system Apache; see `infra/satsang/INGEST_FINDING.md`) and TLS
+    needs a certificate for a real name, which we do not have (the domain question is open).
+    A high port would work for some networks but is not what the plan promises. (b) *The
+    "five devices in one room" test* ("done when" for Weeks 9 and 10): deferred by M1 on 12 Oct,
+    because no phones and not enough people with devices are available; to be run in about two
+    months. Whether the college firewall (Sophos) lets LiveKit's UDP 7882 or TCP 7881 through is
+    only knowable then. When it is run: LiveKit added to staging with the `LIVEKIT_*` values and
+    a Caddy restart, the gateway rebuilt (#155 first), one lead and four listeners on separate
+    devices with headphones, check that only the lead is heard, that a hand-over is one tap, and
+    that the old lead cannot speak after (also by rejoining). **Until then Weeks 9 and 10 are
+    built and tested in software, not demonstrated.** **Owner:** M1.
