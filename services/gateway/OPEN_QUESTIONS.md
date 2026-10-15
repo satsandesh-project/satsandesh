@@ -742,3 +742,16 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     access control. Fine for an organisation-wide discourse, wrong for a private circle (the
     scoping question Week 10 has to answer). Caddy could check a token per request only with an
     auth subrequest to the gateway; not built. **Owner:** M2, Week 10.
+49. **The reminder holds a database connection and a row lock while it sends every push.**
+    `satsang_reminder.deliver` calls `send_push` once per recipient inside the job's transaction,
+    with the satsang row locked `FOR UPDATE` and the worker's pooled connection held until the job
+    completes. `send_push` never raises, so one slow or dead endpoint does not fail the job, but it
+    does keep the lock, and anything else that wants to update that satsang (end it, move it) would
+    wait for it. With the pilot's few subscribers that is harmless; with many subscribers or a slow
+    push service the time grows with their number. **Not measured:** neither the time per push nor the
+    pool headroom was timed for this. A fix is to decide and render under the lock, send outside any
+    lock, and record `reminder_sent_at` in a second transaction; that trades "at most once" for "at
+    least once" if the process dies between the two, which is the user's decision. (The Phase 2
+    version renders before it takes the lock the second time, so only the sends remain inside it.)
+    **Owner:** M2, Week 10. Raised in review on #170.
+
