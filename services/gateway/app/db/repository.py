@@ -806,8 +806,24 @@ def compute_backoff_seconds(attempts: int, *, base: float = 5.0, cap: float = 30
     return min(base * (2 ** (attempts - 1)), cap)
 
 
-def enqueue_job(session: Session, *, job_type: str, payload: dict, max_attempts: int = 5) -> Job:
+def enqueue_job(
+    session: Session,
+    *,
+    job_type: str,
+    payload: dict,
+    max_attempts: int = 5,
+    next_attempt_at: datetime | None = None,
+) -> Job:
+    """Add a queued job. `next_attempt_at` is when it first becomes due: claim_next_job claims a
+    queued job only once that time has passed. Left None (what every caller before this argument
+    does), it is not set here at all and the column's server default, now(), applies, so the job is
+    due immediately exactly as before. It must carry a timezone: a naive datetime would be read in
+    the database session's zone, so it is refused rather than guessed."""
+    if next_attempt_at is not None and next_attempt_at.tzinfo is None:
+        raise ValueError("next_attempt_at needs a timezone (use an aware datetime, e.g. UTC)")
     job = Job(job_type=job_type, payload=payload, max_attempts=max_attempts)
+    if next_attempt_at is not None:
+        job.next_attempt_at = next_attempt_at
     session.add(job)
     session.flush()
     return job
