@@ -256,6 +256,17 @@ class Settings(BaseSettings):
     LIVEKIT_PUBLIC_URL: str | None = None
     LIVEKIT_INTERNAL_URL: str | None = None
 
+    # Satsang broadcast (app/satsang.py). The RTMP server calls the gateway's ingest hooks; they are
+    # not a user route, so the caller is authenticated by a shared secret instead of a token. UNSET
+    # means the hooks refuse everything (503), so nobody can go live until it is configured.
+    SATSANG_HOOK_SECRET: str | None = None
+    # The RTMP address a speaker's app publishes to, without the key (the key is appended).
+    SATSANG_INGEST_BASE_URL: str = "rtmp://localhost:1935/live"
+    # Where the HLS playlists are served; an elder's player is given {this}/{session id}.m3u8.
+    SATSANG_HLS_PATH: str = "/hls"
+    # How early before its start a satsang may go live. There is deliberately no late limit.
+    SATSANG_GO_LIVE_EARLY_MINUTES: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:

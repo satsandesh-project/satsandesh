@@ -705,3 +705,10 @@ the server for its DB-backed tests (the local Python lacks
   enumerate `app.openapi()["paths"]`, which does see all six, with the guard kept.
 - The lesson is the guard, not the framework: a test that searches for something bad must first
   prove it is searching somewhere.
+- A database that holds a status and its timestamps CONSISTENT does not forbid an illegal MOVE:
+  `ended -> live` is one UPDATE (clear `ended_at`) and every CHECK still passes. I had called the
+  Phase 1 table finished; the Phase 2 transition tests showed nine illegal moves going straight
+  through, and a trigger was needed. The tests rewrite the timestamps to match each new status, so
+  only the transition rule can object.
+- Phase 3, the real media server: the first recreate-the-gateway test printed "address changed: NO" and so proved nothing; a second run parked a container on the old address, and a control with the hostname resolved once at start got the 502 that the resolver prevents. The same run showed a refused duplicate publish ending a live satsang, which no mock could have shown.
+- Phase 4, the admin page: 92 green tests did not mean the date guard was tested; a sabotage run left it standing because the inputs I tried ("next thursday") were refused by a different check, and it fell only to dates a browser parses leniently ("2026-10-14"). The page keeps the token and the stream key out of Reflex state entirely, so what the tests prove about them is that Python never receives them.
