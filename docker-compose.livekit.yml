@@ -20,7 +20,9 @@
 #
 # Ports published on the host: 7881/tcp (audio over TCP when UDP is blocked) and 7882/udp (audio).
 # 7880 (signalling and the admin API) stays inside the compose network; only Caddy and the
-# gateway reach it. TURN over TLS on 443, for networks that block both, is not configured here:
+# gateway reach it. LiveKit tells the gateway (inside the compose network, signed with the API
+# secret) whenever someone joins a room, and the gateway then sets their permission to what the
+# database says (services/gateway/app/livekit_webhook.py). TURN over TLS on 443, for networks that block both, is not configured here:
 # it needs a certificate for a real name (see infra/livekit/README.md).
 services:
   livekit:
@@ -37,6 +39,10 @@ services:
           node_ip: ${LIVEKIT_NODE_IP:?set LIVEKIT_NODE_IP}
         room:
           auto_create: false
+        webhook:
+          api_key: ${LIVEKIT_API_KEY}
+          urls:
+            - http://gateway:8000/internal/livekit/webhook
     ports:
       - "7881:7881"
       - "7882:7882/udp"

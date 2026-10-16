@@ -1,0 +1,51 @@
+# The satsang media server (Week 9: broadcast). Layer it on the base file, exactly as the rest of
+# the stack was started (add -f docker-compose.tls.yml etc.):
+#
+#   SATSANG_HOOK_SECRET=<16+ chars> SATSANG_PUBLIC_HOST=10.110.11.31 \
+#     docker compose -f docker-compose.yml -f docker-compose.satsang.yml up -d satsang gateway
+#
+# What it adds: one container (nginx + the RTMP module, infra/satsang/). A speaker's phone
+# publishes RTMP to port 1935; the media server asks the gateway (/sessions/ingest/publish)
+# whether that session and key are allowed, cuts the stream into HLS, and Caddy serves it at
+# /hls/<session id>.m3u8.
+#
+# What it is, and is not (infra/satsang/README.md has the short version):
+#   - RTMP is CLEARTEXT: the stream key crosses the network unencrypted from the phone to this
+#     host (services/gateway/OPEN_QUESTIONS.md #50). Fine on a trusted network, not on the internet.
+#   - HLS goes out through Caddy, over HTTPS when the tls layer is on. The HLS URL carries no
+#     login: anyone who knows a session's id can listen. The playlist is named by the session
+#     id, never by the key.
+#   - HLS segments live in tmpfs (memory), so a satsang leaves nothing on disk; a restart
+#     empties it. Nothing is recorded.
+#   - Nothing changes unless you layer this file: docker-compose.yml is untouched.
+#
+# Needs: SATSANG_HOOK_SECRET (also handed to the gateway below), and SATSANG_PUBLIC_HOST, the
+# address a speaker's phone can reach this host on (it becomes the ingest URL the admin page shows).
+services:
+  satsang:
+    build:
+      # Its own directory as the context, not the repo root: the root .dockerignore excludes infra/.
+      context: ./infra/satsang
+    restart: unless-stopped
+    environment:
+      SATSANG_HOOK_SECRET: ${SATSANG_HOOK_SECRET:?set SATSANG_HOOK_SECRET}
+      SATSANG_HLS_FRAGMENT: ${SATSANG_HLS_FRAGMENT:-4s}
+      SATSANG_HLS_PLAYLIST: ${SATSANG_HLS_PLAYLIST:-32s}
+    ports:
+      # The phone connects here directly, not through Caddy (Caddy carries HTTP only).
+      - "${SATSANG_RTMP_HOST_PORT:-1935}:1935"
+    expose:
+      - "8080"    # HLS, for Caddy only; never published
+    # In memory, not on a volume: about eight four-second segments per live stream, a few MB.
+    tmpfs:
+      - /var/hls:size=256m
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q ' 200 ' <&3 && exec 4<>/dev/tcp/127.0.0.1/1935"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  gateway:
+    environment:
+      SATSANG_HOOK_SECRET: ${SATSANG_HOOK_SECRET:?set SATSANG_HOOK_SECRET}
+      SATSANG_INGEST_BASE_URL: rtmp://${SATSANG_PUBLIC_HOST:?set SATSANG_PUBLIC_HOST}:${SATSANG_RTMP_HOST_PORT:-1935}/live

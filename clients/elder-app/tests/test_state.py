@@ -606,7 +606,8 @@ def test_a_voice_note_declares_the_language_the_person_chose_but_only_once_chose
 def test_what_a_reader_sees_follows_the_language_they_chose():
     js = CHAT_CONNECT_JS_TEMPLATE
     # English: the text, no toggle, and the real recording to play for a voice note.
-    assert 'const canToggle = !!rendering && lang !== "en";' in js
+    # (Typed text has its own choices instead: see tests/test_chat_text.py.)
+    assert 'const canToggle = !textMode && !!rendering && lang !== "en";' in js
     assert "if (canToggle) {" in js
     assert 'lang === "en" && msg.kind === "voice" && msg.media_ref' in js
     # Anyone else: the toggle swaps to the English version when the gateway sent one, and to the
