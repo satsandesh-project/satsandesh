@@ -255,6 +255,7 @@ TEXTS = {
         "recv_show_original": "Show original",
         "recv_show_english": "Show English",
         "recv_show_translation": "Show translation",
+        "recv_original_text": "Original message",
         "recv_audio_failed": "Could not load the audio. Tap to try again.",
         "recv_speed": "Speed",
         "recv_transcript": "Text",
@@ -360,6 +361,7 @@ TEXTS = {
         "recv_show_original": "అసలు చూపించు",
         "recv_show_english": "ఇంగ్లీష్ చూపించు",
         "recv_show_translation": "అనువాదం చూపించు",
+        "recv_original_text": "అసలు సందేశం",
         "recv_audio_failed": "ఆడియో లోడ్ కాలేదు. మళ్లీ ప్రయత్నించడానికి నొక్కండి.",
         "recv_speed": "వేగం",
         "recv_transcript": "వచనం",
@@ -621,6 +623,7 @@ window.__satsandeshWsInit = true;
   const RECV_TEXT = %(recv_text)s;
   const SPEEDS = [0.8, 1, 1.2];
   window.__satShowOriginal = window.__satShowOriginal || {};
+  window.__satTextMode = window.__satTextMode || {};
   window.__satAudioUrls = window.__satAudioUrls || {};
   window.__satAudioPending = window.__satAudioPending || {};
 
@@ -804,8 +807,15 @@ window.__satsandeshWsInit = true;
     const lang = prefs.lang || "en";
     const rendering = isOwn ? null : findRendering(msg, lang);
     const english = rendering && lang !== "en" ? findRendering(msg, "en") : null;
-    const canToggle = !!rendering && lang !== "en";
-    const showOriginal = !rendering || (canToggle && !!window.__satShowOriginal[key]);
+    // Typed text (not a voice note) in another person's language: the reader sees the translation,
+    // and may always switch to what the sender actually typed (or, for a reader of another
+    // language, to the English version). The mode is kept per message in __satTextMode.
+    const typed = msg.kind === "text" && !!rendering;
+    const textMode = typed ? window.__satTextMode[key] || "translation" : null;
+    const canToggle = !textMode && !!rendering && lang !== "en";
+    const showOriginal = textMode
+      ? false
+      : !rendering || (canToggle && !!window.__satShowOriginal[key]);
     // The sender's real recording, under a translation. A translation replaces the words, not the
     // voice: the person who sent it should always be one tap away, without opening anything. (An
     // English reader gets the recording as their play button below, so it is not added twice.)
@@ -815,7 +825,12 @@ window.__satsandeshWsInit = true;
       bubble.appendChild(audioPlayer(msg.media_ref, key + ":o", resume));
     };
 
-    if (rendering && !showOriginal) {
+    if (textMode === "original") {
+      bubble.appendChild(noteLine(t.recv_original_text));
+      bubble.appendChild(textBlock(msg.text));
+    } else if (textMode === "english" && english) {
+      bubble.appendChild(textBlock(english.text));
+    } else if (rendering && !showOriginal) {
       bubble.appendChild(textBlock(rendering.text));
       const playRealRecording = lang === "en" && msg.kind === "voice" && msg.media_ref;
       if (playRealRecording) {
@@ -824,8 +839,8 @@ window.__satsandeshWsInit = true;
         if (rendering.audio) {
           bubble.appendChild(audioPlayer(rendering.audio, key + ":t", resume));
         } else if (
-          rendering.degraded_reason === "text_only" ||
-          rendering.degraded_reason === "tts_skipped"
+          msg.kind !== "text" &&
+          (rendering.degraded_reason === "text_only" || rendering.degraded_reason === "tts_skipped")
         ) {
           bubble.appendChild(noteLine(t.recv_no_audio));
         }
@@ -846,6 +861,22 @@ window.__satsandeshWsInit = true;
       }
     } else {
       bubble.appendChild(textBlock(msg.text));
+    }
+
+    if (textMode) {
+      const go = (mode) => () => {
+        window.__satTextMode[key] = mode;
+        renderCurrentThread();
+      };
+      const addChoice = (label, mode) => {
+        const choice = makeButton(label, go(mode));
+        choice.style.marginTop = "8px";
+        choice.style.marginRight = "8px";
+        bubble.appendChild(choice);
+      };
+      if (textMode !== "translation") addChoice(t.recv_show_translation, "translation");
+      if (textMode !== "original") addChoice(t.recv_show_original, "original");
+      if (textMode !== "english" && english) addChoice(t.recv_show_english, "english");
     }
 
     if (canToggle) {
@@ -1643,6 +1674,7 @@ RECEIVER_TEXT_KEYS = (
     "recv_show_original",
     "recv_show_english",
     "recv_show_translation",
+    "recv_original_text",
     "recv_audio_failed",
     "recv_speed",
     "recv_transcript",
