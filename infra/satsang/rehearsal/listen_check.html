@@ -1,0 +1,48 @@
+<!doctype html><meta charset="utf-8"><title>satsang listen check</title>
+<!-- Loads the REAL player (assets/satsang_player.js) and the vendored hls.js, logs every hls.js and audio-element
+     event, and measures the RMS of what the element outputs (silence is 0; a 0.35-amplitude sine is about 0.247).
+     Driven by listen_check_cdp.js. Not part of the app. -->
+<audio id="satsang-audio" data-url="" style="display:none"></audio>
+<script src="/vendor/hls.min.js"></script>
+<script>
+  // Log every hls.js event, wrapping the constructor so the REAL player file (satsang_player.js) is what runs.
+  window.__out = {events: [], audio: [], status: [], rms: [], info: {}};
+  const t0 = performance.now(); const ts = () => Math.round(performance.now() - t0);
+  const Orig = window.Hls;
+  window.__out.info.hlsVersion = Orig.version; window.__out.info.isSupported = Orig.isSupported();
+  window.__out.info.mse_audio_aac = MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"');
+  window.__out.info.mse_video_h264 = MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"');
+  const KEEP = ['MEDIA_ATTACHING','MEDIA_ATTACHED','MANIFEST_LOADING','MANIFEST_LOADED','MANIFEST_PARSED','LEVEL_LOADED','FRAG_LOADED','FRAG_PARSING_INIT_SEGMENT','BUFFER_CODECS','BUFFER_CREATED','FRAG_PARSED','FRAG_BUFFERED','ERROR'];
+  window.Hls = class extends Orig {
+    constructor(cfg) {
+      super(cfg);
+      for (const [name, ev] of Object.entries(Orig.Events)) {
+        if (!KEEP.includes(name)) continue;
+        this.on(ev, (e, data) => {
+          const rec = {t: ts(), ev: name};
+          if (name === 'ERROR') Object.assign(rec, {type: data.type, details: data.details, fatal: data.fatal, reason: String(data.reason || (data.error && data.error.message) || '')});
+          if (name === 'BUFFER_CODECS') rec.codecs = JSON.stringify(data);
+          if (name === 'BUFFER_CREATED') rec.tracks = Object.keys(data.tracks || {}).join(',');
+          if (name === 'MANIFEST_PARSED') rec.levels = (data.levels || []).map(l => ({audio: l.audioCodec, video: l.videoCodec})).slice(0, 1);
+          if (name === 'FRAG_PARSING_INIT_SEGMENT') rec.tracks = Object.keys(data.tracks || {}).join(',');
+          if (['FRAG_LOADED', 'FRAG_BUFFERED', 'FRAG_PARSED'].includes(name)) rec.sn = data.frag && data.frag.sn;
+          window.__out.events.push(rec);
+        });
+      }
+    }
+  };
+</script>
+<script src="/satsang_player.js"></script>
+<script>
+  const a = document.getElementById('satsang-audio');
+  a.dataset.url = location.origin + '/hls/' + new URLSearchParams(location.search).get('sid') + '.m3u8';
+  ['loadstart','loadedmetadata','loadeddata','canplay','playing','waiting','stalled','pause','ended','error','emptied','seeking','seeked','ratechange','suspend','abort'].forEach(n =>
+    a.addEventListener(n, () => window.__out.audio.push({t: ts(), ev: n, ct: Math.round(a.currentTime*100)/100, rs: a.readyState, err: a.error && a.error.code, vis: document.visibilityState, paused: a.paused, ended: a.ended, dur: a.duration, vt: a.videoTracks ? a.videoTracks.length : 'n/a'})));
+  // real decode check: RMS of what the element actually outputs
+  const ctx = new AudioContext(); const src = ctx.createMediaElementSource(a); const an = ctx.createAnalyser(); an.fftSize = 2048;
+  src.connect(an); an.connect(ctx.destination);
+  const buf = new Float32Array(an.fftSize);
+  setInterval(() => { an.getFloatTimeDomainData(buf); let s = 0; for (const v of buf) s += v*v; window.__out.rms.push([ts(), Math.round(Math.sqrt(s/buf.length)*1000)/1000, Math.round(a.currentTime*100)/100, ctx.state]); }, 1000);
+  setInterval(() => window.__out.status.push([ts(), JSON.stringify(window.satsang.status())]), 1000);
+  window.startPlay = () => { ctx.resume(); window.satsang.play(); window.__out.info.playCalledAt = ts(); };
+</script>

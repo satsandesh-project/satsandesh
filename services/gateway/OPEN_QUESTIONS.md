@@ -735,7 +735,9 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     anyone who knows the session id). A player therefore stalls and then errors; the listener's
     screen has to learn that the satsang ended from the session listing, not from the stream.
     Also: every segment declares an empty H.264 video stream next to the audio (ffprobe: 0x0, no
-    frames) because nginx-rtmp always writes both; ffmpeg plays it, **no browser has been tried**.
+    frames) because nginx-rtmp always writes both. ffmpeg plays it, and so does headless Chrome 155 with
+    hls.js 1.5.17 (2026-10-16: hls.js builds an audio-only buffer and ignores the empty track; decoded output
+    verified non-silent). **No phone and no Safari has been tried**: `infra/satsang/REHEARSAL.md`.
     **Owner:** M2, Week 10 (the join screen and player).
 40. **`/hls` has no login.** Anyone who knows or guesses a session id can listen; ids are random
     UUIDs and the listing that shows them needs a signed token, so this is a capability URL, not
@@ -798,3 +800,16 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     on the list" for an id it never saw. Up to 12 seconds can pass between the end and the words.
     A single-satsang route that answers `ended` and `cancelled` too would make both exact; it is a
     contract change (its own PR, mock first), so it is not made here. **Owner:** M2, Week 10 (the decision is the user's).
+51. **The reminder cannot reach a phone, and nothing plays its audio.** `satsang_reminder` pushes to users who have a
+    push subscription, but the elder app has no service worker and never calls `POST /push/subscribe`, and Caddy leaves
+    `/push*` unrouted on purpose (the Caddyfile comment says so). The only subscriber path is the Week 3 manual harness.
+    With no subscribers the handler renders only the English source text: no Telugu, no Hindi, no audio. And the audio
+    that is made sits behind `GET /sessions/{id}/reminder/audio`, which needs an `Authorization` header: no screen
+    calls it, so a person can hear it only through `curl`. Found 2026-10-16 while preparing the rehearsal; the Phase 2
+    tests, which seed subscriptions, could not show it. **Owner:** M1 (the push client, `/push*`), M2 (a way to play it).
+52. **The listener's screen probably cuts off the end of a discourse.** The done hook ends the satsang when the speaker
+    stops; the listener's list refresh sees `ended` within 12 s and `after_load` then stops the player at once, but the
+    stream is 10 to 15 s behind live, so the last seconds are never heard. **A prediction** from the code and one
+    headless run (audio ran out about 10 s after a clean publish ended; that listener joined at the start, so it is a
+    floor), **not yet seen on a phone** (REHEARSAL.md step 8). The fix would be a separate PR: on `ended`, let the player
+    run until it stalls. **Owner:** M2.
