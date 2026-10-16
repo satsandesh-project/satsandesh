@@ -93,6 +93,14 @@ def is_quiet_hours(
     return local_time >= start or local_time < end
 
 
+# (connect, read) seconds for ONE push call. Without it `webpush()` waits for ever on a push service that
+# accepts the connection and never answers (measured, 2026-10-16: still blocked after 150 s) and for the
+# operating system's own limit on one that swallows packets (measured: 76 s), and a caller holding a
+# database transaction meanwhile is cut off by Postgres after 30 s (app/db/base.py). A real push service
+# answered in 0.3 to 0.9 s (FCM, 3 runs).
+PUSH_TIMEOUT_S = (3.0, 5.0)
+
+
 def send_push(session: Session, *, user_id: uuid.UUID, title: str, body: str) -> None:
     """Best-effort push to every device this user has subscribed. A single
     dead subscription (404/410 — the Push API's own signal that the
@@ -112,6 +120,7 @@ def send_push(session: Session, *, user_id: uuid.UUID, title: str, body: str) ->
                 data=payload,
                 vapid_private_key=settings.VAPID_PRIVATE_KEY,
                 vapid_claims={"sub": settings.VAPID_SUBJECT},
+                timeout=PUSH_TIMEOUT_S,
             )
         except WebPushException as exc:
             status_code = exc.response.status_code if exc.response is not None else None

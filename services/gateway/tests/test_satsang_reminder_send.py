@@ -326,6 +326,8 @@ def test_a_satsang_cancelled_between_two_pushes_stops_the_rest(
     def cancel_after_the_first(user_id):
         if user_id == order[1]:
             with engine.begin() as c:
+                # fail fast if the handler still holds the row (the old code did: this used to hang)
+                c.execute(text("set local lock_timeout = '2s'"))
                 c.execute(text("update sessions set status='cancelled' where id=:i"), {"i": sid})
 
     pushes.on_call = cancel_after_the_first

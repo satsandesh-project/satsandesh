@@ -28,8 +28,11 @@ text and no audio, which is a choice, not a failure.
 **Transactions.** The render service takes seconds, and Postgres kills a connection left idle in a
 transaction for 30 s (app/db/base.py). So the handler decides, ENDS its transaction, makes the call
 with none open, then locks the satsang row again and re-checks everything before it delivers: what was
-true before a slow call is not trusted after it (a satsang can be cancelled meanwhile). The lock is
-what keeps two workers from both sending.
+true before a slow call is not trusted after it (a satsang can be cancelled meanwhile). The same rule
+holds for the pushes (OPEN_QUESTIONS #49, measured): they are made with NO lock and NO transaction
+held. `deliver` saves the renderings and COMMITS, which ends the lock; then each recipient is served on
+their own (see **Sent once**). Two workers racing are kept apart by the per-recipient claim, not by a
+lock held across the network.
 
 **Quiet hours: send anyway, unless the user chose a window themselves.** app/push.py resolves a user's
 "never picked a window" (NULL) to a default of 20:00-07:00, and a reminder is useless an hour late, so
@@ -50,13 +53,21 @@ time (late), or not at all if it has started by then (`test_KNOWN_LIMIT_...`). T
 route yet; the one that adds it should also call `enqueue_reminder`, which is safe because the handler
 is idempotent.
 
-**Sent once.** `reminder_sent_at` is a timestamp, not a flag, set in the same session as the job's
-completion: the worker commits the handler's writes and `complete_job` in ONE transaction
-(app/jobs.py), so a job cannot be done without the timestamp, nor the timestamp without the job. A
-second run sees it and sends nothing. What cannot be made atomic is the push, a network call: a process
-that dies after the pushes and before that commit sends again on the retry. After the commit it never
-does. A duplicate "starting in 30 minutes" is the cheaper mistake than a missing one, so the push comes
-first and the timestamp second.
+**Sent once, and what a crash costs.** Each recipient has a row in `satsang_reminder_deliveries`:
+CLAIMED (committed) before their push, COMPLETED after it. A claim that is never completed belongs to a
+worker that died, and a run that finds it older than `CLAIM_LEASE` takes it over. So: a process that
+dies mid-push costs ONE duplicate (the user in flight), never a missing reminder and never a resend to
+everybody; two workers (a duplicate job) never push the same user twice, because the second finds the
+first's claim and moves on, leaving that user to a retry (`ReminderNotFinished`) if the first never
+finishes. `reminder_sent_at`, a timestamp not a flag, is stamped last, in the transaction the worker
+commits together with the job's completion (app/jobs.py), only when everybody is served; a second run
+sees it and sends nothing. The choice of at-least-once over at-most-once is deliberate: the reminder is
+how an elder who is not looking at the app learns of the discourse, so a duplicate "starts in 30
+minutes" is the cheaper mistake than a missing one, and the ledger keeps that mistake to one person
+per crash. (The code before this change was also at-least-once, but with the whole audience as the
+duplicate: a crash after some pushes rolled the batch back and the retry pushed all of them again.)
+`send_push` has a timeout (`PUSH_TIMEOUT_S`): without one a push service that accepts the connection
+and never answers wedged the worker for good, measured.
 
 **What is NOT here.** English readers get the text and NO audio: the real render service has no
 English voice (measured on 14 Oct: asked for `en` it answers `text_only`, "no TTS voice for this
@@ -77,7 +88,8 @@ from types import SimpleNamespace
 from contracts.ai.language import LanguageCode
 from contracts.ai.render import RenderRequest, RenderResult
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import and_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.ai_client import AiCallError, AiClient
@@ -85,7 +97,7 @@ from app.config import get_settings
 from app.db.models import MediaObject, PushSubscription
 from app.db.models import User as DbUser
 from app.db.repository import enqueue_job
-from app.db.satsang import SatsangReminderRendering, SatsangSession
+from app.db.satsang import SatsangReminderDelivery, SatsangReminderRendering, SatsangSession
 from app.jobs import PermanentJobError
 from app.media_storage import get_media_storage
 from app.pipeline import _rendering_audio
@@ -96,15 +108,16 @@ logger = logging.getLogger(__name__)
 JOB_TYPE = "satsang_reminder"
 LEAD = timedelta(minutes=30)
 SOURCE_LANGUAGE = "en"
-CLAIM_LEASE = timedelta(minutes=2)  # skeleton for the red run: behaviour comes with the fix
+# How long a claim on one recipient may stay un-completed before another run takes it over. It must
+# exceed the longest a single recipient's pushes can take (a few devices, each bounded by
+# app/push.py's PUSH_TIMEOUT_S) and stay under the job's own lease (JOB_LEASE_SECONDS, 300), so that by
+# the time a crashed job is retried, its claim has expired.
+CLAIM_LEASE = timedelta(minutes=2)
 
 
 class ReminderNotFinished(Exception):
-    """Some recipients are still being served by another worker (or their push failed): not done."""
-
-
-def _finish(session: Session, session_id: uuid.UUID) -> None:  # skeleton for the red run
-    raise NotImplementedError
+    """Somebody is still unserved: another worker holds their claim, or their push blew up. Raised so the
+    queue retries later with its backoff; recipients already served are never pushed again."""
 
 
 _AUDIO_TYPES = {"wav_pcm16": "audio/wav", "ogg_opus": "audio/ogg", "mp3": "audio/mpeg"}
@@ -271,10 +284,13 @@ def handle_satsang_reminder(session: Session, payload: dict) -> None:
             logger.info("satsang reminder %s: %s after the render, not reminding", session_id, why)
             return
 
-    deliver(session, row, minutes_left, rendered)
-    row.reminder_sent_at = now
-    session.flush()
-    logger.info("satsang reminder %s: sent", row.id)
+    pending = deliver(session, row, minutes_left, rendered) or []
+    if pending:
+        raise ReminderNotFinished(
+            f"satsang reminder {session_id}: {len(pending)} recipient(s) not served yet"
+        )
+    _finish(session, session_id)
+    logger.info("satsang reminder %s: sent", session_id)
 
 
 def _store(
@@ -313,10 +329,14 @@ def _store(
 
 def deliver(
     session: Session, row: SatsangSession, minutes_left: int, rendered: dict[str, Rendered]
-) -> None:
-    """Store each language's reminder and push every recipient the one in their own language. A seam:
-    the clock's tests replace it. Pushes go through app/push.py's send_push, which never raises, so a
-    dead device blocks neither the user's other devices nor anyone else."""
+) -> list[uuid.UUID]:
+    """Store each language's reminder, then push every recipient the one in their own language. A seam:
+    the clock's tests replace it.
+
+    The renderings are saved and the transaction COMMITTED (which ends the lock on the satsang row)
+    BEFORE the first push: a push is a network call, and nothing here may hold a lock or a transaction
+    across one. Each recipient is then served on their own (`_send_all`). Returns the recipients who are
+    not served yet (empty: everybody is), for the handler to retry."""
     now = _now()
     source = source_text(minutes_left)
     recipients = _recipients(session, now)
@@ -344,8 +364,94 @@ def deliver(
                 degraded_reason=reason,
             )
     session.flush()
-    for user in recipients:
-        send_push(session, user_id=user.id, title=row.title, body=stored[_language_of(user)].text)
+    # Everything the sends need is read BEFORE the commit: afterwards nothing may be loaded lazily.
+    session_id, title = row.id, row.title
+    to_serve = [(user.id, stored[_language_of(user)].text) for user in recipients]
+    session.commit()
+    return _send_all(session, session_id, title, to_serve)
+
+
+def _send_all(
+    session: Session, session_id: uuid.UUID, title: str, to_serve: list[tuple[uuid.UUID, str]]
+) -> list[uuid.UUID]:
+    """One recipient at a time: claim, push, record. See `SatsangReminderDelivery` for why the order is
+    what it is. send_push never raises for a bad device; if it does raise (a bug, a dead database
+    connection) that recipient's claim is left un-completed, the others are still served, and the
+    handler is told who is left."""
+    pending: list[uuid.UUID] = []
+    for user_id, body in to_serve:
+        if not _still_wanted(session, session_id):
+            return []  # cancelled, ended, or finished by another worker: nobody is left to tell
+        state = _claim(session, session_id, user_id)
+        if state == "done":
+            continue
+        if state == "busy":
+            pending.append(user_id)
+            continue
+        try:
+            send_push(session, user_id=user_id, title=title, body=body)
+            _mark_sent(session, session_id, user_id)
+        except Exception:
+            logger.exception("satsang reminder %s: serving one recipient failed", session_id)
+            session.rollback()
+            pending.append(user_id)
+    return pending
+
+
+def _still_wanted(session: Session, session_id: uuid.UUID) -> bool:
+    """A fresh, UNLOCKED read before each recipient: a satsang cancelled or ended halfway through the
+    sends stops them, and so does another worker having finished."""
+    row = session.get(SatsangSession, session_id, populate_existing=True)
+    wanted = _why_not(row, _now()) is None
+    if not wanted:
+        session.rollback()
+    return wanted
+
+
+def _claim(session: Session, session_id: uuid.UUID, user_id: uuid.UUID) -> str:
+    """Take this recipient, atomically. "mine": push them. "done": already pushed. "busy": another worker
+    claimed them less than CLAIM_LEASE ago and has not finished (a claim older than that is a dead
+    worker's, and is taken over here: the one case where a user can be pushed twice)."""
+    now = _now()
+    table = SatsangReminderDelivery
+    won = session.execute(
+        pg_insert(table)
+        .values(session_id=session_id, user_id=user_id, claimed_at=now)
+        .on_conflict_do_update(
+            index_elements=[table.session_id, table.user_id],
+            set_={"claimed_at": now},
+            where=and_(table.sent_at.is_(None), table.claimed_at < now - CLAIM_LEASE),
+        )
+        .returning(table.user_id)
+    ).first()
+    if won is not None:
+        state = "mine"
+    else:
+        sent_at = session.scalar(
+            select(table.sent_at).where(table.session_id == session_id, table.user_id == user_id)
+        )
+        state = "done" if sent_at is not None else "busy"
+    session.commit()  # the claim is saved BEFORE the push, so a death mid-push leaves it behind
+    return state
+
+
+def _mark_sent(session: Session, session_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    table = SatsangReminderDelivery
+    session.execute(
+        update(table)
+        .where(table.session_id == session_id, table.user_id == user_id)
+        .values(sent_at=_now())
+    )
+    session.commit()
+
+
+def _finish(session: Session, session_id: uuid.UUID) -> None:
+    """Everybody is served: stamp the satsang, in the transaction the worker commits together with the
+    job's completion. Locks the row again, as the stamp must not race a second run's."""
+    row = _locked(session, session_id)
+    if row is not None and row.reminder_sent_at is None:
+        row.reminder_sent_at = _now()
+    session.flush()
 
 
 # --- reading it back ---------------------------------------------------------------------------------
