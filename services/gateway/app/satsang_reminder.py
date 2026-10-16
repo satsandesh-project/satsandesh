@@ -96,6 +96,16 @@ logger = logging.getLogger(__name__)
 JOB_TYPE = "satsang_reminder"
 LEAD = timedelta(minutes=30)
 SOURCE_LANGUAGE = "en"
+CLAIM_LEASE = timedelta(minutes=2)  # skeleton for the red run: behaviour comes with the fix
+
+
+class ReminderNotFinished(Exception):
+    """Some recipients are still being served by another worker (or their push failed): not done."""
+
+
+def _finish(session: Session, session_id: uuid.UUID) -> None:  # skeleton for the red run
+    raise NotImplementedError
+
 
 _AUDIO_TYPES = {"wav_pcm16": "audio/wav", "ogg_opus": "audio/ogg", "mp3": "audio/mpeg"}
 

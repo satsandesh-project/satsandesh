@@ -154,3 +154,25 @@ class SatsangReminderRendering(Base):
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
+
+
+class SatsangReminderDelivery(Base):
+    """Who has been pushed a satsang's reminder: the ledger that lets the handler send WITHOUT holding
+    the satsang row locked or a transaction open (OPEN_QUESTIONS #49).
+
+    One row per (satsang, user), made when a worker CLAIMS that user (`claimed_at`, `sent_at` empty),
+    and completed when the push call has returned (`sent_at`). A claim whose `sent_at` stays empty for
+    longer than `satsang_reminder.CLAIM_LEASE` belongs to a worker that died, and the next run takes it
+    over: so a crash costs at most ONE duplicate push (the user in flight), never a missing reminder
+    and never a resend to everybody. `session_id` and `user_id` CASCADE: derived bookkeeping."""
+
+    __tablename__ = "satsang_reminder_deliveries"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    claimed_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
