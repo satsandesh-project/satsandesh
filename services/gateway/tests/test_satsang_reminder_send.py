@@ -24,6 +24,8 @@ discourse. A process that DIES is simulated by raising `Crash`, a BaseException 
 catches, out of a push, and then dropping the session without committing, as a killed process would.
 """
 
+# ruff: noqa: F811
+
 import socket
 import threading
 import time
@@ -37,7 +39,6 @@ from sqlalchemy.orm import Session
 import app.push as push_module
 import app.satsang_reminder as reminder
 from app.config import get_settings
-from app.db.models import PushSubscription
 from app.db.satsang import SatsangReminderDelivery, SatsangSession
 from tests.test_satsang_reminder_delivery import (  # noqa: F401 (fixtures are used by name)
     LEAD,
@@ -130,7 +131,7 @@ def test_the_satsang_row_is_not_locked_while_a_push_is_in_flight(
 ):
     """The row used to stay locked, FOR UPDATE, through every push: anything that wanted to end, cancel or
     move the satsang waited for the slowest push service."""
-    sid, order = _setup(client, db_session, admin, swami, clock)
+    sid, _order = _setup(client, db_session, admin, swami, clock)
     outcome = {}
 
     def probe(user_id):
@@ -157,7 +158,7 @@ def test_no_transaction_is_left_open_across_a_push(
 ):
     """Postgres kills a connection that sits idle in a transaction for 30 s (app/db/base.py), so the
     session used for the pushes must not be inside one when a push starts."""
-    sid, order = _setup(client, db_session, admin, swami, clock, n=2)
+    sid, _order = _setup(client, db_session, admin, swami, clock, n=2)
     seen = []
     with Session(engine) as own:
 
@@ -350,10 +351,13 @@ def test_the_push_call_is_given_a_timeout(db_session, monkeypatch):
 
 
 def test_a_push_service_that_accepts_the_connection_and_never_answers_cannot_hold_the_call(
-    db_session, monkeypatch
+    monkeypatch,
 ):
-    """The real webpush, a real socket, nothing mocked but the key: the call used to block for ever."""
+    """The real webpush over a real socket, nothing mocked but the key and the subscription lookup (no
+    database is touched: a stuck call must not hold a transaction open for the test's teardown to
+    wait on). The call used to block for ever."""
     import base64
+    from types import SimpleNamespace
 
     from cryptography.hazmat.primitives import serialization as ser
     from py_vapid import Vapid
@@ -387,21 +391,20 @@ def test_a_push_service_that_accepts_the_connection_and_never_answers_cannot_hol
                 pass
 
     threading.Thread(target=accept_and_say_nothing, daemon=True).start()
-    user = _member(db_session, "Hang", "ta", subscribed=False)
-    db_session.add(
-        PushSubscription(
-            user_id=user.id,
-            endpoint=f"http://127.0.0.1:{server.getsockname()[1]}/never",
-            p256dh="BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
-            auth="tBHItJI5svbpez7KI4CCXg",
-        )
+    subscription = SimpleNamespace(
+        endpoint=f"http://127.0.0.1:{server.getsockname()[1]}/never",
+        p256dh="BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
+        auth="tBHItJI5svbpez7KI4CCXg",
     )
-    db_session.commit()
+    monkeypatch.setattr(
+        push_module, "list_push_subscriptions_for_user", lambda s, user_id: [subscription]
+    )
+    monkeypatch.setattr(push_module, "delete_push_subscription", lambda *a, **k: None)
 
     finished = threading.Event()
 
     def call():
-        push_module.send_push(db_session, user_id=user.id, title="t", body="b")
+        push_module.send_push(None, user_id=uuid.uuid4(), title="t", body="b")
         finished.set()
 
     threading.Thread(target=call, daemon=True).start()
