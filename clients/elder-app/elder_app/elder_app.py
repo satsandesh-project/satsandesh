@@ -680,16 +680,52 @@ window.__satsandeshWsInit = true;
     return String(ref.uri || "").replace(/^media:/, "");
   }
 
+  // At most three audio downloads at a time. Opening a chat with many voice notes used to ask for
+  // every one at once (15 to 20 requests together), which used up the gateway's database
+  // connections and made some of them fail with a 500 (issue 154). They now queue, oldest first.
+  const MAX_AUDIO_FETCHES = 3;
+  window.__satAudioActive = window.__satAudioActive || 0;
+  window.__satAudioQueue = window.__satAudioQueue || [];
+
+  function withAudioSlot(task) {
+    return new Promise((resolve, reject) => {
+      const run = () => {
+        window.__satAudioActive += 1;
+        task().then(resolve, reject).finally(() => {
+          window.__satAudioActive -= 1;
+          const next = window.__satAudioQueue.shift();
+          if (next) next();
+        });
+      };
+      if (window.__satAudioActive < MAX_AUDIO_FETCHES) run();
+      else window.__satAudioQueue.push(run);
+    });
+  }
+
+  function fetchAudioBlob(id) {
+    return fetch(GATEWAY_URL + "/media/" + id, {
+      headers: { Authorization: "Bearer " + window.__satToken },
+    }).then((resp) => {
+      if (!resp.ok) {
+        const error = new Error("audio fetch failed: " + resp.status);
+        error.status = resp.status;
+        throw error;
+      }
+      return resp.blob();
+    });
+  }
+
   function loadAudioUrl(ref) {
     const id = mediaIdOf(ref);
     if (window.__satAudioUrls[id]) return Promise.resolve(window.__satAudioUrls[id]);
     if (!window.__satAudioPending[id]) {
-      window.__satAudioPending[id] = fetch(GATEWAY_URL + "/media/" + id, {
-        headers: { Authorization: "Bearer " + window.__satToken },
-      })
-        .then((resp) => {
-          if (!resp.ok) throw new Error("audio fetch failed: " + resp.status);
-          return resp.blob();
+      // A server error (a busy gateway) is tried once more after a moment; anything else is not.
+      window.__satAudioPending[id] = withAudioSlot(() => fetchAudioBlob(id))
+        .catch((error) => {
+          if (!(error.status >= 500)) throw error;
+          return new Promise((resolve) => setTimeout(resolve, 1500)).then(() =>
+            withAudioSlot(() => fetchAudioBlob(id))
+          );
         })
         .then((blob) => {
           const url = URL.createObjectURL(blob);
