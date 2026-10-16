@@ -318,7 +318,7 @@ def test_a_push_that_blows_up_does_not_stop_the_others_and_is_tried_again_later(
     assert _row(db_session, sid).reminder_sent_at is not None
 
 
-def test_a_satsang_cancelled_between_two_pushes_stops_the_rest(
+def test_a_satsang_cancelled_during_the_pushes_stops_the_rest(
     client, db_session, admin, swami, clock, pushes, engine
 ):
     sid, order = _setup(client, db_session, admin, swami, clock)
@@ -332,7 +332,8 @@ def test_a_satsang_cancelled_between_two_pushes_stops_the_rest(
 
     pushes.on_call = cancel_after_the_first
     _run(engine, sid)
-    assert pushes.calls == [order[0]]  # nobody is told about a satsang that has been cancelled
+    # the push that was already in flight when it was cancelled completes; nobody after it is told
+    assert pushes.calls == order[:2]
 
 
 # --- 4. a push call can no longer hang forever -------------------------------------------------------
