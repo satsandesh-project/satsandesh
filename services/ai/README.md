@@ -263,6 +263,38 @@ $env:PYTHONPATH = "..\.."; $env:HF_HUB_OFFLINE = "1"   # cached models; or set H
 .\.venv\Scripts\python.exe tools/asr_compare.py a.wav b.opus --lang te --runs 3 --out cmp.md
 ```
 
+## Latency report
+
+`tools/latency_report.py` times the **running** services over HTTP, the way the gateway calls
+them, and writes `docs/AI_LATENCY_REPORT.md`: ASR (`/v1/transcribe`; IndicConformer for te/hi,
+faster-whisper for en, plus faster-whisper on te/hi as a labelled comparison) -> MT pivot
+(`/v1/pivot`, on that ASR's own transcript; English is a passthrough) -> render (`/v1/render`
+for the other two languages). `--with-moderation` adds `/v1/moderate` (needs the Qwen model).
+It changes no service and tunes nothing; failed or timed-out calls are recorded with their
+elapsed time and never stop the run.
+
+- `--audio-dir [LANG=]DIR` (repeatable): your own recordings. Language comes from `LANG=`, a
+  `te/` `hi/` `en/` sub-folder, a `te_` filename prefix, or `--lang`. Recordings are sent as
+  `file://` URIs, so the services must run on the same machine. Never commit them.
+- `--runs` (default 5): the first call to each service URL is cold, the rest warm. p50/p90 are
+  printed only with `--runs >= 5`, and with n=5 p90 is close to the worst value.
+- `--indic-decoder ctc|rnnt|both` (default `both`): `DECODE_MODE` is per process, so `both` needs
+  **two** IndicConformer instances. Their READMEs both default to port 8004 (the MT port too), so
+  the tool defaults to MT 8004, ASR 8002, render 8005, moderation 8003, IndicConformer CTC **8006**
+  and RNNT **8007**. Override with `--asr-url`, `--indic-ctc-url`, `--indic-rnnt-url`, `--mt-url`,
+  `--render-url`, `--moderation-url` or `LATENCY_*_URL` env vars. The tool checks each instance's
+  `/health/ready` `decode_mode` and flags a mismatch in the report.
+- `--skip-whisper-compare` drops faster-whisper on te/hi (it is slow on Telugu).
+- The report holds machine specs, method, results tables, the proposal target (p90 under 10 s for
+  a 30 s note) as met/missed, a labelled comparison with the earlier numbers on `main`, and what
+  it does not show. It names no files and contains no transcripts, so it can be committed.
+
+```powershell
+cd services/ai
+$env:PYTHONPATH = "..\.."
+.\.venv\Scripts\python.exe tools/latency_report.py --audio-dir C:\rec --runs 5
+```
+
 ## Development
 
 ```bash
