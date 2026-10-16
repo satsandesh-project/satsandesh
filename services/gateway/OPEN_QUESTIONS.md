@@ -757,14 +757,43 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     list says ended, recovering when a cut stream came back). **Not done:** no phone, no iPhone, no
     3G, and the Telugu wording has not been read by a native speaker. The certificate case is
     reproduced as "the stream never loads", not as an untrusted certificate. **Owner:** M2, Week 10.
-43. **A satsang that never ends, and one that ends too soon.** Measured on the real media server
-    (#37, #38): a publisher that goes silent leaves the row `live`; the media server now drops it
-    after 30 s of silence, and a moderator can end a live satsang by hand (`POST /sessions/{id}/end`,
-    and the End button on the admin page, which asks first). Still open: there is no watchdog for a
-    done-hook that never arrives (a gateway down at that moment), so that satsang stays live, and only
-    one can be live, until a moderator ends it; and ending is final, so a speaker whose phone drops
-    for ten seconds cannot come back. A grace period before `ended` is one design that fixes the
-    second and needs the first's watchdog anyway. **Owner:** M2, Week 10 (the decision is the user's).
+43. **A speaker whose phone drops cannot resume, and a satsang whose end-of-stream never arrived blocks the next.
+    DECISION 2026-10-16: the grace period is DEFERRED to Week 16 (hardening), not built in Week 10.** **What a drop
+    does today.** The media server reports the stream gone (the phone closes the socket, or goes silent for 30 s,
+    #38) and the gateway's done-hook sets the satsang `ended`; the database allows only `scheduled -> live|cancelled`
+    and `live -> ended`, so **`ended` is final**, and a publish for anything but a `scheduled` satsang is refused
+    with 403 (#37, measured on a real stack). For a 40-minute discourse on campus Wi-Fi: the speaker's app loses
+    its connection and fails to reconnect, with no word of why (what Larix prints is **unknown**: it has not been
+    installed); the listeners hear the buffered 10 to 15 s, then silence, then the screen says "waiting for the
+    speaker", then "This satsang has ended", with the discourse half over and nothing recorded (and #52 says the end
+    is cut off early); the moderator cannot restart it: they **schedule a new satsang** (a new id, key and ingest
+    URL), the speaker re-enters it, the listeners return to the list. About 2 minutes of work and the earlier part
+    is lost. **Measured, with a caveat:** a real ffmpeg publish to the real media server, the real player and hls.js
+    in headless Chrome, and the "drop" a `SIGSTOP` then `SIGCONT` of the publisher, **not a radio drop**: a pause
+    of 15 s changed nothing but the sound (about 12 s of buffer, then a 5 s stall, then it resumed; no done-hook);
+    25 s likewise (a 17 s stall); 40 s was dropped by the media server before it ended and the publisher never came
+    back. **Not measured: whether a real phone's connection survives a Wi-Fi drop at all** (does its OS close the
+    socket? after how long?): that is REHEARSAL.md step 10, and it decides whether this is rare or routine.
+    **The price, counted, of a grace period** (an `interrupted` status; the done-hook sets it and enqueues an
+    end-if-not-resumed job on the queue that exists; a publish for an interrupted satsang with the same key goes
+    live again; the same job is the watchdog for a lost done-hook): about 13 production files (the new migration, the
+    model, the routes and hooks, the contract and its mock, the elder pages and the admin page), about 450 lines,
+    and about 40 new tests (about 650 lines) plus edits to the existing ones that name a status (the status values
+    appear in about 17 files I own); **a contract change**
+    (`SatsangStatus` gains a value, so `CONTRACTS_VERSION` goes 0.10.0 to 0.11.0 and 12 files carry the version,
+    golden fixtures other members own among them); it rewrites the status trigger, the one rule that keeps the
+    table honest; it is the **fourth** revision on a chain whose second and third (`d3a9f1c27b58`, `c8f2a6d41e93`)
+    are in unmerged PRs, so it must be built on top of them and the deploy plan's migration round trip redone; and
+    the only part that touches the real media server (a reconnect while the old connection lingers) needs a fresh
+    real-stack proof. **Why deferred:** the whole price is spent on a failure nobody has seen on a real phone; the
+    checkpoint is days away and six Week 10 PRs are still unmerged; the recovery costs about 2 minutes and is written down
+    (REHEARSAL.md: "the manual way out"). **What would change it:** step 10 showing that an ordinary drop (a phone
+    switching access points, a screen lock) ends the satsang; or a speaker who cannot re-enter a new URL in time.
+    **Not changed meanwhile:** `drop_idle_publisher` stays 30 s (raising it widens the window in which a lost
+    done-hook leaves a satsang live). **The Week 16 design, so the work is not rediscovered:** `interrupted` status
+    plus `interrupted_at`; the done-hook sets it unless a moderator ended it; the job ends it after a grace period if
+    no publish arrived; the contract change is its own PR with the mock, merged first. **Owner:** M2. **Date:** decided
+    2026-10-16, to be built in Week 16 unless step 10 reopens it earlier.
 44. **A satsang is organisation-wide, not scoped to a circle.** The base setup does not say; decided
     from the documents: the Month 3-4 plan lists the satsang's data as "sessions (title, speaker, start
     time, stream key, status, reminder sent)" with no circle, while the bhajan rooms, the listen

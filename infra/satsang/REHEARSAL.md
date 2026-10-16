@@ -189,7 +189,29 @@ sub "$TE" te; sub "$HI" hi; sub "$EN" en
 - **Do:** with the speaker publishing and a listener playing, switch the speaker's phone to **airplane mode** (or walk out of Wi-Fi range). Write the time: ____ . Watch: the admin page's status for the satsang, the listener's screen, and `psqlq "select status, to_char(ended_at at time zone 'utc','HH24:MI:SS') from sessions where id='<id>'"`. After 60 s, restore the connection and try to publish again.
 - **Expect:** the media server notices silence and ends the satsang.
 - **Predicted:** a radio that goes away does not close the TCP connection, so the server sees silence and `drop_idle_publisher` fires after **30 s**: status `ended` about 30 s after the last data. (Week 9 measured about 30 s with `SIGSTOP`, **which is not a radio drop**; this is the first real one.) The listener hears the sound stop about 10 to 15 s after the drop (the buffer runs out), sees "Waiting for the speaker's voice" 8 s later, and "ended" at the next list refresh after the 30 s mark. After restoring the connection, **publishing is refused** (the satsang has ended and stays ended: OPEN_QUESTIONS #37 and #43). If the phone's OS closes the socket sooner, `ended` comes sooner; write down which it was.
+- **Also predicted:** if the satsang ends, it **cannot be restarted**, and that is the deferred decision of OPEN_QUESTIONS #43: recover with the section below it, "the manual way out", and write down how long it took. A pause of 15 s or 25 s with the connection kept was survived by the stand-in test (measured; see the section below); whether a real phone's connection survives one is the open question this step answers.
 - **Actual:** ____
+
+## If a satsang ends too soon or gets stuck: the manual way out (a decision, not an oversight)
+
+A speaker whose phone drops **cannot resume**: when the media server reports the stream gone, the satsang becomes
+`ended`, and an ended satsang is final (the database refuses `ended -> live`, and a publish for anything but a
+`scheduled` satsang is refused). Building a way back was **deferred to Week 16** on 2026-10-16
+(OPEN_QUESTIONS #43: the price, the reason, and what would change it). Until then, whoever runs the demo needs these:
+
+| What you see | What it is | Do this (about 2 minutes) |
+|---|---|---|
+| The listeners' screen says "This satsang has ended", the admin page says **ended**, the speaker's app keeps failing to reconnect | the drop ended it; the old URL and key are dead | On the admin page (`https://10.110.11.31:8444/satsang-admin`) **Schedule satsang** (a new one): same title and speaker, start time now. It shows a **new** ingest URL, once. The speaker pastes it into Larix and publishes. Tell listeners to open the **list** (`/satsang`): the new one is "On now". What was said before the drop is **not recorded** and cannot be replayed |
+| The admin page still says **LIVE**, but nobody is speaking and listeners hear nothing | the end-of-stream message never arrived (the gateway was down at that moment). Only one satsang can be live, so this one **blocks the next** | On the admin page, "Upcoming and live": press **End this satsang** on that one (it asks "end?": confirm). Then schedule a new one if you need one |
+| Larix cannot reconnect in the first half minute after a short drop | the satsang is still `live` (the media server has not yet noticed the old connection is dead, up to 30 s) and the gateway accepts a publish only for a `scheduled` one, so it answers 403 | Wait. When the admin page shows **ended**, use the first row |
+| The admin page is not reachable | | The same two actions by hand: `curl -sk -X POST https://10.110.11.31:8444/sessions/<id>/end -H "Authorization: Bearer $ADMIN_TOKEN"` ends a live one; scheduling is `POST /sessions`. `ADMIN_TOKEN` is the signed token from step 1; never paste it into a chat |
+
+What a short drop costs is **measured, with a caveat** (16 Oct, a real publish by ffmpeg to the real media server and the
+real player in headless Chrome; the "drop" was `SIGSTOP` then `SIGCONT` of the publisher, **which is not a radio drop**):
+a pause of **15 s** and of **25 s** changed nothing but the listeners' sound (they hear about 12 s more from their
+buffer, then silence for 5 s and 17 s, then it resumes by itself) and the satsang stayed live; a pause of **40 s** was
+dropped by the media server before it ended, and the satsang is over. Step 10 above finds out which of these a real phone
+looks like.
 
 ## After
 
