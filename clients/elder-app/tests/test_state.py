@@ -331,7 +331,9 @@ def test_chat_js_draws_translated_and_original_views():
     from elder_app.elder_app import CHAT_CONNECT_JS_TEMPLATE
 
     assert "buildMessageBody" in CHAT_CONNECT_JS_TEMPLATE
-    assert "Authorization" in CHAT_CONNECT_JS_TEMPLATE.split("function loadAudioUrl")[1][:400]
+    # The audio is fetched WITH the login token (see fetchAudioBlob, called by loadAudioUrl).
+    assert "Authorization" in CHAT_CONNECT_JS_TEMPLATE.split("function fetchAudioBlob")[1][:400]
+    assert "fetchAudioBlob(id)" in CHAT_CONNECT_JS_TEMPLATE.split("function loadAudioUrl")[1][:900]
     assert "renderings: data.renderings" in CHAT_CONNECT_JS_TEMPLATE
     assert "renderings: m.renderings" in CHAT_CONNECT_JS_TEMPLATE
 
