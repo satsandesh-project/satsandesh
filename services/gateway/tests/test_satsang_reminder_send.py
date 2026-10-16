@@ -290,6 +290,7 @@ def test_two_workers_at_once_never_push_the_same_user_twice(
     t = threading.Thread(target=first)
     t.start()
     assert inside.wait(10), "the first worker never reached its first push"
+    clock.at(clock.current + timedelta(seconds=30))  # time passes, but less than the lease
 
     with pytest.raises(reminder.ReminderNotFinished):
         _run(engine, sid)  # the second worker, while the first is mid-push to order[0]
