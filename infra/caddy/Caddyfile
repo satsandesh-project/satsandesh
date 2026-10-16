@@ -98,6 +98,27 @@
 	handle_path /livekit/* {
 		reverse_proxy livekit:7880
 	}
+	# Satsang broadcast listening (docker-compose.satsang.yml): the HLS playlist and segments the
+	# media server cuts from the speaker's RTMP stream, e.g. /hls/<session id>.m3u8. `handle`, not
+	# handle_path: the media server serves them under /hls/ too, so the path stays as it is. Only
+	# LISTENING comes this way. The speaker publishes to the media server's own port 1935, and the
+	# media server's callbacks to the gateway do not come through here (see /sessions/ingest below).
+	# With no media server running, only this path answers 502.
+	handle /hls* {
+		reverse_proxy satsang:8080
+	}
+	# Satsang scheduling and listing (services/gateway/app/satsang.py): the admin page and, later,
+	# the elder app's upcoming list. The gateway decides who may do what.
+	# The two hooks the RTMP server calls (/sessions/ingest/publish and /done) are the exception:
+	# they are guarded by a shared secret, and nothing outside the compose network has any reason
+	# to call them, so they are refused HERE, first. Caddy picks the longest path first, so this
+	# block wins over /sessions* below; tls_check.py tries ten spellings of the path to prove it.
+	handle /sessions/ingest* {
+		respond 404
+	}
+	handle /sessions* {
+		reverse_proxy gateway:8000
+	}
 
 	# Everything else -- both the elder-app frontend itself (compiled
 	# pages, JS bundles) AND Reflex's own internal backend paths (/ping,

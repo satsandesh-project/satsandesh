@@ -697,3 +697,115 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     devices with headphones, check that only the lead is heard, that a hand-over is one tap, and
     that the old lead cannot speak after (also by rejoining). **Until then Weeks 9 and 10 are
     built and tested in software, not demonstrated.** **Owner:** M1.
+37. **A publish that arrives while the satsang is already live used to END it. Fixed: it is now
+    refused.** Measured on the real stack: a second ffmpeg publishing to the same URL while the first
+    connection was still open was accepted by the hook, then refused by nginx-rtmp ("Already
+    publishing"), and nginx still sent the done-hook for that refused connection: the gateway logged
+    `ended (publisher stopped)` and the first connection's own done-hook later got 409. **Decision
+    (the owner delegated it; option A of three): the publish hook refuses a publish for anything but
+    a scheduled satsang.** Checked on the real media server after the change: the second publish gets
+    a 403 from the hook, nginx never starts it, **0** done-hooks are sent for it, the row stays
+    `live`, and the first publisher's own stop sends the one done-hook that ends it. What this does
+    NOT fix, and why it was the cheaper option: a speaker who reconnects while the old connection is
+    still counted as live is refused until it is dropped (the media server drops a silent publisher
+    after 30 s, #38), and a dropped speaker still cannot resume once the satsang has ended. Both
+    need the grace period of #43, which needs a status the table does not have and so a second
+    migration. A lost done-hook now also locks the speaker out, where before they could reconnect;
+    a moderator ends it by hand (`POST /sessions/{id}/end`, and the End button on the admin page).
+    The other two options, for the record: keep nginx's connection id and ignore a done-hook from
+    any other (needs a column, so a migration); or the grace period itself. **Owner:** M2, Week 10
+    (the grace period).
+38. **A publisher that goes silent without closing its connection.** With no idle limit the
+    row stayed `live` for the whole 2 minutes it was watched (the HLS playlist started returning
+    404 after about 75 s, so listeners got nothing while the app said live), and only one satsang
+    can be live, so it blocks the next. The media server now drops a publisher silent for 30 s
+    (`drop_idle_publisher`, overridable): measured, the row ended at about +30 s. The cost is the
+    same as #50 (d): that satsang is over, and a speaker who comes back with the same URL is
+    refused. The freeze was a stopped process (SIGSTOP), **not a real radio drop**; how a real
+    phone behaves (does its OS close the socket? after how long?) is unmeasured.
+    **Owner:** M2, Week 10.
+39. **What a listener sees when a satsang ends.** The playlist never gets `#EXT-X-ENDLIST`: it
+    freezes for about 64 s, then returns 404, and the last two segments stay in the media
+    server's memory until its container restarts (about 40 KB each; harmless, but fetchable by
+    anyone who knows the session id). A player therefore stalls and then errors; the listener's
+    screen has to learn that the satsang ended from the session listing, not from the stream.
+    Also: every segment declares an empty H.264 video stream next to the audio (ffprobe: 0x0, no
+    frames) because nginx-rtmp always writes both; ffmpeg plays it, **no browser has been tried**.
+    **Owner:** M2, Week 10 (the join screen and player).
+40. **`/hls` has no login.** Anyone who knows or guesses a session id can listen; ids are random
+    UUIDs and the listing that shows them needs a signed token, so this is a capability URL, not
+    access control. Fine for an organisation-wide discourse, wrong for a private circle (the
+    scoping question Week 10 has to answer). Caddy could check a token per request only with an
+    auth subrequest to the gateway; not built. **Owner:** M2, Week 10.
+41. **Week 9 does not remind anyone.** Nothing tells a user that a satsang is about to start: no push,
+    no spoken reminder, no job that looks at `scheduled_start_at`. The sessions table has a
+    `reminder_sent_at` column and nothing writes it. The plan puts the reminder 30 minutes before the
+    start, as push plus TTS audio, in the user's language. **Owner:** M2, Week 10.
+42. **Week 9 has no screen for listeners.** There is no elder-facing "join" screen and no hls.js
+    player: the HLS stream exists and ffmpeg plays it, but no browser has played it (see #39 for the
+    empty video stream every segment declares). `GET /sessions` returns the listing an elder's screen
+    would show; nothing calls it yet. The Satsang tab in the elders' bottom navigation
+    (`elder_app.py`, M1's file) is a placeholder that does nothing; the Week 10 screen is to be built
+    in its own file, as the admin page was. The admin page is deliberately not linked from the elder
+    screens. **Owner:** M2, Week 10.
+43. **A satsang that never ends, and one that ends too soon.** Measured on the real media server
+    (#37, #38): a publisher that goes silent leaves the row `live`; the media server now drops it
+    after 30 s of silence, and a moderator can end a live satsang by hand (`POST /sessions/{id}/end`,
+    and the End button on the admin page, which asks first). Still open: there is no watchdog for a
+    done-hook that never arrives (a gateway down at that moment), so that satsang stays live, and only
+    one can be live, until a moderator ends it; and ending is final, so a speaker whose phone drops
+    for ten seconds cannot come back. A grace period before `ended` is one design that fixes the
+    second and needs the first's watchdog anyway. **Owner:** M2, Week 10 (the decision is the user's).
+44. **A satsang is organisation-wide, not scoped to a circle.** The base setup does not say; decided
+    from the documents: the Month 3-4 plan lists the satsang's data as "sessions (title, speaker, start
+    time, stream key, status, reminder sent)" with no circle, while the bhajan rooms, the listen
+    sessions and the events in the same plan each name one; the proposal describes a satsang as a
+    "scheduled one-to-many broadcast" for the organisation (objective O4, section 7.4), and circles
+    as groups "by locality or seva interest". So every signed-in user sees every scheduled satsang in
+    `GET /sessions`, and anyone who has a session's id can fetch its stream (#40). If the organisation
+    wants a private satsang, the change is a nullable `circle_id`, a filter in the listing, and a
+    token check in front of `/hls`. **Owner:** M2; revisit only if asked.
+45. **Recording and replay are out of scope.** The media server does not record (`record off`), the
+    HLS segments live in memory and are deleted a minute or so after the stream stops (the last two
+    stay until the container restarts, #39), and nothing stores a satsang for later. The base setup
+    does not include it. The Discourse archive in the plan works on recordings an administrator
+    uploads, so it does not need this feature to record anything. Do not assume a satsang can be
+    heard afterwards. **Owner:** nobody in Weeks 9 and 10.
+46. **What a listener who joins late hears.** The playlist keeps 32 seconds (eight 4-second segments:
+    `hls_fragment 4s`, `hls_playlist_length 32s`), and a player starts three segments behind the live
+    edge. So someone who joins mid-discourse hears it from about 12 seconds ago, on a stream that
+    measures 15 to 17 seconds behind the speaker, and cannot go back further: there is no earlier
+    audio to fetch. A listener whose connection stalls for more than about 20 seconds falls off the
+    front of the playlist and must jump to the live edge (not provoked: 0 of 6 runs at the
+    default settings). Someone who opens the page before the satsang starts gets a 404 for the playlist, not a
+    "not yet": the player has to read the session's status and retry. **Owner:** M2, Week 10.
+47. **The admin page is a first cut.** It takes a pasted signed token (there is no login for an
+    administrator in the app, see #32), the speaker is a user id typed in because there is no user
+    directory to pick from, a speaker has no list of their own satsangs (they paste a session code
+    the administrator gives them), and it is in English only. The elder-app tests are not run by CI
+    (`.github/workflows/ci.yml` has no job for them), so they run on a developer's machine, and the
+    browser-script tests need Node. **Owner:** M2, Week 10 for the page; M1 for #32.
+50. **A satsang's stream key crosses the campus network in clear, and the ingest hook's secret sits
+    in a URL.** The hook (`POST /sessions/ingest/publish`, called by the RTMP server) is
+    protected by a shared secret, the stream key and what the key is worth (`app/satsang.py`
+    module docstring), and for the hook that is enough: an attacker without a valid key changes
+    nothing, and one with a key could already broadcast by publishing to the RTMP port. The weak
+    point is the key. **RTMP on 1935 carries it unencrypted** (`infra/satsang/INGEST_FINDING.md`),
+    so anyone who can watch one publish handshake on the same network learns a key that works
+    until that satsang ends. Its life is bounded (only while the satsang is scheduled or live,
+    only from an hour before the start, dead after it ends, one live at a time), which shortens
+    the exposure and does not remove it. RTMPS or WHIP would, and both need a trusted certificate,
+    which waits on the domain decision.
+    Smaller, all true now: (a) the secret is in the callback's query string, so it appears in the
+    gateway's own access log (measured on a real stack: 8 access-log lines carried it) and is
+    one value for both hooks (the media server now adds it itself, so it is in the gateway's
+    access log and in the media server's rendered config, nowhere else; 0 lines in the media
+    server's, Caddy's and Postgres's logs, measured); (b) Caddy must never route
+    `/sessions/ingest*`: it does not (`/sessions` is not routed at all), and
+    `infra/caddy/tls_check.py` now fails if it ever is; (c) nginx-rtmp keeps the callback's
+    query string and posts form fields `name` and `key` (the URL's argument): **measured**, and
+    the reason the stream is named by the session id and not by the key (see `app/satsang.py`);
+    (d) a speaker whose connection drops ends the satsang (the done-hook fires) and cannot resume,
+    while a satsang whose done-hook never arrives stays live until a moderator ends it by hand
+    (`POST /sessions/{id}/end`); a grace period and a watchdog are one design. #37 and #38 are
+    what the real media server showed about (d). **Owner:** M2, Week 10.
