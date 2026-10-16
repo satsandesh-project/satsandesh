@@ -737,21 +737,62 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     Also: every segment declares an empty H.264 video stream next to the audio (ffprobe: 0x0, no
     frames) because nginx-rtmp always writes both; ffmpeg plays it, **no browser has been tried**.
     **Owner:** M2, Week 10 (the join screen and player).
-40. **`/hls` has no login.** Anyone who knows or guesses a session id can listen; ids are random
-    UUIDs and the listing that shows them needs a signed token, so this is a capability URL, not
-    access control. Fine for an organisation-wide discourse, wrong for a private circle (the
-    scoping question Week 10 has to answer). Caddy could check a token per request only with an
-    auth subrequest to the gateway; not built. **Owner:** M2, Week 10.
-49. **The reminder holds a database connection and a row lock while it sends every push.**
-    `satsang_reminder.deliver` calls `send_push` once per recipient inside the job's transaction,
-    with the satsang row locked `FOR UPDATE` and the worker's pooled connection held until the job
-    completes. `send_push` never raises, so one slow or dead endpoint does not fail the job, but it
-    does keep the lock, and anything else that wants to update that satsang (end it, move it) would
-    wait for it. With the pilot's few subscribers that is harmless; with many subscribers or a slow
-    push service the time grows with their number. **Not measured:** neither the time per push nor the
-    pool headroom was timed for this. A fix is to decide and render under the lock, send outside any
-    lock, and record `reminder_sent_at` in a second transaction; that trades "at most once" for "at
-    least once" if the process dies between the two, which is the user's decision. (The Phase 2
-    version renders before it takes the lock the second time, so only the sends remain inside it.)
-    **Owner:** M2, Week 10. Raised in review on #170.
-
+40. **`/hls` has no login, so a stream address is a capability URL. DECIDED 2026-10-16: kept, because a
+    satsang belongs to the whole organisation; reopen if that stops being true.** Anyone who has a live
+    satsang's id can listen. The id is a UUIDv7 (48 bits of time, 74 random), the listing that shows it
+    needs a signed-in user, and the path travels inside HTTPS, so it is not visible on the network. That
+    is coherent while every signed-in user may hear every satsang, which the contract, the model, the
+    listing and the reminder's audience all say (#44): **no satsang table, contract shape or query mentions
+    a circle.** The incoherent combination, a circle-scoped satsang whose stream anyone with the URL could
+    hear, does not exist in the code, and `tests/test_satsang_scope.py` fails if somebody introduces one.
+    **The options, costed.** (a) Leave it: chosen. (b) An `auth_request` or `forward_auth` per request:
+    a listener fetches one playlist and one segment every 4 s (read off the events of a headless hls.js
+    run), so 60 listeners are about 30 requests a second through the gateway. Measured on a throwaway
+    gateway, one run, a loopback client, `GET /me` as the stand-in for an auth-only check: p50 7 ms, p95
+    8 ms at 30 req/s; p50 6 ms, p95 7 ms at 120 req/s (240 listeners); at 400 req/s the test collapsed
+    (2973 connection errors and 1021 timeouts of 4000; I did not separate my thread-per-request client
+    from the single gateway process). So load is not the objection at pilot size; **coupling is**: the
+    gateway would sit in the audio path, a gateway restart (the deploy plan recreates it) would stutter
+    every live stream, and the gateway has frozen on a burst of new browsers before (#154, fixed in #155). (c) A signed, expiring PATH
+    (`/hls/<exp>-<sig>/<id>.m3u8`) checked by the media server itself: Debian's nginx 1.26.3 has
+    `secure_link` and `auth_request` (checked), so the gateway is not in the stream path; the listing
+    would mint one path per listener, which fits the `hls_url` string the contract already has. The path
+    and not a query, because a player resolves segment URLs against the playlist's path and drops its
+    query. Costs: a shared secret, an md5-based check, an expiry that must outlast the longest satsang
+    (so a leaked URL still works until then), and a per-viewer address. Not built. (d) Scope satsangs to
+    the organisation by definition: that is #44, and this entry now records it as the reason. **Reopen
+    when** a satsang is ever scoped to a circle, the stream is exposed beyond the campus, or a discourse
+    is meant to be private: then (c) comes first. **Owner:** M2. Decided by the argument in the pull
+    request that changes this entry.
+49. **The reminder held a row lock and a connection through every push, and `webpush()` had no timeout.
+    FIXED 2026-10-16.** **Measured first** (all on the shared server; the push service is a loopback
+    stand-in unless it says FCM; one run each unless a count is given). One `send_push` call: stand-in
+    answering at once 11 ms mean (n=10); answering after 0.2 s, 207 ms; a 410, 17 ms; port refused 11 ms; a
+    name that does not resolve 10 ms; **real FCM, via a headless Chrome subscription: 299 to 904 ms
+    (6 sends, two runs), HTTP 201, and 250 to 292 ms with HTTP 410 for a subscription that does not
+    exist, after which the row is deleted** (arrival at the browser was not observed). A stand-in that
+    accepts the connection and never answers: **still blocked after 150 s, no timeout is set**; a blackhole
+    address: 76 s. The pool is SQLAlchemy's default, 5 + 10 = 15 connections (app/db/base.py sets
+    neither); during a 15 s reminder the handler held **1**, in state `idle in transaction`, so 14 were
+    spare. And Postgres kills a connection idle in a transaction after 30 s (the same file). **What that
+    did, with the REAL jobs worker and handler, five subscribers, the third bad:** the hanging one
+    wedged the worker for good (the job stayed `running`; users 4 and 5 were never reminded; users 1 to 3
+    were); the blackhole one failed the job after 76 s (`OperationalError: server closed the connection`:
+    the 30 s limit had already cut it), the job was requeued, and **the retry pushed users 1 and 2 a
+    second time** and still never reached 4 and 5. **A correction to this entry's first version:** it said
+    sending outside the lock would trade at-most-once for at-least-once. The old code was already
+    at-least-once, with the whole audience as the duplicate: a crash after some pushes rolled the batch
+    back and the retry sent all of them again. **Chosen: at-least-once with a per-recipient ledger.** Which
+    mistake is worse for this product: an elder who hears the reminder twice, or none? None: the
+    reminder is how an elder who is not looking at the app learns of the discourse, a duplicate "starts in
+    30 minutes" costs a second of annoyance, a missing one costs the discourse. At-most-once (stamp, then
+    send) would make a crash lose the reminder for EVERYONE; the ledger (a claim before each push,
+    completed after it, taken over after `CLAIM_LEASE`) makes a crash cost one duplicate, for the one user
+    in flight. **After, same harness:** the hanging subscriber costs 5 s and everyone is reminded; the
+    blackhole one costs 3 s, four are pushed, a second run pushes nothing. Tests:
+    `test_satsang_reminder_send.py`, which kills the process after a push, after a claim, and before the
+    timestamp. **Costs:** one table and a third migration (`c8f2a6d41e93`, after `d3a9f1c27b58`: still
+    one head); a timeout on `send_push`, a function shared with the message pushes (one constant, one
+    keyword); sends are one at a time, so the worst case is every recipient dead at 8 s each (60 of
+    them, 8 minutes, inside a 30-minute lead): parallel sends are the next step if the audience grows.
+    **Owner:** M2. Raised in review on #170.
