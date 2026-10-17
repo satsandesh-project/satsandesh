@@ -1,7 +1,7 @@
 """add satsang_reminder_renderings: a satsang reminder, per language
 
 Revision ID: d3a9f1c27b58
-Revises: bc32cd718b80
+Revises: 8e3234dc9fc8
 Create Date: 2026-10-14 00:00:00.000000
 
 One row per (satsang, language): the reminder's text in that language and, when speech was made, its
@@ -17,7 +17,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d3a9f1c27b58"
-down_revision: str | Sequence[str] | None = "bc32cd718b80"
+down_revision: str | Sequence[str] | None = "8e3234dc9fc8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

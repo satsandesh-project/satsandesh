@@ -666,42 +666,37 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     word but invented a fact and addresses elders as "tum"); the IndicTrans2 1B and Indic→Indic models could not be
     tested because the Hugging Face terms are not accepted on the account behind the token (403).
 
-35. **A bhajan-room lead can rejoin as a speaker for about three minutes after their turn.** A token's
-    `canPublish` is applied again whenever someone joins with it, and the hand-over's
-    `UpdateParticipant` changes only the live session, so the publish-capable token is kept to two
-    minutes (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`) and the listener token to an hour. **LiveKit
-    v1.13.9 also accepts an expired token for exactly 60 more seconds** (measured by M2 on a throwaway
-    LiveKit: accepted up to 59 s past expiry, refused from 60 s, with a fresh-token control valid on
-    every row), so the real window is the token's life plus 60 s: about three minutes, not two.
-    That shrinks the window; it does not close it. Closing it needs a check on join: a LiveKit
-    `participant_joined` webhook that silences anyone who is not the current lead. Not built.
-    Found by M2's review of #151, who showed it on a real LiveKit. **Owner:** M1 (webhook route
-    and the gateway side), before bhajan rooms are used outside a demo.
+35. **A bhajan-room lead could rejoin as a speaker after their turn.** A token's `canPublish` is
+    applied again whenever someone joins with it, and the hand-over's `UpdateParticipant` changes
+    only the live session. Two layers now: the publish-capable token lives two minutes
+    (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`; the listener's an hour; **LiveKit v1.13.9 also accepts
+    an expired token for exactly 60 more seconds**, measured by M2 on a throwaway LiveKit, so on its
+    own the token leaves a window of about three minutes), and LiveKit's `participant_joined`
+    webhook (`app/livekit_webhook.py`, `/internal/livekit/webhook`, signed with the API secret,
+    reachable only inside the compose network) makes the gateway set the joiner's permission to what
+    the database says, under the room lock. It also lets a lead who joined muted speak. **Shown
+    against a real LiveKit** (`infra/livekit/webhook_check.sh`): after a real WebRTC join LiveKit
+    sends `participant_joined` (a signalling-only join sends nothing), the gateway's own signature
+    check accepts its signature, and the event carries the room name and the person's identity.
+    **Not shown:** the whole chain end to end (the permission really changing on a live session) and
+    the time between a join and that change, during which audio could leak. If LiveKit cannot be
+    reached the answer is a 502 and the person keeps what their token gave them, so the short token is
+    still the first line of defence. Found by M2's review of #151. **Owner:** M1, to show it on a real
+    LiveKit with real devices (deferred, see #36).
 
-36. **A satsang's stream key crosses the campus network in clear, and the ingest hook's secret sits
-    in a URL.** The hook (`POST /sessions/ingest/publish`, called by the RTMP server) is
-    protected by a shared secret, the stream key and what the key is worth (`app/satsang.py`
-    module docstring), and for the hook that is enough: an attacker without a valid key changes
-    nothing, and one with a key could already broadcast by publishing to the RTMP port. The weak
-    point is the key. **RTMP on 1935 carries it unencrypted** (`infra/satsang/INGEST_FINDING.md`),
-    so anyone who can watch one publish handshake on the same network learns a key that works
-    until that satsang ends. Its life is bounded (only while the satsang is scheduled or live,
-    only from an hour before the start, dead after it ends, one live at a time), which shortens
-    the exposure and does not remove it. RTMPS or WHIP would, and both need a trusted certificate,
-    which waits on the domain decision.
-    Smaller, all true now: (a) the secret is in the callback's query string, so it appears in the
-    gateway's own access log (measured on a real stack: 8 access-log lines carried it) and is
-    one value for both hooks (the media server now adds it itself, so it is in the gateway's
-    access log and in the media server's rendered config, nowhere else; 0 lines in the media
-    server's, Caddy's and Postgres's logs, measured); (b) Caddy must never route
-    `/sessions/ingest*`: it does not (`/sessions` is not routed at all), and
-    `infra/caddy/tls_check.py` now fails if it ever is; (c) nginx-rtmp keeps the callback's
-    query string and posts form fields `name` and `key` (the URL's argument): **measured**, and
-    the reason the stream is named by the session id and not by the key (see `app/satsang.py`);
-    (d) a speaker whose connection drops ends the satsang (the done-hook fires) and cannot resume,
-    while a satsang whose done-hook never arrives stays live until a moderator ends it by hand
-    (`POST /sessions/{id}/end`); a grace period and a watchdog are one design. #37 and #38 are
-    what the real media server showed about (d). **Owner:** M2, Week 10.
+36. **Bhajan rooms: what is not done, and why.** (a) *TURN over TLS on 443* (the plan's fallback for
+    networks that block UDP and TCP 7881): not built. Ports below 1024 are not ours on the shared
+    server (no root; `:80` is the system Apache; see `infra/satsang/INGEST_FINDING.md`) and TLS
+    needs a certificate for a real name, which we do not have (the domain question is open).
+    A high port would work for some networks but is not what the plan promises. (b) *The
+    "five devices in one room" test* ("done when" for Weeks 9 and 10): deferred by M1 on 12 Oct,
+    because no phones and not enough people with devices are available; to be run in about two
+    months. Whether the college firewall (Sophos) lets LiveKit's UDP 7882 or TCP 7881 through is
+    only knowable then. When it is run: LiveKit added to staging with the `LIVEKIT_*` values and
+    a Caddy restart, the gateway rebuilt (#155 first), one lead and four listeners on separate
+    devices with headphones, check that only the lead is heard, that a hand-over is one tap, and
+    that the old lead cannot speak after (also by rejoining). **Until then Weeks 9 and 10 are
+    built and tested in software, not demonstrated.** **Owner:** M1.
 37. **A publish that arrives while the satsang is already live used to END it. Fixed: it is now
     refused.** Measured on the real stack: a second ffmpeg publishing to the same URL while the first
     connection was still open was accepted by the hook, then refused by nginx-rtmp ("Already
@@ -725,7 +720,7 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     404 after about 75 s, so listeners got nothing while the app said live), and only one satsang
     can be live, so it blocks the next. The media server now drops a publisher silent for 30 s
     (`drop_idle_publisher`, overridable): measured, the row ended at about +30 s. The cost is the
-    same as #36 (d): that satsang is over, and a speaker who comes back with the same URL is
+    same as #50 (d): that satsang is over, and a speaker who comes back with the same URL is
     refused. The freeze was a stopped process (SIGSTOP), **not a real radio drop**; how a real
     phone behaves (does its OS close the socket? after how long?) is unmeasured.
     **Owner:** M2, Week 10.
@@ -764,6 +759,54 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     when** a satsang is ever scoped to a circle, the stream is exposed beyond the campus, or a discourse
     is meant to be private: then (c) comes first. **Owner:** M2. Decided by the argument in the pull
     request that changes this entry.
+41. **Week 9 does not remind anyone.** Nothing tells a user that a satsang is about to start: no push,
+    no spoken reminder, no job that looks at `scheduled_start_at`. The sessions table has a
+    `reminder_sent_at` column and nothing writes it. The plan puts the reminder 30 minutes before the
+    start, as push plus TTS audio, in the user's language. **Owner:** M2, Week 10.
+42. **Week 9 has no screen for listeners.** There is no elder-facing "join" screen and no hls.js
+    player: the HLS stream exists and ffmpeg plays it, but no browser has played it (see #39 for the
+    empty video stream every segment declares). `GET /sessions` returns the listing an elder's screen
+    would show; nothing calls it yet. The Satsang tab in the elders' bottom navigation
+    (`elder_app.py`, M1's file) is a placeholder that does nothing; the Week 10 screen is to be built
+    in its own file, as the admin page was. The admin page is deliberately not linked from the elder
+    screens. **Owner:** M2, Week 10.
+43. **A satsang that never ends, and one that ends too soon.** Measured on the real media server
+    (#37, #38): a publisher that goes silent leaves the row `live`; the media server now drops it
+    after 30 s of silence, and a moderator can end a live satsang by hand (`POST /sessions/{id}/end`,
+    and the End button on the admin page, which asks first). Still open: there is no watchdog for a
+    done-hook that never arrives (a gateway down at that moment), so that satsang stays live, and only
+    one can be live, until a moderator ends it; and ending is final, so a speaker whose phone drops
+    for ten seconds cannot come back. A grace period before `ended` is one design that fixes the
+    second and needs the first's watchdog anyway. **Owner:** M2, Week 10 (the decision is the user's).
+44. **A satsang is organisation-wide, not scoped to a circle.** The base setup does not say; decided
+    from the documents: the Month 3-4 plan lists the satsang's data as "sessions (title, speaker, start
+    time, stream key, status, reminder sent)" with no circle, while the bhajan rooms, the listen
+    sessions and the events in the same plan each name one; the proposal describes a satsang as a
+    "scheduled one-to-many broadcast" for the organisation (objective O4, section 7.4), and circles
+    as groups "by locality or seva interest". So every signed-in user sees every scheduled satsang in
+    `GET /sessions`, and anyone who has a session's id can fetch its stream (#40). If the organisation
+    wants a private satsang, the change is a nullable `circle_id`, a filter in the listing, and a
+    token check in front of `/hls`. **Owner:** M2; revisit only if asked.
+45. **Recording and replay are out of scope.** The media server does not record (`record off`), the
+    HLS segments live in memory and are deleted a minute or so after the stream stops (the last two
+    stay until the container restarts, #39), and nothing stores a satsang for later. The base setup
+    does not include it. The Discourse archive in the plan works on recordings an administrator
+    uploads, so it does not need this feature to record anything. Do not assume a satsang can be
+    heard afterwards. **Owner:** nobody in Weeks 9 and 10.
+46. **What a listener who joins late hears.** The playlist keeps 32 seconds (eight 4-second segments:
+    `hls_fragment 4s`, `hls_playlist_length 32s`), and a player starts three segments behind the live
+    edge. So someone who joins mid-discourse hears it from about 12 seconds ago, on a stream that
+    measures 15 to 17 seconds behind the speaker, and cannot go back further: there is no earlier
+    audio to fetch. A listener whose connection stalls for more than about 20 seconds falls off the
+    front of the playlist and must jump to the live edge (not provoked: 0 of 6 runs at the
+    default settings). Someone who opens the page before the satsang starts gets a 404 for the playlist, not a
+    "not yet": the player has to read the session's status and retry. **Owner:** M2, Week 10.
+47. **The admin page is a first cut.** It takes a pasted signed token (there is no login for an
+    administrator in the app, see #32), the speaker is a user id typed in because there is no user
+    directory to pick from, a speaker has no list of their own satsangs (they paste a session code
+    the administrator gives them), and it is in English only. The elder-app tests are not run by CI
+    (`.github/workflows/ci.yml` has no job for them), so they run on a developer's machine, and the
+    browser-script tests need Node. **Owner:** M2, Week 10 for the page; M1 for #32.
 49. **The reminder held a row lock and a connection through every push, and `webpush()` had no timeout.
     FIXED 2026-10-16.** **Measured first** (all on the shared server; the push service is a loopback
     stand-in unless it says FCM; one run each unless a count is given). One `send_push` call: stand-in
@@ -796,3 +839,49 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     keyword); sends are one at a time, so the worst case is every recipient dead at 8 s each (60 of
     them, 8 minutes, inside a 30-minute lead): parallel sends are the next step if the audience grows.
     **Owner:** M2. Raised in review on #170.
+50. **A satsang's stream key crosses the campus network in clear, and the ingest hook's secret sits
+    in a URL.** The hook (`POST /sessions/ingest/publish`, called by the RTMP server) is
+    protected by a shared secret, the stream key and what the key is worth (`app/satsang.py`
+    module docstring), and for the hook that is enough: an attacker without a valid key changes
+    nothing, and one with a key could already broadcast by publishing to the RTMP port. The weak
+    point is the key. **RTMP on 1935 carries it unencrypted** (`infra/satsang/INGEST_FINDING.md`),
+    so anyone who can watch one publish handshake on the same network learns a key that works
+    until that satsang ends. Its life is bounded (only while the satsang is scheduled or live,
+    only from an hour before the start, dead after it ends, one live at a time), which shortens
+    the exposure and does not remove it. RTMPS or WHIP would, and both need a trusted certificate,
+    which waits on the domain decision.
+    Smaller, all true now: (a) the secret is in the callback's query string, so it appears in the
+    gateway's own access log (measured on a real stack: 8 access-log lines carried it) and is
+    one value for both hooks (the media server now adds it itself, so it is in the gateway's
+    access log and in the media server's rendered config, nowhere else; 0 lines in the media
+    server's, Caddy's and Postgres's logs, measured); (b) Caddy must never route
+    `/sessions/ingest*`: it does not (`/sessions` is not routed at all), and
+    `infra/caddy/tls_check.py` now fails if it ever is; (c) nginx-rtmp keeps the callback's
+    query string and posts form fields `name` and `key` (the URL's argument): **measured**, and
+    the reason the stream is named by the session id and not by the key (see `app/satsang.py`);
+    (d) a speaker whose connection drops ends the satsang (the done-hook fires) and cannot resume,
+    while a satsang whose done-hook never arrives stays live until a moderator ends it by hand
+    (`POST /sessions/{id}/end`); a grace period and a watchdog are one design. #37 and #38 are
+    what the real media server showed about (d). **Owner:** M2, Week 10.
+53. **Week 10 close-out ledger, 2026-10-16: which satsang questions the week closed, which are open, and who has them.**
+    Written as one entry, not as edits to #37-#50, because six unmerged PRs each rewrite some of those entries and
+    this keeps the merges apart. Numbers are `main`'s (the stream-key entry is #50 here and #36 in the PRs that
+    predate #173). **Verdict of the week's gate: FAIL** (`infra/satsang/GATE_WEEK10.md`): nothing runs on staging and
+    no person has used any of it. *Closed by the week, in code, on throwaway stacks:* #37 (a publish for a live
+    satsang is refused; on main); #38 (a silent publisher dropped after 30 s; on main); #41 the reminder job (PRs
+    #170, #171, #177, not merged); #42 the listener screens (#172, not merged); #40 decided, kept as a capability URL,
+    with a tripwire test and reopen conditions (#177); #44 decided, with the same tripwire (#177); #49 fixed, the
+    reminder no longer holds a lock through its pushes (#177). *Open, owner and date:* #43 the dropped speaker:
+    **deferred to Week 16 by decision on 2026-10-16**, workaround in REHEARSAL.md (PR #178), reopens if rehearsal step 10
+    shows an ordinary drop ends the satsang, M2; #50 the stream key in clear, waits on the domain and certificate
+    decision, M2 and the user; #39 what a listener sees at the end, and whether a phone's browser plays the declared
+    but empty H.264 track, M2, rehearsal steps 7 and 8; #45 recording and replay, nobody, out of scope; #46 late
+    joiners, M2, step 9; #47 the admin page's first-cut limits, M2, and #32 (an administrator's sign-in) for M1.
+    *Broken or found by the rehearsal preparation and the measurements, all in PRs not yet merged:* #51 the reminder
+    reaches no phone and nothing plays its audio (M1's files: a service worker, a subscribe call, `/push*` routed);
+    #52 the listener's screen cuts off the last 10 to 15 s of a discourse (M2, #175); #48 the elder app can ask for
+    the list but not for one satsang, so "ended" is inferred (M2, #172); the deploy order has three migrations and an
+    old gateway image cannot start once they are applied (`DEPLOY.md`, #176). *What the week did not do:* put anything
+    on staging (needs M1's written go), run a rehearsal with a phone (`REHEARSAL.md`), have a native speaker read the
+    Telugu reminder, or measure the glass-to-glass delay (predicted about 15 s). **Owner:** M2 for all of it except
+    the items named for M1; **date:** 2026-10-16; the next review is after the rehearsal.
