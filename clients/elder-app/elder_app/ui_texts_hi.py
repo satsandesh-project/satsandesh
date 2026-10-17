@@ -12,7 +12,7 @@ before it reaches an elder; the Telugu table has the same status.
 
 TEXTS_HI = {
     "app_name": "सत्संदेश",
-    "tagline": "आपका परिवार, आपकी भाषा में",
+    "tagline": "आपके अपने, आपकी भाषा में",
     "lang_switch_label": "English",
     "lang_aria": "अंग्रेज़ी में बदलें",
     "thought_label": "आज का विचार",
@@ -23,10 +23,10 @@ TEXTS_HI = {
     "tab_people": "आपके अपने",
     "tab_satsang": "सत्संग",
     "create_circle": "+ सर्कल बनाएँ",
-    "join_circle": "सर्कल में जुड़ें",
+    "join_circle": "सर्कल से जुड़ें",
     "create_circle_title": "सर्कल बनाएँ",
     "create_circle_name_placeholder": "सर्कल का नाम",
-    "join_circle_title": "सर्कल में जुड़ें",
+    "join_circle_title": "सर्कल से जुड़ें",
     "join_circle_id_placeholder": "सर्कल आईडी (एडमिन से भेजने को कहें)",
     "create_button": "बनाएँ",
     "join_button_circle": "जुड़ें",
