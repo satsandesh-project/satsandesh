@@ -102,3 +102,55 @@ class SatsangSession(Base):
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
+
+
+class SatsangReminderRendering(Base):
+    """One language's version of a satsang's reminder: the text a member reads and, when speech was
+    made, its audio. The same shape as `message_renderings`, keyed by the satsang instead of a message.
+
+    Primary key `(session_id, language)`: one per language. `language` is the language a RECIPIENT
+    reads (the key a reader is looked up by), and `translated` says whether `text` really is in it:
+    False means `text` is the English source, because the language could not be rendered (the render
+    service was down, or it is a language the pipeline cannot render). A reader never sees a row
+    labelled Telugu that holds English.
+
+    `session_id` CASCADEs (derived data, meaningless without its satsang). `audio_media_object_id` is
+    ON DELETE SET NULL for the same reason as `message_renderings`: retention sweeps the audio after
+    MEDIA_RETENTION_DAYS and the words outlive it. `model_version_*` are audit data, not for a reader."""
+
+    __tablename__ = "satsang_reminder_renderings"
+    __table_args__ = (
+        sa.CheckConstraint("length(text) > 0", name="ck_satsang_reminder_renderings_text_nonempty"),
+        sa.CheckConstraint(
+            "language ~ '^[a-z]{2,3}$'", name="ck_satsang_reminder_renderings_language"
+        ),
+        sa.CheckConstraint(
+            "degraded_reason IS NULL OR degraded_reason IN "
+            "('text_only', 'tts_skipped', 'model_fallback', 'rate_limited')",
+            name="ck_satsang_reminder_renderings_degraded_reason",
+        ),
+        # A reason that says "no audio" must not carry audio (message_renderings' rule, restated).
+        sa.CheckConstraint(
+            "degraded_reason IS NULL OR degraded_reason NOT IN ('text_only', 'tts_skipped') "
+            "OR audio_media_object_id IS NULL",
+            name="ck_satsang_reminder_renderings_no_audio_reasons",
+        ),
+    )
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    language: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    translated: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("true")
+    )
+    audio_media_object_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), sa.ForeignKey("media_objects.id", ondelete="SET NULL")
+    )
+    degraded_reason: Mapped[str | None] = mapped_column(sa.Text)
+    model_version_translate: Mapped[str | None] = mapped_column(sa.Text)
+    model_version_tts: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )

@@ -312,7 +312,10 @@ def test_no_get_route_under_sessions_returns_a_key(client, db_session, admin, sw
     assert gets, "no GET found under /sessions: this test would be checking nothing"
     for path in gets:
         resp = client.get(path.replace("{session_id}", made.session.id), headers=_as(admin))
-        assert resp.status_code == 200, (path, resp.text)
+        # The reminder routes answer 404 until the reminder has been SENT (a freshly scheduled satsang
+        # has none yet); a sent one is checked for keys and ids in tests/test_satsang_reminder_delivery.py.
+        expected = 404 if path.endswith(("/reminder", "/reminder/audio")) else 200
+        assert resp.status_code == expected, (path, resp.text)
         assert made.stream_key not in resp.text, path
         assert "stream_key" not in resp.text, path
 

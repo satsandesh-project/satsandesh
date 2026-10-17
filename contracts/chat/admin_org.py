@@ -60,6 +60,14 @@ class AdminActionKind(str, Enum):
     ANNOUNCEMENT_PUBLISH = "announcement.publish"
     # Written by the bootstrap CLI that makes the very first admin.
     ADMIN_PROMOTE = "admin.promote"
+    # The scheduled satsang broadcast (contracts/chat/satsang.py), target_type
+    # "session". `session.rotate_key` is also written when the satsang's own
+    # speaker re-keys, so `admin_id` is "who did it", not always an admin. None
+    # of them ever puts the stream key or the ingest URL in `details`.
+    SESSION_CREATE = "session.create"
+    SESSION_CANCEL = "session.cancel"
+    SESSION_ROTATE_KEY = "session.rotate_key"
+    SESSION_END = "session.end"
 
 
 def _clean_name(value: str) -> str:
@@ -250,7 +258,12 @@ class AdminAnnouncementOut(VersionedModel):
 
 class AdminActionOut(VersionedModel):
     """One audit row. `details` is free-form JSON and never holds a token or
-    other secret."""
+    other secret.
+
+    `target_type` is one of "user", "circle", "all_circles" (an announcement to
+    every announcement circle; `target_id` is then null) or "session" (a
+    satsang). A plain string, not an enum, so adding one is not a breaking
+    change to a client that only displays it."""
 
     id: str
     admin_id: str

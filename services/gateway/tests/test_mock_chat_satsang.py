@@ -14,6 +14,8 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from contracts.chat.admin_org import AdminActionsOut
+from contracts.chat.mock import admin_org as mock_admin
 from contracts.chat.mock import app as mock_app
 from contracts.chat.mock import satsang as mock_satsang
 from contracts.chat.satsang import (
@@ -35,6 +37,7 @@ def client():
     with TestClient(mock_app.app) as test_client:
         yield test_client
     mock_satsang.reset()
+    mock_admin._actions.clear()
 
 
 def _in(minutes: int) -> str:
@@ -297,3 +300,63 @@ def test_the_console_sees_every_status_and_a_stranger_cannot(client) -> None:
 def test_a_session_that_does_not_exist_is_404(client) -> None:
     assert client.post("/sessions/nope/cancel", headers=MOD).status_code == 404
     assert client.post("/sessions/nope/key", headers=MOD).status_code == 404
+
+
+# --- the audit trail (contracts 0.11.0) ---------------------------------------------------------
+
+
+def _audit(client) -> list:
+    resp = client.get("/admin/actions", headers=ADMIN)
+    assert resp.status_code == 200, resp.text
+    return AdminActionsOut.model_validate(resp.json()).items
+
+
+def test_scheduling_rekeying_cancelling_and_ending_each_write_one_audit_row(client) -> None:
+    cancelled = _schedule(client, title="Called off")
+    client.post(f"/sessions/{cancelled.session.id}/key", headers=MOD)
+    assert client.post(f"/sessions/{cancelled.session.id}/cancel", headers=MOD).status_code == 200
+    ended = _schedule(client, title="Went ahead")
+    assert _publish(client, ended).status_code == 200
+    assert client.post(f"/sessions/{ended.session.id}/end", headers=ADMIN).status_code == 200
+
+    rows = list(reversed(_audit(client)))  # oldest first
+    assert [(r.action.value, r.target_id, r.admin_id) for r in rows] == [
+        ("session.create", cancelled.session.id, "moderator-1"),
+        ("session.rotate_key", cancelled.session.id, "moderator-1"),
+        ("session.cancel", cancelled.session.id, "moderator-1"),
+        ("session.create", ended.session.id, "moderator-1"),
+        ("session.end", ended.session.id, "admin-1"),
+    ]
+    assert {r.target_type for r in rows} == {"session"}
+    assert rows[0].details["title"] == "Called off"
+    assert rows[2].details["reminder_sent"] is False
+
+
+def test_a_speaker_rekeying_their_own_satsang_is_audited_as_theirs(client) -> None:
+    made = _schedule(client)
+    speaker = {"X-Mock-User-Id": "user-swami-1"}
+    assert client.post(f"/sessions/{made.session.id}/key", headers=speaker).status_code == 200
+    rotated = _audit(client)[0]
+    assert rotated.action.value == "session.rotate_key"
+    assert rotated.admin_id == "user-swami-1"
+    assert rotated.details["by"] == "speaker"
+
+
+def test_the_rtmp_servers_own_hooks_are_not_audited(client) -> None:
+    """Going on air and the stream stopping are the ingest server's calls, not a person's."""
+    made = _schedule(client)
+    assert _publish(client, made).status_code == 200
+    assert _done(client, made).status_code == 200
+    assert [r.action.value for r in _audit(client)] == ["session.create"]
+
+
+def test_no_audit_row_holds_a_stream_key_or_an_ingest_url(client) -> None:
+    """Every admin can read the log; the key is shown once, to whoever scheduled or re-keyed."""
+    made = _schedule(client)
+    rotated = SatsangSessionCreated.model_validate(
+        client.post(f"/sessions/{made.session.id}/key", headers=MOD).json()
+    )
+    client.post(f"/sessions/{made.session.id}/cancel", headers=MOD)
+    log = client.get("/admin/actions", headers=ADMIN).text
+    for secret in (made.stream_key, made.ingest_url, rotated.stream_key, rotated.ingest_url):
+        assert secret not in log

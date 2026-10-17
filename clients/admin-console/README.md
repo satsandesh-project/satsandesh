@@ -181,8 +181,8 @@ checks.
   other is what the machine heard, and that is the thing that can be wrong.
   The console should show the audio, the transcript and the pivot as three
   separate things.
-- **Not in CI**, and neither is `clients/elder-app/`. One job covering both is
-  worth more than one each. This is how a missing `pydantic` in
-  `requirements.txt` went unnoticed until a reviewer installed it clean.
+- **CI runs these tests** (`console-tests` in `.github/workflows/ci.yml`), but
+  `clients/elder-app/` is not there yet, and the job is not a required check
+  until the repo admin adds it to branch protection.
 - **Appeals** (Week 9) — more events on the same message plus a thread the
   sender can read.
