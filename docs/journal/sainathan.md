@@ -588,3 +588,23 @@ against the chat mock in-process.
 test fails with the original bug put back.
 
 **Where it ran:** local.
+
+## 2026-10-17 — README status brought up to date (Week 9 · docs PR)
+
+**Asked for:** replace the README's "Month 1 … Nothing here is usable yet" banner, then the
+`## Status` section that still said "Month 1 — foundations".
+
+**Produced:** the banner and the Status section now list what is on `main` (messaging, the
+language bridge, stewardship and `/admin/*`, bhajan rooms and satsang, the elder app) and what
+is not done (console not deployed, appeals, single-use sign-in, the pilot). The backbone decision
+stays as one paragraph with its ADR link.
+
+**Corrected:** nothing.
+
+**Decided differently:** 22 lines in the README, over the 10-line guide; the old section described
+Month 1 only, so a shorter edit would have left it wrong.
+
+**Verified by:** claims checked against merged PRs and the code (appeals: `services/gateway/app/moderation.py`
+says not built; speech output: `services/ai/render/`). "Not yet piloted" is from the author, not the code.
+
+**Where it ran:** local.
