@@ -1,0 +1,318 @@
+"""
+Shared pieces for the organisation pages (Members, Circles, Announce).
+
+Designed for the volunteers who run a satsang community, who are often not
+technical and not young: large type, large buttons, plain words, a calm warm
+palette (the same one as the elder app), and every destructive or irreversible
+step asks once more. Nothing here is clever.
+"""
+
+from __future__ import annotations
+
+import reflex as rx
+
+COLOR = {
+    "page": "#F7F0E3",
+    "card": "#FFFCF6",
+    "ink": "#2A2118",
+    "muted": "#6E6047",
+    "line": "#EADCC4",
+    # The edge of a field or drop-down: 4.1 : 1 on the card, 3.7 : 1 on the page (a control's
+    # boundary needs 3 : 1; the decorative `line` above is only 1.3 : 1).
+    "field_border": "#8A795A",
+    "green": "#2F5D50",
+    "green_tint": "#EAF1EC",
+    "saffron": "#B4531A",
+    "gold_tint": "#FBEFD5",
+    "error_tint": "#F7E2D6",
+}
+
+LANGUAGES = [("te", "తెలుగు"), ("hi", "हिन्दी"), ("en", "English")]
+# Names for showing a member's language. Wider than LANGUAGES, the choices on the form: the
+# contract takes any 2-3 letter code, and a member made elsewhere showed as a bare "kn".
+LANGUAGE_NAMES = dict(LANGUAGES) | {
+    "kn": "ಕನ್ನಡ",
+    "ta": "தமிழ்",
+    "ml": "മലയാളം",
+    "mr": "मराठी",
+    "bn": "বাংলা",
+    "gu": "ગુજરાતી",
+    "pa": "ਪੰਜਾਬੀ",
+    "or": "ଓଡ଼ିଆ",
+}
+
+
+def language_name(code: str) -> str:
+    """The language's own name, or the code said plainly when there is none."""
+    return LANGUAGE_NAMES.get(code, f"Language code: {code}")
+
+
+NAV = [
+    ("Review queue", "/"),
+    ("Members", "/members"),
+    ("Circles", "/circles"),
+    ("Announcements", "/announce"),
+]
+
+FIELD_STYLE = {
+    "min_height": "56px",
+    "font_size": "18px",
+    "border_radius": "12px",
+    "border": f"1px solid {COLOR['field_border']}",
+    "background": "white",
+    "width": "100%",
+    # The default placeholder measured 3.8 : 1 on white (below 4.5 : 1). The text sits in an
+    # inner <input>, so the rule is aimed at that.
+    "& input::placeholder": {"color": COLOR["muted"], "opacity": 1},
+}
+
+SELECT_TRIGGER_STYLE = {
+    "min_height": "56px",
+    "font_size": "18px",
+    "background": "white",
+    "color": COLOR["ink"],
+    "border": f"1px solid {COLOR['field_border']}",
+}
+
+
+def nav_bar(current: str) -> rx.Component:
+    """The way between the console's pages. `current` is the route of the page being shown,
+    which is drawn as the selected one and announced as the current page.
+
+    On a phone the name sits on its own row and the links share the next rows evenly (two
+    by two), instead of wrapping unevenly and taking a quarter of the screen."""
+    return rx.flex(
+        rx.heading("SatSandesh", size="6", style={"color": COLOR["green"]}),
+        rx.el.nav(
+            *[
+                rx.link(
+                    label,
+                    href=route,
+                    custom_attrs={"aria-current": "page"} if route == current else {},
+                    style={
+                        "font_size": "17px",
+                        "font_weight": "700" if route == current else "500",
+                        "padding": "10px 14px",
+                        "border_radius": "12px",
+                        "min_height": "48px",
+                        "flex": "1 1 auto",
+                        "display": "flex",
+                        "align_items": "center",
+                        "justify_content": "center",
+                        "text_align": "center",
+                        "background": COLOR["green_tint"] if route == current else "transparent",
+                        "color": COLOR["green"],
+                        "text_decoration": "none",
+                    },
+                )
+                for label, route in NAV
+            ],
+            aria_label="Pages",
+            style={
+                "display": "flex",
+                "flex_wrap": "wrap",
+                "gap": "4px",
+                "flex": "1 1 auto",
+                "justify_content": "flex-end",
+            },
+        ),
+        direction={"initial": "column", "sm": "row"},
+        align={"initial": "stretch", "sm": "center"},
+        gap="2",
+        width="100%",
+        style={
+            "padding": "10px 16px",
+            "background": COLOR["card"],
+            "border_bottom": f"1px solid {COLOR['line']}",
+        },
+    )
+
+
+def page(current: str, *children: rx.Component, on_mount=None) -> rx.Component:
+    """The frame every organisation page shares. `on_mount` is the page's own
+    loader.
+
+    These pages use a fixed LIGHT palette, so the app must be in Radix's light appearance
+    (`rx.App(theme=rx.theme(appearance="light"))` in admin_console.py). Without it Radix
+    follows the device's colour mode, and on a dark-mode device its fields, drop-downs and
+    placeholders turn near-white (about 1.1 : 1) on these cream backgrounds, unreadable. Found
+    by opening the pages in a browser and measuring, which no unit test sees. It cannot be
+    done from here: Reflex drops `appearance` on a nested `rx.theme`, a drop-down's popup is
+    drawn outside this frame anyway, and the colour mode is an app-wide switch."""
+    extra = {"on_mount": on_mount} if on_mount is not None else {}
+    return rx.box(
+        nav_bar(current),
+        rx.box(
+            *children,
+            style={"max_width": "960px", "margin": "0 auto", "padding": "24px 16px 64px"},
+        ),
+        style={
+            "min_height": "100vh",
+            "background": COLOR["page"],
+            "color": COLOR["ink"],
+            "font_size": "18px",
+            # A keyboard user must see where they are. Radix's own ring is pale blue (about
+            # 2.4 : 1 on these pages, below the 3 : 1 needed) and the tick-boxes showed none.
+            "& :focus-visible": {
+                "outline": f"3px solid {COLOR['green']}",
+                "outline_offset": "2px",
+            },
+        },
+        **extra,
+    )
+
+
+def banner(message: rx.Var, is_error: rx.Var) -> rx.Component:
+    """What just happened, and what to do about it. The outer box is a live region that is
+    always on the page: a screen reader announces text that CHANGES inside an existing
+    region, but not a region that only appears together with its text."""
+    return rx.box(
+        rx.cond(
+            message != "",
+            rx.box(
+                rx.text(message, style={"font_size": "18px", "line_height": "1.5"}),
+                style={
+                    "padding": "16px 20px",
+                    "border_radius": "12px",
+                    "margin_bottom": "16px",
+                    "background": rx.cond(is_error, COLOR["error_tint"], COLOR["green_tint"]),
+                    "border": f"1px solid {COLOR['line']}",
+                },
+            ),
+            rx.fragment(),
+        ),
+        role="status",
+        aria_live="polite",
+        aria_atomic=True,
+    )
+
+
+def toggle_attrs(selected: rx.Var) -> dict:
+    """`aria-pressed` for a button that is one of a set of choices, so a screen reader
+    says which is selected (the fill colour alone says it only to the eyes)."""
+    return {"aria-pressed": rx.cond(selected, "true", "false")}
+
+
+def card(*children: rx.Component, **style) -> rx.Component:
+    return rx.box(
+        *children,
+        style={
+            "background": COLOR["card"],
+            "border": f"1px solid {COLOR['line']}",
+            "border_radius": "16px",
+            "padding": "20px",
+            "margin_bottom": "20px",
+            **style,
+        },
+    )
+
+
+def heading(text: str, hint: str = "") -> rx.Component:
+    return rx.box(
+        rx.heading(text, size="7", style={"color": COLOR["green"], "margin_bottom": "4px"}),
+        rx.text(hint, style={"color": COLOR["muted"], "margin_bottom": "16px"})
+        if hint
+        else rx.fragment(),
+    )
+
+
+def label(text: str) -> rx.Component:
+    return rx.text(text, style={"font_weight": "700", "margin_top": "14px", "margin_bottom": "6px"})
+
+
+def big_button(text, on_click, *, primary: bool = True, **extra) -> rx.Component:
+    return rx.button(
+        text,
+        on_click=on_click,
+        style={
+            "min_height": "56px",
+            "padding": "0 24px",
+            "font_size": "18px",
+            "font_weight": "700",
+            "border_radius": "12px",
+            "cursor": "pointer",
+            "background": COLOR["green"] if primary else COLOR["card"],
+            "color": "white" if primary else COLOR["green"],
+            "border": f"2px solid {COLOR['green']}",
+        },
+        **extra,
+    )
+
+
+def pill(text, color: str = COLOR["gold_tint"]) -> rx.Component:
+    return rx.box(
+        text,
+        style={
+            "display": "inline-block",
+            "padding": "4px 12px",
+            "border_radius": "999px",
+            "font_size": "15px",
+            "background": color,
+            "border": f"1px solid {COLOR['line']}",
+        },
+    )
+
+
+def text_field(placeholder: str, value: rx.Var, on_change, **extra) -> rx.Component:
+    """`aria_label` names the field for a screen reader (a placeholder is not a label and
+    disappears when typing); it defaults to the placeholder, so say something better."""
+    extra.setdefault("aria_label", placeholder)
+    return rx.input(
+        placeholder=placeholder, value=value, on_change=on_change, style=FIELD_STYLE, **extra
+    )
+
+
+def select(options: list[str], value, on_change, label: str) -> rx.Component:
+    """A drop-down with a name a screen reader can say. The name goes on the TRIGGER: the
+    Radix Select root renders no element of its own, so an aria-label on it (which is where
+    `rx.select(..., aria_label=...)` would put it) never reaches the page."""
+    return rx.select.root(
+        rx.select.trigger(aria_label=label, style=SELECT_TRIGGER_STYLE),
+        rx.select.content(
+            rx.select.group(*[rx.select.item(option, value=option) for option in options])
+        ),
+        value=value,
+        on_change=on_change,
+        size="3",
+    )
+
+
+def language_picker(value: rx.Var, on_pick) -> rx.Component:
+    """Three big buttons, the selected one filled -- not a drop-down. `on_pick`
+    is an event handler taking the language code."""
+    return rx.hstack(
+        *[
+            rx.button(
+                name,
+                on_click=on_pick(code),
+                aria_label="Language: " + name,
+                custom_attrs=toggle_attrs(value == code),
+                style={
+                    "min_height": "56px",
+                    "flex": "1",
+                    "font_size": "18px",
+                    "font_weight": "700",
+                    "border_radius": "12px",
+                    "cursor": "pointer",
+                    "background": rx.cond(value == code, COLOR["green"], COLOR["card"]),
+                    "color": rx.cond(value == code, "white", COLOR["green"]),
+                    "border": f"2px solid {COLOR['green']}",
+                },
+            )
+            for code, name in LANGUAGES
+        ],
+        spacing="2",
+        width="100%",
+        role="group",
+        aria_label="Language",
+    )
+
+
+def qr_data_uri(text: str) -> str:
+    """An SVG data URI of `text` as a QR code, or "" if the optional `segno`
+    package is not installed (the page then shows the code as text only)."""
+    try:
+        import segno
+    except ImportError:
+        return ""
+    return segno.make(text, error="m").svg_data_uri(scale=6, border=2)
