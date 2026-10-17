@@ -91,6 +91,7 @@ import reflex as rx
 from rxconfig import config
 
 from elder_app.pages import satsang_admin
+from elder_app.ui_texts_hi import TEXTS_HI
 
 GATEWAY_PUBLIC_URL = os.environ.get("GATEWAY_PUBLIC_URL", "http://localhost")
 
@@ -128,7 +129,7 @@ COLOR = {
     "halo_ring": "#F6D68A",
 }
 
-FONT_LATIN = "Mulish, 'Noto Sans Telugu', system-ui, sans-serif"
+FONT_LATIN = "Mulish, 'Noto Sans Telugu', 'Noto Sans Devanagari', system-ui, sans-serif"
 FONT_SERIF = "Lora, Georgia, serif"
 FONT_MONO = "ui-monospace, Menlo, monospace"
 
@@ -136,7 +137,8 @@ TINTS = ["#F2E3C9", "#E7EFE6", "#F7E2D6", "#EFE7D2", "#E9E6DE"]
 
 STYLESHEETS = [
     "https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;700;800"
-    "&family=Noto+Sans+Telugu:wght@400;600;700&family=Lora:wght@600&display=swap",
+    "&family=Noto+Sans+Telugu:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;600;700"
+    "&family=Lora:wght@600&display=swap",
     # Responsive root font-size (assets/global.css) -- see that file's own
     # comment for why this is needed: every rem-based size below is
     # relative to the root, which stays browser-default 16px on every
@@ -153,6 +155,22 @@ STYLESHEETS = [
 # TEXTS), so a person who cannot read the app's current language can still find their own.
 LANGUAGE_NATIVE = {"te": "తెలుగు", "hi": "हिन्दी", "en": "English"}
 LANGUAGE_CODES = tuple(LANGUAGE_NATIVE)
+
+# The app's own words come in English and in the language the person chose, when that is not
+# English: a Telugu chooser reads Telugu or English, a Hindi chooser Hindi or English, an English
+# chooser English only (and is shown no switch button). `State.language` is the one in use now.
+NATIVE_UI_LANGUAGES = ("te", "hi")
+LANGUAGE_ENGLISH_NAME = {"te": "Telugu", "hi": "Hindi", "en": "English"}
+
+
+def ui_language_for(chosen: str, saved_ui: str | None = None) -> str:
+    """The language of the app's own words for someone who chose `chosen`: their saved switch
+    (English or their own language) if it is one they may use, otherwise their own language, so
+    nobody has to read the app in English to carry on. An English chooser always gets English."""
+    if chosen not in NATIVE_UI_LANGUAGES:
+        return "en"
+    return saved_ui if saved_ui in ("en", chosen) else chosen
+
 
 TEXTS = {
     "en": {
@@ -370,6 +388,8 @@ TEXTS = {
         "recv_approximate": "సుమారు అనువాదం",
     },
 }
+
+TEXTS["hi"] = TEXTS_HI
 
 # ---------------------------------------------------------------------------
 # Client-side JS: real identity bootstrap + a persistent WebSocket carrying
@@ -2040,7 +2060,18 @@ class State(rx.State):
 
     @rx.var
     def t(self) -> dict[str, str]:
-        return TEXTS[self.language]
+        table = dict(TEXTS[self.language])
+        if self.language == "en" and self.preferred_language_input in NATIVE_UI_LANGUAGES:
+            # In English, the switch offers the language this person chose (not always Telugu).
+            native = self.preferred_language_input
+            table["lang_switch_label"] = LANGUAGE_NATIVE[native]
+            table["lang_aria"] = "Switch to " + LANGUAGE_ENGLISH_NAME[native]
+        return table
+
+    @rx.var
+    def show_language_switch(self) -> bool:
+        # An English chooser has only English: no button to switch to anything.
+        return self.lang_locked and self.preferred_language_input in NATIVE_UI_LANGUAGES
 
     @rx.var
     def chosen_language_name(self) -> str:
@@ -2090,7 +2121,11 @@ class State(rx.State):
         self.current_circle_id = ""
 
     def toggle_language(self):
-        self.language = "te" if self.language == "en" else "en"
+        native = self.preferred_language_input
+        if native not in NATIVE_UI_LANGUAGES:
+            self.language = "en"
+        else:
+            self.language = native if self.language == "en" else "en"
         return self._sync_prefs()
 
     def _sync_prefs(self):
@@ -2117,6 +2152,9 @@ class State(rx.State):
             self.autoplay_input = saved["autoplay"]
         if saved.get("locked") is True and saved.get("lang") in LANGUAGE_CODES:
             self.lang_locked = True
+            # The words of the app follow the language chosen at the start (or the switch the
+            # person last used), not always English after a reload.
+            self.language = ui_language_for(saved["lang"], saved.get("ui"))
         self.prefs_loaded = True
         return self._sync_prefs()
 
@@ -2164,7 +2202,10 @@ class State(rx.State):
             "connecting": json.dumps(TEXTS["en"]["connecting"]),
             "no_messages": json.dumps(TEXTS["en"]["no_messages"]),
             "status_text": json.dumps(
-                {lang: {key: TEXTS[lang][key] for key in STATUS_TEXT_KEYS} for lang in ("en", "te")}
+                {
+                    lang: {key: TEXTS[lang][key] for key in STATUS_TEXT_KEYS}
+                    for lang in ("en", "te", "hi")
+                }
             ),
             "status_pending": json.dumps(TEXTS["en"]["status_pending"]),
             "status_sent": json.dumps(TEXTS["en"]["status_sent"]),
@@ -2175,7 +2216,7 @@ class State(rx.State):
             "recv_text": json.dumps(
                 {
                     lang: {key: TEXTS[lang][key] for key in RECEIVER_TEXT_KEYS}
-                    for lang in ("en", "te")
+                    for lang in ("en", "te", "hi")
                 }
             ),
             "uuid_v4_fallback": _UUID_V4_JS_FALLBACK,
@@ -2489,9 +2530,8 @@ class State(rx.State):
         self.lang_locked = True
         self.pending_language = ""
         self.settings_saved = False
-        # Someone who chose Telugu should not have to read the app in English to carry on.
-        if code == "te":
-            self.language = "te"
+        # Someone who chose Telugu or Hindi should not have to read the app in English to carry on.
+        self.language = ui_language_for(code)
         return [self._sync_prefs(), self._save_prefs("preferred_language")]
 
     def set_tts_on_input(self, value: bool):
@@ -2656,6 +2696,12 @@ def app_header() -> rx.Component:
 
 
 def language_toggle() -> rx.Component:
+    """The switch between English and the person's own language, shown only to someone who chose
+    Telugu or Hindi: an English chooser has nothing to switch to."""
+    return rx.cond(State.show_language_switch, _language_button(), rx.fragment())
+
+
+def _language_button() -> rx.Component:
     return rx.button(
         rx.hstack(
             rx.box(
