@@ -263,6 +263,48 @@ $env:PYTHONPATH = "..\.."; $env:HF_HUB_OFFLINE = "1"   # cached models; or set H
 .\.venv\Scripts\python.exe tools/asr_compare.py a.wav b.opus --lang te --runs 3 --out cmp.md
 ```
 
+### Scoring against reference transcripts (WER / CER)
+
+Put the clips in one folder, named `te_short_01.wav`, `hi_long_02_noisy.wav`, `en_med_03.wav`
+(language prefix `te_`/`hi_`/`en_`; `short`/`med`/`long` anywhere in the name picks the length
+bucket; `_noisy` marks a noisy clip). `ns_*.wav` (optionally `ns_te_*`) are non-speech clips
+(silence, room noise): the right answer is an empty transcript.
+
+```powershell
+cd services/ai
+$env:PYTHONPATH = "..\.."; $env:HF_HUB_OFFLINE = "1"
+.\.venv\Scripts\python.exe tools/asr_compare.py --audio-dir C:\path	o\clips --refs C:\path	oeferences.csv --out eval.md
+```
+
+`references.csv` is UTF-8 (a BOM is fine) with the header `filename,language,reference_text`;
+quote a field that contains a comma. A missing file, or a clip with no row (or an empty
+`reference_text`), is reported and its rows show `no ref`; the run carries on. `--lang` still
+works for files named on the command line; `--lang en` runs faster-whisper only
+(IndicConformer has no English), and `en_` clips in a folder do the same. Models are loaded once
+per language.
+
+Each engine row gets `WER` and `CER` columns; for `ns_*` clips they show `empty ok` or
+`HALLUCINATED: <text>`. A markdown summary at the end gives the mean WER/CER per engine, per
+length bucket and per condition (clean/noisy), plus how many clips were excluded for having no
+reference. Means are unweighted per clip; denoise variants and languages are kept apart.
+
+How the text is compared (both sides are normalised the same way first):
+
+- Unicode NFC; punctuation (every Unicode `P*` character, so the danda `।`/`॥` and curly quotes
+  too) becomes a space, apostrophes are dropped, whitespace is collapsed.
+- Case-folded for English only. Digits are **not** converted: `123`, `౧౨౩` and `१२३` are three
+  different words.
+- WER = word edit distance / reference words, words split on whitespace. CER = edit distance
+  over Unicode **code points** after NFC (spaces included) / reference code points. A Telugu
+  conjunct or a vowel sign is therefore several characters, so CER is not comparable with CER
+  for Latin text. Rates are not capped at 100% (insertions can exceed it).
+
+Limits: WER on Telugu/Hindi is only as good as how the references were typed. Spelling variants,
+sandhi/word-splitting choices, and proper names count as errors even when the speech was
+understood, and the same sentence typed two ways gives two different WERs. Treat small gaps
+between engines on a small set as noise. The output contains transcripts of real recordings:
+do not commit it, the clips, or `references.csv`.
+
 ## Development
 
 ```bash

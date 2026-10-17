@@ -212,3 +212,25 @@ the latency of the extra pass. 0.5 is a conservative guess, not a measured value
 the default needs a labelled en/hi/te set run through both modes.
 
 **Out of scope:** `speech_indicconformer` needs a hint and cannot detect; it is unchanged.
+
+
+## 15. `asr_compare` scoring: NFC + punctuation-strip, code-point CER, no digit conversion
+
+`tools/asr_compare.py` can score engines against a `references.csv` (`--refs`, `--audio-dir`).
+Choices that change the numbers:
+
+- **Normalisation is deliberately thin:** NFC, punctuation (Unicode `P*`, so danda included) to
+  space, apostrophes dropped, whitespace collapsed, casefold for English only. Digits are not
+  converted between scripts and nothing is spelling-normalised: converting would hide real
+  engine differences (a model that writes `123` for a spoken Telugu number is making a choice
+  we want to see), and any spelling-variant table would be our guess about Telugu/Hindi
+  orthography. The cost: reference typing style leaks into the score (see the README).
+- **CER counts Unicode code points after NFC, not grapheme clusters.** No new dependency, and
+  stable across Python versions, but a Telugu conjunct is several units, so Indic CER is not
+  comparable with Latin CER.
+- **Non-speech clips (`ns_*`) are not averaged.** An empty reference makes WER undefined, so
+  they are counted as `empty ok` / `hallucinated` per engine instead of being given a number.
+- **Averages are unweighted per clip, per language and per denoise variant**, and clips with
+  no reference are excluded and counted, so a missing row can never look like a perfect score.
+- **Models reload per language** when a folder mixes languages (the loaders take the language at
+  load time); simpler than changing the engine interface, and it only costs load time.
