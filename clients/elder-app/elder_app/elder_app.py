@@ -171,6 +171,7 @@ def ui_language_for(chosen: str, saved_ui: str | None = None) -> str:
         return "en"
     return saved_ui if saved_ui in ("en", chosen) else chosen
 
+
 TEXTS = {
     "en": {
         "app_name": "SatSandesh",

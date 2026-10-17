@@ -1,4 +1,4 @@
-"""The app's words in Hindi (Devanagari): the same keys as TEXTS["en"] and TEXTS["te"] in elder_app.py.
+"""The app's words in Hindi (Devanagari): the same keys as TEXTS["en"] and TEXTS["te"].
 
 A person who chose Hindi on the language screen reads the app in Hindi, with a button to switch to
 English (and back). It lives in its own file so the Hindi sits in one place for a native reader to
@@ -44,8 +44,7 @@ TEXTS_HI = {
     "voice_send": "भेजें",
     "voice_uploading": "आवाज़ संदेश भेजा जा रहा है...",
     "voice_send_failed": "भेज नहीं पाए। फिर से कोशिश करने के लिए दबाएँ।",
-    "mic_permission_denied": "माइक्रोफ़ोन की अनुमति नहीं मिली। "
-    "आवाज़ संदेश रिकॉर्ड करने के लिए कृपया अनुमति दें।",
+    "mic_permission_denied": "माइक्रोफ़ोन की अनुमति नहीं मिली। आवाज़ संदेश रिकॉर्ड करने के लिए कृपया अनुमति दें।",
     "back": "< वापस",
     "type_placeholder": "संदेश लिखें...",
     "send": "भेजें",
