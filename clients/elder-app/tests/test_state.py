@@ -53,6 +53,7 @@ from elder_app.elder_app import (
     language_screen,
     mic_button,
     settings_card,
+    ui_language_for,
 )
 
 
@@ -288,7 +289,7 @@ def test_typed_messages_declare_their_language_and_resends_keep_it():
 def test_receiver_text_exists_in_both_ui_languages():
     # The chat JS is built once outside Reflex and is handed both languages; a key
     # missing from one of them would be a KeyError when the connection is set up.
-    for lang in ("en", "te"):
+    for lang in ("en", "te", "hi"):
         for key in RECEIVER_TEXT_KEYS:
             assert TEXTS[lang].get(key), f"{key} missing or empty in {lang}"
 
@@ -384,7 +385,7 @@ def test_status_words_exist_in_both_languages_and_cover_held_and_blocked():
     # language). A held or blocked message used to fall through to "Sending... (tap to
     # cancel)", with a tap that the gateway refuses.
     assert "status_held" in STATUS_TEXT_KEYS and "status_blocked" in STATUS_TEXT_KEYS
-    for lang in ("en", "te"):
+    for lang in ("en", "te", "hi"):
         for key in STATUS_TEXT_KEYS:
             assert TEXTS[lang].get(key), f"{key} missing or empty in {lang}"
 
@@ -466,7 +467,7 @@ def test_a_failed_copy_is_visible_not_silent():
     state.on_circle_id_copied("ok")
     assert state.copied_id is True and state.copy_id_failed is False
     assert state.copied_circle_id is True and state.copy_circle_id_failed is False
-    for lang in ("en", "te"):
+    for lang in ("en", "te", "hi"):
         assert TEXTS[lang].get("copy_failed")
 
 
@@ -483,7 +484,7 @@ def test_a_pending_message_past_its_undo_window_is_processing_not_sent():
         not in CHAT_CONNECT_JS_TEMPLATE
     )
     assert "status_processing" in STATUS_TEXT_KEYS
-    for lang in ("en", "te"):
+    for lang in ("en", "te", "hi"):
         assert TEXTS[lang].get("status_processing")
 
 
@@ -530,13 +531,67 @@ def test_confirming_with_nothing_picked_does_nothing():
     assert state.pending_language == ""
 
 
-def test_hindi_or_english_do_not_change_the_app_language():
-    for code in ("hi", "en"):
+def test_the_app_follows_the_language_chosen_and_english_has_no_switch():
+    for code, expected in (("te", "te"), ("hi", "hi"), ("en", "en")):
         state = _fresh_state()
         state.pick_language(code)
         state.confirm_language()
         assert state.preferred_language_input == code
+        assert state.language == expected  # their own language, or English for an English chooser
+        assert state.show_language_switch is (code != "en")
+
+
+def test_the_switch_goes_between_english_and_the_chosen_language_only():
+    for code in ("te", "hi"):
+        state = _fresh_state()
+        state.pick_language(code)
+        state.confirm_language()
+        assert state.language == code
+        state.toggle_language()
         assert state.language == "en"
+        # In English the button offers the language they chose, not always Telugu.
+        assert state.t["lang_switch_label"] == {"te": "తెలుగు", "hi": "हिन्दी"}[code]
+        assert state.t["lang_aria"] == "Switch to " + {"te": "Telugu", "hi": "Hindi"}[code]
+        state.toggle_language()
+        assert state.language == code
+        assert state.t["lang_switch_label"] == "English"
+
+    english = _fresh_state()
+    english.pick_language("en")
+    english.confirm_language()
+    english.toggle_language()  # nothing to switch to: it stays English
+    assert english.language == "en"
+    assert english.show_language_switch is False
+
+
+def test_the_switch_is_hidden_until_a_language_is_chosen():
+    assert _fresh_state().show_language_switch is False
+
+
+def test_ui_language_for_keeps_a_valid_saved_switch_and_otherwise_the_chosen_language():
+    assert ui_language_for("hi") == "hi"
+    assert ui_language_for("hi", "en") == "en"  # they switched to English last time
+    assert ui_language_for("hi", "te") == "hi"  # Telugu is not a choice for a Hindi chooser
+    assert ui_language_for("te", "hi") == "te"
+    assert ui_language_for("te", None) == "te"
+    assert ui_language_for("en", "te") == "en"  # an English chooser is always English
+    assert ui_language_for("fr") == "en"
+
+
+def test_every_ui_language_has_exactly_the_same_words():
+    english = set(TEXTS["en"])
+    for lang in ("te", "hi"):
+        assert set(TEXTS[lang]) == english, (lang, set(TEXTS[lang]) ^ english)
+        assert all(TEXTS[lang][key].strip() for key in english), lang
+    # Devanagari really is Devanagari, not Latin letters left in place.
+    import re
+
+    letters = re.compile("[ऀ-ॿ]")
+    english_words = {"lang_switch_label", "lang_option_en"}
+    for key in set(TEXTS["en"]) - english_words:
+        if key in ("app_name",):
+            continue
+        assert letters.search(TEXTS["hi"][key]), key
 
 
 def test_a_saved_lock_is_read_back_and_the_server_cannot_move_it():
@@ -578,7 +633,7 @@ def test_the_choice_screen_exists_and_the_settings_and_join_screens_no_longer_of
     for screen in (settings_card, join_screen):
         assert "set_preferred_language_input" not in inspect.getsource(screen)
         assert "language_option_button" not in inspect.getsource(screen)
-    for lang in ("en", "te"):
+    for lang in ("en", "te", "hi"):
         for key in (
             "choose_language_title",
             "choose_language_hint",
@@ -672,5 +727,5 @@ def test_a_translation_does_not_hide_the_senders_own_voice():
     # Not added twice for an English reader, who already has it as their play button.
     assert 'if (msg.kind !== "voice" || !msg.media_ref || lang === "en") return;' in js
     assert "recv_original_voice" in RECEIVER_TEXT_KEYS
-    for lang in ("en", "te"):
+    for lang in ("en", "te", "hi"):
         assert TEXTS[lang].get("recv_original_voice")
