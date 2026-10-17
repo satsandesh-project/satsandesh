@@ -484,7 +484,7 @@ def test_one_dead_device_does_not_block_the_users_other_devices_or_other_users(
     attempted: list[str] = []
     dead: set[str] = set()
 
-    def fake_webpush(*, subscription_info, data, vapid_private_key, vapid_claims):
+    def fake_webpush(*, subscription_info, data, vapid_private_key, vapid_claims, timeout=None):
         endpoint = subscription_info["endpoint"]
         attempted.append(endpoint)
         if endpoint in dead:
