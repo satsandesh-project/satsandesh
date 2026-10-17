@@ -185,3 +185,22 @@ def test_field_edges_and_placeholders_are_styled_for_contrast() -> None:
     assert ui.FIELD_STYLE["border"].endswith(ui.COLOR["field_border"])
     assert ui.FIELD_STYLE["& input::placeholder"]["color"] == ui.COLOR["muted"]
     assert ui.SELECT_TRIGGER_STYLE["border"].endswith(ui.COLOR["field_border"])
+
+
+def test_a_member_s_language_is_named_and_marked_for_a_screen_reader() -> None:
+    """A member made with a language the form does not offer showed as a bare "kn"."""
+    from admin_console.org import ui
+
+    assert ui.language_name("te") == "తెలుగు"
+    assert ui.language_name("kn") == "ಕನ್ನಡ"
+    assert ui.language_name("ta") == "தமிழ்"
+    assert ui.language_name("xx") == "Language code: xx"
+    # The row sits inside a foreach, which `_render`'s node walk does not reach.
+    rendered = str(members.members_page().render())
+    assert 'lang:row_rx_state_?.["language_code"]' in rendered, "the name says its language"
+
+
+def test_the_circle_kind_buttons_let_a_long_label_wrap_inside_them() -> None:
+    """Radix fixes a button's height, so the two-line label spilled over its border."""
+    rendered = str(circles.circles_page().render())
+    assert rendered.count('["height"] : "auto"') == 2, "both kind buttons"

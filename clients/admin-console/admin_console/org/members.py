@@ -28,6 +28,7 @@ class UserRow:
     id: str
     name: str
     language: str
+    language_code: str
     role: str
 
 
@@ -75,7 +76,8 @@ class MembersState(rx.State):
             UserRow(
                 id=u.id,
                 name=u.name,
-                language=ui.LANGUAGE_NAMES.get(u.preferred_language, u.preferred_language),
+                language=ui.language_name(u.preferred_language),
+                language_code=u.preferred_language,
                 role=u.role.value,
             )
             for u in users
@@ -258,7 +260,12 @@ def _person_row(row: UserRow) -> rx.Component:
     return rx.flex(
         rx.box(
             rx.text(row.name, style={"font_weight": "700"}),
-            rx.text(row.language, style={"color": COLOR["muted"], "font_size": "16px"}),
+            rx.text(
+                row.language,
+                # So a screen reader reads తెలుగు in Telugu, not as English.
+                custom_attrs={"lang": row.language_code},
+                style={"color": COLOR["muted"], "font_size": "16px"},
+            ),
             style={"flex": "1", "min_width": "180px"},
         ),
         ui.select(

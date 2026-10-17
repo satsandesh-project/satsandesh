@@ -247,8 +247,14 @@ def _kind_buttons() -> rx.Component:
             on_click=CirclesState.set_new_kind(kind),
             custom_attrs=ui.toggle_attrs(CirclesState.new_kind == kind),
             style={
+                # Radix fixes a button's height; "auto" lets the longer label wrap inside its
+                # border instead of spilling over it. The 220px basis stacks the two on a phone.
+                "height": "auto",
                 "min_height": "64px",
-                "flex": "1",
+                "padding": "12px 16px",
+                "white_space": "normal",
+                "line_height": "1.3",
+                "flex": "1 1 220px",
                 "font_size": "17px",
                 "font_weight": "700",
                 "border_radius": "12px",

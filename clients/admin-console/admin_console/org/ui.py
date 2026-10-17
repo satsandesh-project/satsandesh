@@ -28,7 +28,24 @@ COLOR = {
 }
 
 LANGUAGES = [("te", "తెలుగు"), ("hi", "हिन्दी"), ("en", "English")]
-LANGUAGE_NAMES = dict(LANGUAGES)
+# Names for showing a member's language. Wider than LANGUAGES, the choices on the form: the
+# contract takes any 2-3 letter code, and a member made elsewhere showed as a bare "kn".
+LANGUAGE_NAMES = dict(LANGUAGES) | {
+    "kn": "ಕನ್ನಡ",
+    "ta": "தமிழ்",
+    "ml": "മലയാളം",
+    "mr": "मराठी",
+    "bn": "বাংলা",
+    "gu": "ગુજરાતી",
+    "pa": "ਪੰਜਾਬੀ",
+    "or": "ଓଡ଼ିଆ",
+}
+
+
+def language_name(code: str) -> str:
+    """The language's own name, or the code said plainly when there is none."""
+    return LANGUAGE_NAMES.get(code, f"Language code: {code}")
+
 
 NAV = [
     ("Review queue", "/"),
