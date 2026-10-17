@@ -407,3 +407,17 @@ two titles are headings, and the step from "choose" to "is this right?" is annou
 **Verification:** 48 tests (2 new for the notice, 1 for the screen); lint clean; the screen builds and
 the attributes are in the rendered output. **Not verified:** in a browser, with a real held note, or with
 an actual screen reader or keyboard; the wording of the notice itself is the gateway's and M4's (#18).
+
+## 2026-10-12 — Bhajan rooms with floor control (Months 3 and 4, feature 1, Weeks 9 and 10)
+
+One lead singer's microphone is live; everyone else listens. Built contract first (#145), then the
+gateway (#151: `rooms` and `lead_queue`, the database refuses a second lead, the room row lock
+serialises hand-overs), then LiveKit infra (#152) and this screen. The server decides who may speak:
+a join token can publish only for the current lead, and a hand-over silences the old lead before it
+allows the new one, rolling back if LiveKit cannot be told. The app only draws the server's answer
+and turns the microphone on for the lead.
+
+A smoke test against a real LiveKit found a bug the unit tests could not (`DeleteRoom` needs the
+`roomCreate` grant, so closing a room would have been a 502). The screen's logic runs under Node
+and its DOM under jsdom (16 tests). **Not verified:** a real WebRTC session on phones (the plan's
+"five phones, only the lead is heard"), TURN for networks that block UDP, and any of it on staging.

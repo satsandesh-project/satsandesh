@@ -3882,11 +3882,14 @@ def bottom_tabs() -> rx.Component:
 
 
 def home_screen() -> rx.Component:
+    from elder_app.pages.bhajan_rooms import rooms_link
+
     return rx.box(
         rx.box(
             app_header(),
             thought_card(),
             your_id_card(),
+            rooms_link(),
             settings_card(),
             section_heading(),
             rx.cond(State.active_tab == "people", contact_list(), circle_list()),
@@ -4142,3 +4145,8 @@ def index() -> rx.Component:
 app = rx.App(stylesheets=STYLESHEETS)
 app.add_page(index, title=f"{config.app_name}")
 app.add_page(satsang_admin.page, route=satsang_admin.ROUTE, title=satsang_admin.TITLE)
+
+# Screens in their own modules (elder_app/pages/): one line each.
+from elder_app.pages.bhajan_rooms import register as register_bhajan_rooms  # noqa: E402
+
+register_bhajan_rooms(app)
