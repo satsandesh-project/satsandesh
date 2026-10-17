@@ -7,4 +7,4 @@ Test the entrypoint: `infra/satsang/test_entrypoint.sh`. Test the route: `infra/
 Not here: RTMPS, recording, any login on `/hls`, a player. RTMP carries the key in clear (OPEN_QUESTIONS #50).
 Rebuilding pulls whatever nginx version Debian has; re-run a real publish after one.
 Never log at `info`: nginx-rtmp then writes the stream key.
-Measured numbers and what was NOT measured: the Phase 3 PR description.
+Glass to glass: **predicted about 15 s; never measured on a phone or by a person** (15.2 s with ffmpeg as the listener, one run); fits only a LAN speaker and listener, 4 s fragments, hls.js default start. Step 9 of REHEARSAL.md (PR #175) measures it. Verdict: GATE_WEEK10.md.

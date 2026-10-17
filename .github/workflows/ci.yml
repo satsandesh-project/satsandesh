@@ -147,7 +147,38 @@ jobs:
         working-directory: services/ai
         run: python -m pytest
 
-  # Branch protection currently requires `lint-and-test` only. gateway-tests
-  # and ai-tests need adding to the required status checks by the repo admin
+  console-tests:
+    # The moderator / organisation console (clients/admin-console/, M4). Same
+    # gap as the two jobs above: root testpaths never reached it, so its
+    # suite only ever ran on someone's laptop -- which is how a missing
+    # `pydantic` in its requirements.txt went unnoticed. No database, no
+    # network, no Node: the tests drive the state classes and the chat mock
+    # in-process, and render the pages' component trees in Python.
+    # clients/elder-app/ is not here yet; it is M1's to add.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install console dependencies
+        # requirements-dev.txt pulls in requirements.txt, plus pytest and
+        # fastapi (the chat mock the tests run against is a FastAPI app).
+        working-directory: clients/admin-console
+        run: pip install -r requirements-dev.txt
+
+      - name: Run console tests
+        # PYTHONPATH: the repo root, for `contracts.*` -- as the console's
+        # README runs them.
+        working-directory: clients/admin-console
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m pytest tests/ -q
+
+  # Branch protection currently requires `lint-and-test` only. gateway-tests,
+  # ai-tests and console-tests need adding to the required status checks by the repo admin
   # (satsandesh-project) -- otherwise a red run here does not block a merge.
   # Tracked in docs/journal/sainathan.md, 2026-09-22.
