@@ -70,3 +70,19 @@ python -m pytest services/ai/speech_indicconformer/ -v
 - `test_indicconformer_real.py` — loads the real model and transcribes
   `bakeoff/samples/mobile_01.wav` (gitignored sample); asserts Telugu-script output, not exact
   text. Skips with a clear message unless `HF_TOKEN` is set. Takes ~100 s.
+
+## No-speech guard and optional denoise
+
+Order: **denoise → no-speech guard → ASR**.
+
+- **No-speech guard** (on by default; `ASR_NO_SPEECH_GUARD=off` disables). In CTC mode the
+  model emits stray text for silence and white noise (evidence in `services/ai/DECISIONS.md`
+  #13), so input that is nearly silent (RMS < 0.003) or noise-like (spectral flatness > 0.5)
+  returns `text=""` with `detected_language` = the language hint, without running the model.
+  An unsupported/missing language hint is still a 422. Thresholds: `ASR_NO_SPEECH_MIN_RMS`
+  (0.003) and `ASR_NO_SPEECH_MAX_FLATNESS` (0.5); every gated clip is logged at WARNING with its
+  measured RMS and flatness.
+- **Denoise** (`ASR_DENOISE=off|rnnoise`, default `off`): RNNoise via the optional
+  `denoise` extra (`pip install ".[denoise]"`), shared with the faster-whisper service
+  (`speech/denoise.py`). Adds a `denoise` stage timing when on. Compare a recording with
+  `python services/ai/tools/denoise_ab.py sample.wav --url http://localhost:8004 --language te`.

@@ -8,8 +8,10 @@ Proves four things about the HTTPS endpoint, and prints one line each:
   2. a client that trusts the exported root completes the handshake
   3. the certificate is valid for the address we connected to (a SAN match, checked by the
      TLS library, not by eye)
-  4. the same routes answer as on plain HTTP (/me/settings -> gateway, /moderation -> the
-     elder-app catch-all, i.e. still NOT exposed), proving the transform did not change routing
+  4. the same routes answer as on plain HTTP (/me/settings and /moderation -> gateway, everything
+     else -> the elder-app catch-all), proving the transform did not change routing; and that
+     /hls reaches the satsang media server, /sessions reaches the gateway, and the RTMP hooks
+     (/sessions/ingest/*) are refused with a 404 however the path is spelled
 Exits 0 only if every check passed.
 """
 
@@ -57,9 +59,14 @@ except Exception as e:  # noqa: BLE001
 
 # 4. routing unchanged
 def get(path, method="GET"):
+    return fetch(path, method)[1]
+
+
+def fetch(path, method="GET"):
     conn = http.client.HTTPSConnection(host, 443, context=ctx, timeout=10)
     conn.request(method, path)
-    return conn.getresponse().read().decode()
+    resp = conn.getresponse()
+    return resp.status, resp.read().decode()
 
 
 try:
@@ -69,8 +76,14 @@ try:
             "/me/settings",
             "/messages",
             "/moderation/queue",
+            "/moderation/messages/x/events",
             "/onboarding/qr/junk",
             "/push/subscribe",
+            "/rooms",
+            "/livekit/rtc",
+            "/hls/some-session.m3u8",
+            "/sessions",
+            "/sessions/manage",
             "/",
         )
     }
@@ -97,10 +110,61 @@ try:
     )
     check("/messages reaches the gateway", got["/messages"].startswith("GATEWAY"), got["/messages"])
     check(
-        "/moderation is still NOT routed to the gateway",
-        got["/moderation/queue"].startswith("ELDER-APP"),
+        "/moderation/queue reaches the gateway (which refuses unsigned callers itself)",
+        got["/moderation/queue"].startswith("GATEWAY"),
         got["/moderation/queue"],
     )
+    check(
+        "/moderation/messages/<id>/events reaches the gateway",
+        got["/moderation/messages/x/events"].startswith("GATEWAY"),
+        got["/moderation/messages/x/events"],
+    )
+    check("/rooms reaches the gateway", got["/rooms"].startswith("GATEWAY"), got["/rooms"])
+    check(
+        "/livekit/rtc reaches LiveKit with the /livekit prefix stripped",
+        got["/livekit/rtc"] == "LIVEKIT /rtc",
+        got["/livekit/rtc"],
+    )
+    check(
+        "/hls/<session>.m3u8 reaches the satsang media server with the path intact (not the "
+        "elder app's 404 page)",
+        got["/hls/some-session.m3u8"] == "SATSANG /hls/some-session.m3u8",
+        got["/hls/some-session.m3u8"],
+    )
+    check(
+        "GET /sessions reaches the gateway",
+        got["/sessions"].startswith("GATEWAY"),
+        got["/sessions"],
+    )
+    check(
+        "/sessions/manage reaches the gateway",
+        got["/sessions/manage"].startswith("GATEWAY"),
+        got["/sessions/manage"],
+    )
+    # The RTMP server's hooks must never be reachable from outside, however the path is spelled:
+    # the gateway decodes %69 to "i" and resolves "." and ".." itself, so Caddy must refuse them
+    # first, on the path as a client can write it. Both methods, because a refusal that only
+    # covers POST would still answer a GET.
+    spellings = (
+        "/sessions/ingest/publish",
+        "/sessions/ingest/done",
+        "/sessions/ingest",
+        "/sessions/%69ngest/publish",
+        "/sessions/%49ngest/publish",
+        "/sessions/./ingest/publish",
+        "/sessions/x/../ingest/publish",
+        "//sessions/ingest/publish",
+        "/Sessions/Ingest/publish",
+        "/sessions/ingest%2Fpublish",
+    )
+    for method in ("POST", "GET"):
+        for path in spellings:
+            status, body = fetch(path, method)
+            check(
+                f"{method} {path} is refused with 404 and never reaches the gateway",
+                status == 404 and not body.startswith("GATEWAY"),
+                f"status={status} body={body[:40]!r}",
+            )
     check("everything else reaches the elder-app", got["/"].startswith("ELDER-APP"), got["/"])
 except Exception as e:  # noqa: BLE001
     check("routing checks ran", False, repr(e))

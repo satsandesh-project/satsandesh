@@ -1,0 +1,38 @@
+# Alternative ASR service (services/ai/speech_indicconformer, AI4Bharat IndicConformer 600M, ONNX).
+# Build from the REPO ROOT as context (see docker-compose.ai.yml): it imports contracts.ai.*.
+#
+# Facts from services/ai/speech_indicconformer/README.md, M3's (#98):
+#   * HF_TOKEN is REQUIRED (startup fails fast without it) and the model is GATED SEPARATELY from the
+#     IndicTrans2 repos: the account behind the token must have accepted ai4bharat/indic-conformer-600m-
+#     multilingual's terms.
+#   * It imports its audio-decode helpers from services/ai/speech/engine.py, so services/ai/speech is
+#     copied too and faster-whisper (a base dependency) is installed with everything else. ffmpeg is needed.
+#   * language_hint must be hi or te (English returns 422): English stays on the faster-whisper service.
+# The CPU wheel index keeps torch from pulling the CUDA build (several GB). torch/transformers are PINNED
+# in pyproject.toml's `indicconformer` extra (the set the spike verified).
+FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY services/ai/pyproject.toml /tmp/ai/pyproject.toml
+# Optional RNNoise denoising (ASR_DENOISE=rnnoise, M3's PR #121): build with
+#   --build-arg ASR_EXTRAS=",denoise"
+# Off by default; the extra pulls matplotlib/audiolab.
+ARG ASR_EXTRAS=""
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    "/tmp/ai[indicconformer${ASR_EXTRAS}]"
+
+COPY contracts/ai ./contracts/ai
+COPY services/ai/__init__.py ./services/ai/__init__.py
+COPY services/ai/speech ./services/ai/speech
+COPY services/ai/speech_indicconformer ./services/ai/speech_indicconformer
+# The service warms up on this file at startup (speech_indicconformer/app.py).
+COPY services/ai/tests/fixtures/tone_2s.wav ./services/ai/tests/fixtures/tone_2s.wav
+
+# Weights are downloaded on first start into HF_HOME (mount a volume or every re-creation re-downloads).
+ENV PYTHONPATH=/app HF_HOME=/models/hf ASR_PORT=8004
+EXPOSE 8004
+CMD ["uvicorn", "services.ai.speech_indicconformer.app:app", "--host", "0.0.0.0", "--port", "8004"]

@@ -339,12 +339,25 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
        SLA, and BLOCK's "may appeal" has no surface until Week 9.
     5. M1's client has to render it.
 
+    **Owners (re-checked 2026-10-08 against what is merged):** 1 and 2 and 4 are **M4's**
+    (@sainathanv said on #120 that the system-hold wording is going into his workshop pack); the
+    script-guard hold (#120, off by default) is a THIRD kind of SYSTEM hold with no notice, so it
+    adds to item 1 and the sender would again see `held` and nothing else; 3 is unobserved (the
+    real classifier has not run) and is M3's to say; 5 is **M1's**. Nothing in the gateway is
+    waiting on this beyond what is already served.
+
 19. **With the pipeline on, every real browser voice note is held until the
     `webm_opus` decision (#2).** Fail-closed, deliberately: a note that cannot
     be transcribed cannot be ruled on, so it goes to a human. The stopgap
     `AI_ACCEPT_WEBM_AS_OGG_OPUS=true` makes them flow. Worth knowing before
     switching the pipeline on for real users: with the default it would send
     every voice note to the moderators' queue.
+
+    **Still true on `main` (re-checked 2026-10-08), and not closed by anything merged:** the
+    staging switch planned for 8 Oct turns the stopgap ON, because a browser recording needs it.
+    That makes the demo flow, it is **not** the decision: #2 is M3's (add the enum value or
+    transcode), and until it is made every claim that a real browser note works end to end is
+    "with the stopgap".
 
 20. **Nothing detects a message stuck behind a dead pipeline.** The dead-letter
     hook holds (or releases) the message when its job dies, and recovery
@@ -411,6 +424,15 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     still `AUTH_MODE=legacy` (a UUID is that user), because the elder app cannot obtain a
     signed token yet (#32), and no deployment runs `jwt`. It closes for a deployment when
     that deployment runs `jwt`. Until then `/moderation*` stays unrouted by Caddy.
+    **UPDATE (phase 3a):** closed at the gateway instead, so routing no longer waits for `jwt`. Shown by
+    hand on a real stack first: in `legacy`, `Authorization: Bearer <a moderator's UUID>` on
+    `GET /moderation/queue` returned **200 with a held message's text**. Now every `/moderation*` route
+    refuses a non-JWT bearer (**401** `Moderation requires a signed token`) before the legacy stub runs
+    (so no `users` row is provisioned for it); a signed token is verified strictly in every mode, the
+    role is read from `users.role` on each request (demote, same token, **403** on the next call), and
+    identity is decided before any body, query or message lookup (a non-moderator gets 403 for a real
+    and a made-up message id alike). Caddy routes `/moderation*`. A moderator token is minted by an
+    operator (`python -m app.tokens <uuid>`). The held-audio route `/media/{id}` had the same hole; see the next update.
     **UPDATE (media):** the already-routed `GET /media/{id}` had the same hole, shown first in a test: a
     moderator's or admin's **bare UUID** fetched a held or blocked message's audio (**200**) in the default
     `legacy` mode. The moderator allowance in `user_can_fetch_media` now applies only when the caller
@@ -473,6 +495,25 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     to `pending`, so this needs a deliberate "reopen" path), or accept original-only for
     that case. Not decided.
 
+    **A second case (Week 8, the script guard, #120), traced against the code; the question
+    is harder than "re-run the stages".** A note held because its transcript is in the wrong
+    script keeps that transcript but was stopped before translation, so it has no
+    renderings. A moderator's release (`POST /moderation/messages/{id}/release`, `app/moderation.py`)
+    is a status flip `held` -> `sent`, one `moderator` event ("Released by a moderator."), and a
+    `message.new` broadcast carrying only the renderings that exist. So the receiver gets the
+    original audio and the **wrong-script transcript, with no translation and no rendered
+    audio**, and nothing in the event says it was a script hold. Two things make "re-run the
+    pipeline on release" insufficient for this case: the pipeline skips transcription when a
+    transcript is already stored, so re-running the missing stages would **translate the same
+    wrong-script text** (or, with the guard on, hold it again); and the ASR is not deterministic
+    (the same 30 s Telugu audio gave 8 different transcripts), so a real fix is a "reopen" that
+    **clears the transcript and re-transcribes**, or lets the moderator supply the text. Options:
+    (a) accept transcript-only on release (today's behaviour), at least with the release event
+    saying why it was held; (b) a reopen path that clears the transcript and re-runs the pipeline
+    (changes who may write to a non-`pending` message, see #21); (c) the moderator corrects the
+    transcript and the pipeline resumes from it. **Not decided; needed before the guard is
+    switched on** (raised by M1 on #120; the queue and sender wording are M4's, #18).
+
 28. **Quiet hours are saved but never enforced until the client sends a timezone.**
     `GET/PATCH /me/settings` now exists (`app/users.py`) and the elder app's existing
     PATCH (start, end, language, tts) works against it unchanged. But `is_quiet_hours`
@@ -484,10 +525,14 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     wrong hour with no error anywhere.
 
 29. **What still blocks switching the pipeline on for real users** (after this change,
-    `/me/settings` no longer does): real JWT verification **turned on** (the code exists since
-    Week 8 and is verified, `AUTH_MODE=jwt`, but it is off by default and no deployment runs it:
-    the moderator routes and held-audio access still rest on a stub identity until one does,
-    #23, and switching it on needs the elder app to obtain a signed token first, #32); M1's `timezone` on `/me/settings` (#28; #92, which
+    `/me/settings` no longer does): the **elder app's identity** is still a client-made UUID, so
+    `AUTH_MODE=jwt` (built and verified since Week 8, `app/tokens.py`) cannot be switched on for a
+    deployment yet: the app has no way to obtain a signed token (**#32, the live blocker; owner M1
+    for the client, with M4/the supervisor for the registration decision**). #23 no longer waits
+    for that: held-audio access (`/media/{id}`, #126, merged) and the moderator routes (#125; open
+    and approved when this was written, so check that it is merged) accept ONLY a signed token in
+    every `AUTH_MODE`, so a bare UUID, which is what `legacy` mode trusts, is not a moderator;
+    M1's `timezone` on `/me/settings` (#28; #92, which
     sends `source_lang` so typed messages are not all treated as Telugu, has since merged);
     M4's answers (#24) and a notice surface
     for a held sender (#18); and M3's ASR choice, `webm_opus` handling and the
@@ -520,6 +565,12 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     "denoise" stage exists as a service-side step that is currently off, not as an
     orchestrator stage.
 
+    **CORRECTED (2026-10-07, M3 on #98 -- the paragraph above is superseded):** denoise covers
+    **both** ASR services (faster-whisper `speech` and `speech_indicconformer`), not only
+    faster-whisper; order is denoise -> no-speech guard -> ASR; still **OFF by default** until
+    M3's A/B on real noisy recordings. His PR #121 carries the code; nothing in the gateway
+    changes. **Still not measured by anyone:** whether denoising helps at all.
+
 31. **The real ASR is not adequate for Telugu on current evidence, and the fix is not
     decided.** The real-services proof (`infra/ai/README.md`) gave the same synthetic Telugu
     sentence three different transcripts (two scripts, one in Devanagari), and the wrong
@@ -528,8 +579,8 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     the Telugu path with faster-whisper for Hindi/English, but is not deciding until he has
     compared small / medium / IndicConformer (CTC and RNNT) on real recordings with latency
     (his Week 8 tuning), and will check whether the latency spread is decoder fallback.
-    **At his request the orchestrator is NOT pointed at a per-language ASR split yet** (it
-    would need to choose the transcribe URL by declared language; not built). The size of
+    **At his request the orchestrator is NOT pointed at a per-language ASR split yet**
+    (*built since, off by default: see the 2026-10-08 update below*). The size of
     the risk is unmeasured: the test speech was synthetic and one sentence.
 
     **UPDATE (Week 8 load runs, `infra/ai/README.md` "Ten notes at once"):** the spread is
@@ -541,6 +592,36 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     unproven. `AI_TRANSCRIBE_TIMEOUT_S` is 120 s against a 60 s worst case for 5 s of audio. A
     30 s Telugu note was measured afterwards (`infra/ai/GATE_WEEK8.md`, #117): 74 to 120 s, three
     of eight within 2 s of that timeout, none over it. Still synthetic speech.
+
+    **UPDATE (2026-10-08):** (1) the 74-120 s were whole-pipeline times; measured per stage, the
+    ASR call alone on a 33.5 s Telugu note took 130.3, 67.0, 114.5, 69.7, 75.9, 70.3, 83.8 and 121.5 s
+    (**2 of 8 over the 120 s timeout**; p50 79.9 s; Hindi 15.7-15.9 s), MT 1-13 s, render 2-43 s
+    (`infra/ai/GATE_WEEK8.md`, follow-up). The decoder's time scales with the audio and the text it
+    emits, which is `services/ai/speech` (**M3's**). **Gateway side, done:** the transcribe timeout is
+    now `max(120 s, 6 s per second of audio)` capped at 600 s (`AI_TRANSCRIBE_TIMEOUT_PER_AUDIO_S`,
+    `_MAX_S`), and `docker-compose.ai.yml` now actually passes the AI timeouts and the script-guard
+    switch to the gateway (before, `.env` settings for them were silently ignored). (2) **M3's
+    decision (#98):** Telugu and Hindi go to `speech_indicconformer`, English to `speech`, `language_hint`
+    always passed; **nothing is routed until M3 posts measurements**. **Mine, not started:** the
+    per-language routing setting (off by default), the IndicConformer image and compose entry, and a
+    check that the HF account behind the token accepted that model's terms (it had NOT, status 403, on
+    the token in my own server `.env`; staging's token was not checked).
+
+
+    **UPDATE (2026-10-12):** the wrong-script guard is now **ON on staging** (M1's `.env`, since 9 Oct). On 11 Oct it
+    held six Telugu notes (reasons such as "only 0% of its letters are Telugu"); the sender sees only "held". Interim
+    sender wording was drafted for M4 to approve in #149 and is not built. The speech service now detects only among
+    en/hi/te (#140, merged; not on staging yet). A text-only comparison (`infra/ai/mt_compare/README.md`) found the
+    translator accurate on typed Telugu, so the garbling is the transcript.
+
+    **BUILT, all off (2026-10-08, `feat/m2-indicconformer-image`):** (a) `infra/ai/Dockerfile.speech_indicconformer`
+    and a compose service `speech-indic` behind the `indic` profile (a plain `up` and `staging-ai.sh`
+    never start it); (b) `AI_TRANSCRIBE_URLS_BY_LANGUAGE`, a JSON map from the sender's DECLARED language
+    to an ASR base URL, empty by default so every note goes where it always did; an undeclared note and
+    English stay on the default service (IndicConformer has neither). **Not done, deliberately:** nothing
+    is routed (M3 posts measurements first); **no automatic fallback** to faster-whisper when a routed
+    service is down (a retryable error like any other; say so if you want one). The model cannot be
+    started with the token on my server until its terms are accepted (status 403 on 2026-10-07).
 
 32. **The elder app has no way to obtain a signed token, so `AUTH_MODE=jwt` cannot be
     switched on for staging yet.** The app mints its own random UUID in the browser
@@ -557,6 +638,12 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     signed tokens only for moderators/admins (a role-based `AUTH_MODE`). Not built: no
     endpoint was added without that decision. A moderator today gets a token from an
     operator: `python -m app.tokens <user-uuid>`.
+    **Owner and state:** M1 (the client has to call onboarding or choose another way) with M4/the
+    supervisor (is open self-registration acceptable?). The gateway side is done: `/activate`
+    returns a signed `access_token`, Caddy routes `/onboarding*` (#124, merged), and the
+    moderator/held-audio surfaces no longer depend on this (#23). It is the live successor of #23
+    for everything about the elder's identity: until it is decided, `legacy` stays the default
+    and a bare UUID still is that user for every route that is not a moderator surface.
 
 33. **What a signed token still does not do.** No revocation (a stolen token works until it
     expires, 30 days by default, `AUTH_TOKEN_TTL_SECONDS`), no refresh, no secret rotation.
@@ -566,3 +653,181 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     because browsers cannot set headers on a handshake), so it can appear in proxy and access
     logs; a short-lived ticket exchanged over HTTP first would avoid that. An unknown `sub`
     is a 401 and is not provisioned, which is the intended change from the stub.
+
+34. **A devotional word was translated into an unrelated one, and nothing flags it.** On typed Telugu
+    (`infra/ai/mt_compare/README.md`, 2026-10-12) the production chain's English→Hindi step turned "There will be no
+    satsang tomorrow morning" into "कल सुबह कोई शतरंज नहीं होगा" ("no chess tomorrow morning"). *bhajan*, *puja* and
+    *prasad* survived in the same run, so this is that word, not devotional vocabulary in general; others may exist. The
+    Telugu→English step was right on all 13 sentences, so the translator is not the source of the garbled notes (the
+    transcript is). **Owner: M3** (`services/ai/render`): a small list of protected terms kept out of translation, or a
+    check that a known term survives, would remove it without a new model. Not built; the gateway cannot tell a wrong
+    translation from a right one. Related and also unfixed: the Hindi sometimes slips tense ("a bhajan happens").
+    Larger or newer open models were compared and none beat the current one on this data (Sarvam-Translate 4B fixes the
+    word but invented a fact and addresses elders as "tum"); the IndicTrans2 1B and Indic→Indic models could not be
+    tested because the Hugging Face terms are not accepted on the account behind the token (403).
+
+35. **A bhajan-room lead could rejoin as a speaker after their turn.** A token's `canPublish` is
+    applied again whenever someone joins with it, and the hand-over's `UpdateParticipant` changes
+    only the live session. Two layers now: the publish-capable token lives two minutes
+    (`PUBLISH_TOKEN_TTL_S`, `app/livekit.py`; the listener's an hour; **LiveKit v1.13.9 also accepts
+    an expired token for exactly 60 more seconds**, measured by M2 on a throwaway LiveKit, so on its
+    own the token leaves a window of about three minutes), and LiveKit's `participant_joined`
+    webhook (`app/livekit_webhook.py`, `/internal/livekit/webhook`, signed with the API secret,
+    reachable only inside the compose network) makes the gateway set the joiner's permission to what
+    the database says, under the room lock. It also lets a lead who joined muted speak. **Shown
+    against a real LiveKit** (`infra/livekit/webhook_check.sh`): after a real WebRTC join LiveKit
+    sends `participant_joined` (a signalling-only join sends nothing), the gateway's own signature
+    check accepts its signature, and the event carries the room name and the person's identity.
+    **Not shown:** the whole chain end to end (the permission really changing on a live session) and
+    the time between a join and that change, during which audio could leak. If LiveKit cannot be
+    reached the answer is a 502 and the person keeps what their token gave them, so the short token is
+    still the first line of defence. Found by M2's review of #151. **Owner:** M1, to show it on a real
+    LiveKit with real devices (deferred, see #36).
+
+36. **Bhajan rooms: what is not done, and why.** (a) *TURN over TLS on 443* (the plan's fallback for
+    networks that block UDP and TCP 7881): not built. Ports below 1024 are not ours on the shared
+    server (no root; `:80` is the system Apache; see `infra/satsang/INGEST_FINDING.md`) and TLS
+    needs a certificate for a real name, which we do not have (the domain question is open).
+    A high port would work for some networks but is not what the plan promises. (b) *The
+    "five devices in one room" test* ("done when" for Weeks 9 and 10): deferred by M1 on 12 Oct,
+    because no phones and not enough people with devices are available; to be run in about two
+    months. Whether the college firewall (Sophos) lets LiveKit's UDP 7882 or TCP 7881 through is
+    only knowable then. When it is run: LiveKit added to staging with the `LIVEKIT_*` values and
+    a Caddy restart, the gateway rebuilt (#155 first), one lead and four listeners on separate
+    devices with headphones, check that only the lead is heard, that a hand-over is one tap, and
+    that the old lead cannot speak after (also by rejoining). **Until then Weeks 9 and 10 are
+    built and tested in software, not demonstrated.** **Owner:** M1.
+37. **A publish that arrives while the satsang is already live used to END it. Fixed: it is now
+    refused.** Measured on the real stack: a second ffmpeg publishing to the same URL while the first
+    connection was still open was accepted by the hook, then refused by nginx-rtmp ("Already
+    publishing"), and nginx still sent the done-hook for that refused connection: the gateway logged
+    `ended (publisher stopped)` and the first connection's own done-hook later got 409. **Decision
+    (the owner delegated it; option A of three): the publish hook refuses a publish for anything but
+    a scheduled satsang.** Checked on the real media server after the change: the second publish gets
+    a 403 from the hook, nginx never starts it, **0** done-hooks are sent for it, the row stays
+    `live`, and the first publisher's own stop sends the one done-hook that ends it. What this does
+    NOT fix, and why it was the cheaper option: a speaker who reconnects while the old connection is
+    still counted as live is refused until it is dropped (the media server drops a silent publisher
+    after 30 s, #38), and a dropped speaker still cannot resume once the satsang has ended. Both
+    need the grace period of #43, which needs a status the table does not have and so a second
+    migration. A lost done-hook now also locks the speaker out, where before they could reconnect;
+    a moderator ends it by hand (`POST /sessions/{id}/end`, and the End button on the admin page).
+    The other two options, for the record: keep nginx's connection id and ignore a done-hook from
+    any other (needs a column, so a migration); or the grace period itself. **Owner:** M2, Week 10
+    (the grace period).
+38. **A publisher that goes silent without closing its connection.** With no idle limit the
+    row stayed `live` for the whole 2 minutes it was watched (the HLS playlist started returning
+    404 after about 75 s, so listeners got nothing while the app said live), and only one satsang
+    can be live, so it blocks the next. The media server now drops a publisher silent for 30 s
+    (`drop_idle_publisher`, overridable): measured, the row ended at about +30 s. The cost is the
+    same as #50 (d): that satsang is over, and a speaker who comes back with the same URL is
+    refused. The freeze was a stopped process (SIGSTOP), **not a real radio drop**; how a real
+    phone behaves (does its OS close the socket? after how long?) is unmeasured.
+    **Owner:** M2, Week 10.
+39. **What a listener sees when a satsang ends.** The playlist never gets `#EXT-X-ENDLIST`: it
+    freezes for about 64 s, then returns 404, and the last two segments stay in the media
+    server's memory until its container restarts (about 40 KB each; harmless, but fetchable by
+    anyone who knows the session id). A player therefore stalls and then errors; the listener's
+    screen has to learn that the satsang ended from the session listing, not from the stream.
+    Also: every segment declares an empty H.264 video stream next to the audio (ffprobe: 0x0, no
+    frames) because nginx-rtmp always writes both; ffmpeg plays it, **no browser has been tried**.
+    **Owner:** M2, Week 10 (the join screen and player).
+40. **`/hls` has no login.** Anyone who knows or guesses a session id can listen; ids are random
+    UUIDs and the listing that shows them needs a signed token, so this is a capability URL, not
+    access control. Fine for an organisation-wide discourse, wrong for a private circle (the
+    scoping question Week 10 has to answer). Caddy could check a token per request only with an
+    auth subrequest to the gateway; not built. **Owner:** M2, Week 10.
+41. **Week 9 does not remind anyone.** Nothing tells a user that a satsang is about to start: no push,
+    no spoken reminder, no job that looks at `scheduled_start_at`. The sessions table has a
+    `reminder_sent_at` column and nothing writes it. The plan puts the reminder 30 minutes before the
+    start, as push plus TTS audio, in the user's language. **Owner:** M2, Week 10.
+42. **Week 9 has no screen for listeners.** There is no elder-facing "join" screen and no hls.js
+    player: the HLS stream exists and ffmpeg plays it, but no browser has played it (see #39 for the
+    empty video stream every segment declares). `GET /sessions` returns the listing an elder's screen
+    would show; nothing calls it yet. The Satsang tab in the elders' bottom navigation
+    (`elder_app.py`, M1's file) is a placeholder that does nothing; the Week 10 screen is to be built
+    in its own file, as the admin page was. The admin page is deliberately not linked from the elder
+    screens. **Owner:** M2, Week 10.
+43. **A satsang that never ends, and one that ends too soon.** Measured on the real media server
+    (#37, #38): a publisher that goes silent leaves the row `live`; the media server now drops it
+    after 30 s of silence, and a moderator can end a live satsang by hand (`POST /sessions/{id}/end`,
+    and the End button on the admin page, which asks first). Still open: there is no watchdog for a
+    done-hook that never arrives (a gateway down at that moment), so that satsang stays live, and only
+    one can be live, until a moderator ends it; and ending is final, so a speaker whose phone drops
+    for ten seconds cannot come back. A grace period before `ended` is one design that fixes the
+    second and needs the first's watchdog anyway. **Owner:** M2, Week 10 (the decision is the user's).
+44. **A satsang is organisation-wide, not scoped to a circle.** The base setup does not say; decided
+    from the documents: the Month 3-4 plan lists the satsang's data as "sessions (title, speaker, start
+    time, stream key, status, reminder sent)" with no circle, while the bhajan rooms, the listen
+    sessions and the events in the same plan each name one; the proposal describes a satsang as a
+    "scheduled one-to-many broadcast" for the organisation (objective O4, section 7.4), and circles
+    as groups "by locality or seva interest". So every signed-in user sees every scheduled satsang in
+    `GET /sessions`, and anyone who has a session's id can fetch its stream (#40). If the organisation
+    wants a private satsang, the change is a nullable `circle_id`, a filter in the listing, and a
+    token check in front of `/hls`. **Owner:** M2; revisit only if asked.
+45. **Recording and replay are out of scope.** The media server does not record (`record off`), the
+    HLS segments live in memory and are deleted a minute or so after the stream stops (the last two
+    stay until the container restarts, #39), and nothing stores a satsang for later. The base setup
+    does not include it. The Discourse archive in the plan works on recordings an administrator
+    uploads, so it does not need this feature to record anything. Do not assume a satsang can be
+    heard afterwards. **Owner:** nobody in Weeks 9 and 10.
+46. **What a listener who joins late hears.** The playlist keeps 32 seconds (eight 4-second segments:
+    `hls_fragment 4s`, `hls_playlist_length 32s`), and a player starts three segments behind the live
+    edge. So someone who joins mid-discourse hears it from about 12 seconds ago, on a stream that
+    measures 15 to 17 seconds behind the speaker, and cannot go back further: there is no earlier
+    audio to fetch. A listener whose connection stalls for more than about 20 seconds falls off the
+    front of the playlist and must jump to the live edge (not provoked: 0 of 6 runs at the
+    default settings). Someone who opens the page before the satsang starts gets a 404 for the playlist, not a
+    "not yet": the player has to read the session's status and retry. **Owner:** M2, Week 10.
+47. **The admin page is a first cut.** It takes a pasted signed token (there is no login for an
+    administrator in the app, see #32), the speaker is a user id typed in because there is no user
+    directory to pick from, a speaker has no list of their own satsangs (they paste a session code
+    the administrator gives them), and it is in English only. The elder-app tests are not run by CI
+    (`.github/workflows/ci.yml` has no job for them), so they run on a developer's machine, and the
+    browser-script tests need Node. **Owner:** M2, Week 10 for the page; M1 for #32.
+50. **A satsang's stream key crosses the campus network in clear, and the ingest hook's secret sits
+    in a URL.** The hook (`POST /sessions/ingest/publish`, called by the RTMP server) is
+    protected by a shared secret, the stream key and what the key is worth (`app/satsang.py`
+    module docstring), and for the hook that is enough: an attacker without a valid key changes
+    nothing, and one with a key could already broadcast by publishing to the RTMP port. The weak
+    point is the key. **RTMP on 1935 carries it unencrypted** (`infra/satsang/INGEST_FINDING.md`),
+    so anyone who can watch one publish handshake on the same network learns a key that works
+    until that satsang ends. Its life is bounded (only while the satsang is scheduled or live,
+    only from an hour before the start, dead after it ends, one live at a time), which shortens
+    the exposure and does not remove it. RTMPS or WHIP would, and both need a trusted certificate,
+    which waits on the domain decision.
+    Smaller, all true now: (a) the secret is in the callback's query string, so it appears in the
+    gateway's own access log (measured on a real stack: 8 access-log lines carried it) and is
+    one value for both hooks (the media server now adds it itself, so it is in the gateway's
+    access log and in the media server's rendered config, nowhere else; 0 lines in the media
+    server's, Caddy's and Postgres's logs, measured); (b) Caddy must never route
+    `/sessions/ingest*`: it does not (`/sessions` is not routed at all), and
+    `infra/caddy/tls_check.py` now fails if it ever is; (c) nginx-rtmp keeps the callback's
+    query string and posts form fields `name` and `key` (the URL's argument): **measured**, and
+    the reason the stream is named by the session id and not by the key (see `app/satsang.py`);
+    (d) a speaker whose connection drops ends the satsang (the done-hook fires) and cannot resume,
+    while a satsang whose done-hook never arrives stays live until a moderator ends it by hand
+    (`POST /sessions/{id}/end`); a grace period and a watchdog are one design. #37 and #38 are
+    what the real media server showed about (d). **Owner:** M2, Week 10.
+53. **Week 10 close-out ledger, 2026-10-16: which satsang questions the week closed, which are open, and who has them.**
+    Written as one entry, not as edits to #37-#50, because six unmerged PRs each rewrite some of those entries and
+    this keeps the merges apart. Numbers are `main`'s (the stream-key entry is #50 here and #36 in the PRs that
+    predate #173). **Verdict of the week's gate: FAIL** (`infra/satsang/GATE_WEEK10.md`): nothing runs on staging and
+    no person has used any of it. *Closed by the week, in code, on throwaway stacks:* #37 (a publish for a live
+    satsang is refused; on main); #38 (a silent publisher dropped after 30 s; on main); #41 the reminder job (PRs
+    #170, #171, #177, not merged); #42 the listener screens (#172, not merged); #40 decided, kept as a capability URL,
+    with a tripwire test and reopen conditions (#177); #44 decided, with the same tripwire (#177); #49 fixed, the
+    reminder no longer holds a lock through its pushes (#177). *Open, owner and date:* #43 the dropped speaker:
+    **deferred to Week 16 by decision on 2026-10-16**, workaround in REHEARSAL.md (PR #178), reopens if rehearsal step 10
+    shows an ordinary drop ends the satsang, M2; #50 the stream key in clear, waits on the domain and certificate
+    decision, M2 and the user; #39 what a listener sees at the end, and whether a phone's browser plays the declared
+    but empty H.264 track, M2, rehearsal steps 7 and 8; #45 recording and replay, nobody, out of scope; #46 late
+    joiners, M2, step 9; #47 the admin page's first-cut limits, M2, and #32 (an administrator's sign-in) for M1.
+    *Broken or found by the rehearsal preparation and the measurements, all in PRs not yet merged:* #51 the reminder
+    reaches no phone and nothing plays its audio (M1's files: a service worker, a subscribe call, `/push*` routed);
+    #52 the listener's screen cuts off the last 10 to 15 s of a discourse (M2, #175); #48 the elder app can ask for
+    the list but not for one satsang, so "ended" is inferred (M2, #172); the deploy order has three migrations and an
+    old gateway image cannot start once they are applied (`DEPLOY.md`, #176). *What the week did not do:* put anything
+    on staging (needs M1's written go), run a rehearsal with a phone (`REHEARSAL.md`), have a native speaker read the
+    Telugu reminder, or measure the glass-to-glass delay (predicted about 15 s). **Owner:** M2 for all of it except
+    the items named for M1; **date:** 2026-10-16; the next review is after the rehearsal.

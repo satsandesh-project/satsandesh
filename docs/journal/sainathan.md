@@ -594,3 +594,21 @@ test fails with the original bug put back.
 ## 2026-10-08 — Organisation admin: contract, migration, API, console (Week 9 · PRs #127, #131, #132)
 
 One line: asked Claude for the full-stack admin feature (members, circles, announcements, `admin_actions` log) as small PRs; it wrote `/admin/*` so that a bare admin UUID was enough to act as the admin under the default legacy auth, which I caught only while reviewing #125 and fixed before the API PR opened (signed token only, with a test); its mock also logged a retried announcement twice, found only by running one test suite over the mock and the console's sample data; and its ~55 database tests first ran in CI, not here (no Postgres), where they passed (971).
+
+## 2026-10-17 — Console tests in CI (Week 9 · CI PR)
+
+**Asked for:** the moderator / organisation console's tests run in CI; they only ever ran locally.
+
+**Produced:** a `console-tests` job in `.github/workflows/ci.yml` (Python 3.11, `requirements-dev.txt`,
+repo root on `PYTHONPATH`, no database or Node); the closing comment names it among the checks that
+branch protection should require; the console README's "Not in CI" bullet updated.
+
+**Corrected:** nothing.
+
+**Decided differently:** `clients/elder-app/` left out (M1's suite, with JS runners I have not
+looked at), though my own README note said one job for both clients would be better.
+
+**Verified by:** the workflow parses; a clean Python 3.11 venv from `requirements-dev.txt` runs the
+console suite green on main (36), #132 (125) and #181 (37). The job itself is proved by this PR's run.
+
+**Where it ran:** local.

@@ -5,12 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.admin_org import router as admin_org_router
 from app.audio_labels import router as audio_labels_router
 from app.auth import get_current_user
 from app.circles import router as circles_router
 from app.config import get_settings
 from app.db.base import check_database_connection
 from app.jobs import run_worker_loop, worker_id
+from app.livekit_webhook import router as livekit_webhook_router
 from app.media import router as media_router
 from app.messages import router as messages_router
 from app.models import User
@@ -20,6 +22,8 @@ from app.pipeline_watchdog import run_pipeline_watchdog_loop
 from app.push import router as push_router
 from app.recovery import recover_pending_fan_outs
 from app.retention import run_retention_sweep_loop
+from app.rooms import router as rooms_router
+from app.satsang import router as satsang_router
 from app.users import router as users_router
 from app.ws import router as ws_router
 
@@ -104,6 +108,10 @@ app.include_router(audio_labels_router)
 app.include_router(media_router)
 app.include_router(moderation_router)
 app.include_router(users_router)
+app.include_router(admin_org_router)
+app.include_router(rooms_router)
+app.include_router(satsang_router)
+app.include_router(livekit_webhook_router)
 
 
 @app.get("/health")

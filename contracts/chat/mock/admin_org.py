@@ -27,6 +27,7 @@ from contracts.chat.admin_org import (
     AdminCircleMembers,
     AdminCircleOut,
     AdminCircleUpdate,
+    AdminClaimOut,
     AdminMemberAdd,
     AdminMemberOut,
     AdminMemberRoleUpdate,
@@ -41,6 +42,7 @@ from contracts.chat.admin_org import (
 from contracts.chat.circles import Circle, CircleKind, Membership
 from contracts.chat.common import MessageKind, TargetType
 from contracts.chat.messages import MessageIn
+from contracts.chat.mock import claims as mock_claims
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -185,6 +187,15 @@ def reissue_token(user_id: str, admin_id: str = Depends(_require_admin)) -> Admi
     _user(user_id)
     _log(admin_id, AdminActionKind.USER_REISSUE_TOKEN, "user", user_id)
     return AdminTokenOut(user_id=user_id, access_token=_token_for(user_id))
+
+
+@router.post("/users/{user_id}/claim", response_model=AdminClaimOut, status_code=201)
+def issue_claim(user_id: str, admin_id: str = Depends(_require_admin)) -> AdminClaimOut:
+    _user(user_id)
+    code, expires_at = mock_claims.issue(user_id)
+    # The code itself is never logged: only the fact that one was issued.
+    _log(admin_id, AdminActionKind.USER_ISSUE_CLAIM, "user", user_id)
+    return AdminClaimOut(user_id=user_id, claim_code=code, expires_at=expires_at)
 
 
 @router.get("/circles", response_model=AdminCircleList)

@@ -546,12 +546,22 @@ def test_running_a_finished_message_again_changes_and_calls_nothing(db_session, 
     message_id = _dm(db_session)
     _run(db_session, message_id)
     fake.calls.clear()
+    # Every rendering, text and reason as the first run left them: the `hi` one the render service
+    # made and the `en` pivot row (#136). The second run must change none of it.
+    before = {
+        language: (r.text, r.degraded_reason, r.audio_media_object_id)
+        for language, r in _renderings(db_session, message_id).items()
+    }
 
     _run(db_session, message_id)
 
     assert fake.calls == []
     assert len(list_moderation_events(db_session, message_id)) == 1
-    assert len(_renderings(db_session, message_id)) == 1
+    assert {
+        language: (r.text, r.degraded_reason, r.audio_media_object_id)
+        for language, r in _renderings(db_session, message_id).items()
+    } == before
+    assert set(before) == {"hi", "en"}
 
 
 def test_a_run_resumed_after_a_verdict_does_not_ask_for_a_second_one(db_session, fake, outbox):
@@ -688,7 +698,9 @@ def test_a_held_message_still_gets_its_renderings_so_a_release_needs_no_rerun(
 
     _run(db_session, message_id)
 
-    assert set(_renderings(db_session, message_id)) == {"hi"}
+    # `en` is the pivot row for the Hindi reader's 'Show English' (#136); stored like the rest, and
+    # invisible until the message is out (test_the_pivot_row_is_hidden_until_the_message_is_out).
+    assert set(_renderings(db_session, message_id)) == {"hi", "en"}
 
 
 def test_a_degraded_fallback_hold_is_recorded_as_a_degraded_classifier_event(
@@ -869,6 +881,92 @@ def test_a_request_the_asr_rejects_is_permanent(db_session, fake, outbox):
 
     with pytest.raises(PermanentJobError):
         pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+
+# --- the ASR guesses a language outside en/hi/te --------------------------------------------------
+#
+# Staging, 2026-10-08: three real voice notes were HELD because the speech service, left to detect the
+# language of an UNDECLARED note, guessed 'nn', 'si' and 'ur' and answered 422 UNSUPPORTED_LANGUAGE (a
+# permanent error). The elder app declares no language for voice notes, so every note is exposed to this.
+# The fix that belongs in the speech service (M3's) is to pick only among en/hi/te; this is the gateway's
+# half: such a note gets ONE more try with the author's stored language as the hint instead of a hold.
+
+
+def test_an_undeclared_note_the_asr_cannot_place_is_retried_with_the_authors_language_not_held(
+    db_session, fake, outbox
+):
+    fake.guess_unsupported = "nn"
+    message_id = _dm(db_session, author_lang="hi", kind="voice", source_lang=None, due=True)
+
+    _run(db_session, message_id)
+
+    first, second = fake.requests("transcribe")
+    assert first["language_hint"] is None
+    assert second["language_hint"] == "hi"
+    message = _msg(db_session, message_id)
+    assert (message.status, message.pipeline_state) != ("held", "failed")
+    assert message.pipeline_state == "complete"
+    assert message.transcript is not None
+
+
+def test_the_fallback_is_a_single_extra_attempt_and_a_second_rejection_still_holds(
+    db_session, fake, outbox
+):
+    fake.guess_unsupported = "ur"
+    fake.reject_even_with_hint = True
+    message_id = _dm(db_session, author_lang="te", kind="voice", source_lang=None)
+
+    with pytest.raises(PermanentJobError):
+        pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+    assert len(fake.requests("transcribe")) == 2
+
+
+def test_a_declared_note_the_asr_rejects_is_not_retried_with_another_language(
+    db_session, fake, outbox
+):
+    """A declared note already carries a hint; second-guessing the sender would be wrong."""
+    fake.guess_unsupported = "nn"
+    fake.reject_even_with_hint = True
+    message_id = _dm(db_session, author_lang="hi", kind="voice", source_lang="te")
+
+    with pytest.raises(PermanentJobError):
+        pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+    assert len(fake.requests("transcribe")) == 1
+
+
+def test_no_fallback_when_the_authors_stored_language_is_not_one_the_pipeline_supports(
+    db_session, fake, outbox
+):
+    fake.guess_unsupported = "nn"
+    message_id = _dm(db_session, author_lang="ta", kind="voice", source_lang=None)
+
+    with pytest.raises(PermanentJobError):
+        pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+    assert len(fake.requests("transcribe")) == 1
+
+
+def test_other_permanent_asr_errors_are_never_retried_with_a_hint(db_session, fake, outbox):
+    fake.errors["transcribe"] = (422, {"code": "AUDIO_FETCH_FAILED", "message": "no file"})
+    message_id = _dm(db_session, author_lang="hi", kind="voice", source_lang=None)
+
+    with pytest.raises(PermanentJobError):
+        pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+    assert len(fake.requests("transcribe")) == 1
+
+
+def test_the_fallback_can_be_switched_off(db_session, fake, outbox, monkeypatch):
+    monkeypatch.setattr(get_settings(), "PIPELINE_ASR_LANGUAGE_FALLBACK", False)
+    fake.guess_unsupported = "nn"
+    message_id = _dm(db_session, author_lang="hi", kind="voice", source_lang=None)
+
+    with pytest.raises(PermanentJobError):
+        pipeline.handle_process_message(db_session, {"message_id": str(message_id)})
+
+    assert len(fake.requests("transcribe")) == 1
 
 
 def test_a_silent_note_is_held_for_a_human_not_delivered_unclassified(db_session, fake, outbox):
@@ -1145,3 +1243,118 @@ def test_the_whole_pipeline_runs_against_the_real_ai_mock(db_session, outbox, mo
     # honestly marked as having no voice.
     assert rendering.audio_media_object_id is None and rendering.degraded_reason == "tts_skipped"
     assert outbox["delivery"] == [message_id]
+
+
+# --- the English pivot as a rendering, for 'Show English' (#136) ----------------------------------
+#
+# M1's reader behaviour (#135): a Telugu or Hindi reader gets the message in their own language with
+# a button that swaps to the English version of what was said. `renderings` carries only the
+# languages the recipients read (#83), so there was no `en` row for them and the button fell back to
+# the sender's own recording. The English pivot already exists on the message, so this is one stored
+# row, not a model call.
+
+
+def _pivot_row(db_session, message_id):
+    return _renderings(db_session, message_id).get("en")
+
+
+def test_a_reader_whose_language_is_not_english_also_gets_the_english_pivot(
+    db_session, fake, outbox
+):
+    message_id = _dm(db_session, source_lang="te", target_lang="hi")
+
+    _run(db_session, message_id)
+
+    row = _pivot_row(db_session, message_id)
+    assert row is not None, "a Hindi reader has no English version to swap to"
+    assert row.text == _msg(db_session, message_id).pivot_text_en
+    assert row.audio_media_object_id is None
+    assert row.degraded_reason == "text_only"
+    # No model call: the row is the pivot the message already carries, not a render result.
+    assert row.model_version_translate is None and row.model_version_tts is None
+    assert fake.requests("render")[0]["target_languages"] == ["hi"]
+
+
+def test_a_voice_note_gets_one_too(db_session, fake, outbox):
+    message_id = _dm(db_session, kind="voice", source_lang=None, target_lang="hi", due=True)
+
+    _run(db_session, message_id)
+
+    assert _pivot_row(db_session, message_id) is not None
+    assert set(_renderings(db_session, message_id)) == {"hi", "en"}
+
+
+def test_nothing_is_added_when_the_sender_wrote_english(db_session, fake, outbox):
+    """The English version of an English message is the message: the app's fallback already shows
+    the sender's own words, and a pivot row would claim a translation that never happened."""
+    message_id = _dm(db_session, source_lang="en", target_lang="hi")
+
+    _run(db_session, message_id)
+
+    assert set(_renderings(db_session, message_id)) == {"hi"}
+
+
+def test_an_english_readers_own_row_is_the_render_services_and_is_not_replaced(
+    db_session, fake, outbox
+):
+    author = _user(db_session, "Author", "te")
+    circle = create_circle(db_session, name="Satsang", created_by=author.id)
+    add_member(db_session, circle_id=circle.id, user_id=author.id, role="admin")
+    for name, language in [("A", "hi"), ("B", "en")]:
+        add_member(db_session, circle_id=circle.id, user_id=_user(db_session, name, language).id)
+    message_id = _message(db_session, author, target_circle=circle)
+
+    _run(db_session, message_id)
+
+    assert set(_renderings(db_session, message_id)) == {"en", "hi"}
+    # One row, and it is the render service's (it carries its model version), not a pivot copy.
+    assert _pivot_row(db_session, message_id).model_version_translate == "fake-render-mt"
+
+
+def test_a_circle_with_no_english_reader_gets_the_pivot_row(db_session, fake, outbox):
+    author = _user(db_session, "Author", "te")
+    circle = create_circle(db_session, name="Satsang", created_by=author.id)
+    add_member(db_session, circle_id=circle.id, user_id=author.id, role="admin")
+    for name, language in [("A", "hi"), ("B", "te")]:
+        add_member(db_session, circle_id=circle.id, user_id=_user(db_session, name, language).id)
+    message_id = _message(db_session, author, target_circle=circle)
+
+    _run(db_session, message_id)
+
+    assert set(_renderings(db_session, message_id)) == {"hi", "en"}
+    assert _pivot_row(db_session, message_id).model_version_translate is None
+
+
+def test_a_reader_in_the_senders_own_language_gets_no_renderings_at_all(db_session, fake, outbox):
+    """Nothing is rendered, so no button appears, so there is nothing for a pivot row to serve."""
+    message_id = _dm(db_session, source_lang="te", target_lang="te")
+
+    _run(db_session, message_id)
+
+    assert _renderings(db_session, message_id) == {}
+
+
+def test_a_retried_job_does_not_duplicate_or_change_it(db_session, fake, outbox):
+    message_id = _dm(db_session, source_lang="te", target_lang="hi")
+    _run(db_session, message_id)
+    first = _pivot_row(db_session, message_id)
+
+    _run(db_session, message_id)
+
+    again = _pivot_row(db_session, message_id)
+    assert len(_renderings(db_session, message_id)) == 2
+    assert (again.text, again.degraded_reason) == (first.text, first.degraded_reason)
+
+
+def test_the_pivot_row_is_hidden_until_the_message_is_out(db_session, fake, outbox):
+    from app.db.renderings import renderings_for_wire
+
+    fake.action = ModerationAction.HOLD
+    message_id = _dm(db_session, source_lang="te", target_lang="hi")
+
+    _run(db_session, message_id)
+
+    message = _msg(db_session, message_id)
+    assert message.status == "held"
+    assert _pivot_row(db_session, message_id) is not None, "stored, so a release needs no re-run"
+    assert renderings_for_wire(db_session, [message]) == {}, "not on the wire while it is held"

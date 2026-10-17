@@ -694,3 +694,22 @@ the server for its DB-backed tests (the local Python lacks
   have run, end to end (#102, 2026-10-04):** MT and render work and a note became the
   right renderings for its readers. The weak link turned out to be the real ASR on Telugu
   (wrong script, wrong meaning, erratic latency), which is M3's and is recorded on #98.
+
+## Week 9 -- a test that introspected the wrong thing almost passed while checking nothing
+
+- The satsang contract's mock test enumerated routes from `app.routes` to prove no GET returns
+  the stream key. In FastAPI 0.143 `include_router` appends one opaque `_IncludedRouter` object
+  instead of flattening child routes, so **every router-mounted path is invisible there**: the
+  filter found zero paths. It failed only because I had asserted the list was non-empty first.
+  Without that one guard it would have iterated nothing and reported green. Rewritten to
+  enumerate `app.openapi()["paths"]`, which does see all six, with the guard kept.
+- The lesson is the guard, not the framework: a test that searches for something bad must first
+  prove it is searching somewhere.
+- A database that holds a status and its timestamps CONSISTENT does not forbid an illegal MOVE:
+  `ended -> live` is one UPDATE (clear `ended_at`) and every CHECK still passes. I had called the
+  Phase 1 table finished; the Phase 2 transition tests showed nine illegal moves going straight
+  through, and a trigger was needed. The tests rewrite the timestamps to match each new status, so
+  only the transition rule can object.
+- Phase 3, the real media server: the first recreate-the-gateway test printed "address changed: NO" and so proved nothing; a second run parked a container on the old address, and a control with the hostname resolved once at start got the 502 that the resolver prevents. The same run showed a refused duplicate publish ending a live satsang, which no mock could have shown.
+- Phase 4, the admin page: 92 green tests did not mean the date guard was tested; a sabotage run left it standing because the inputs I tried ("next thursday") were refused by a different check, and it fell only to dates a browser parses leniently ("2026-10-14"). The page keeps the token and the stream key out of Reflex state entirely, so what the tests prove about them is that Python never receives them.
+- Week 10, the gate: I walked the done-when clause against staging first and it failed on every part, because the green tests and the throwaway stacks all stood in for the phone and the person; so the verdict is FAIL with what would turn each around, the latency number is written as a prediction that has never been measured, and the open questions went into one ledger entry because six unmerged PRs already rewrite the entries they would have edited.

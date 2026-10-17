@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 from typing import Annotated, Literal
 
@@ -12,6 +13,15 @@ def _split_csv(value: object) -> object:
     # the plain comma-separated form documented in .env.example instead.
     if isinstance(value, str):
         return [origin.strip() for origin in value.split(",") if origin.strip()]
+    return value
+
+
+def _json_map(value: object) -> object:
+    # A JSON object in the environment, where an EMPTY value (what docker-compose hands over for an
+    # unset `${VAR:-}`) means "none". NoDecode below skips pydantic-settings' own JSON step, which
+    # would reject the empty string before this runs.
+    if isinstance(value, str):
+        return json.loads(value) if value.strip() else {}
     return value
 
 
@@ -119,6 +129,14 @@ class Settings(BaseSettings):
     # therefore has its own optional URL, falling back to AI_SERVICE_URL when
     # unset -- so the mock (and today's single-host default) needs no change.
     AI_TRANSCRIBE_URL: str | None = None
+    # Per-language ASR routing, OFF by default (empty = every note goes to AI_TRANSCRIBE_URL, as it
+    # always did). M3's plan (#98): Telugu and Hindi to speech_indicconformer, English to speech.
+    # JSON in the environment, e.g. {"te": "http://speech-indic:8004", "hi": "http://speech-indic:8004"};
+    # the key is the language the SENDER declared (`source_lang`), never a detection. Do not set it
+    # until M3 posts his measurements. No automatic fallback if a routed service is down.
+    AI_TRANSCRIBE_URLS_BY_LANGUAGE: Annotated[
+        dict[str, str], NoDecode, BeforeValidator(_json_map)
+    ] = Field(default_factory=dict)
     AI_PIVOT_URL: str | None = None
     AI_MODERATION_URL: str | None = None
     AI_RENDER_URL: str | None = None
@@ -129,6 +147,15 @@ class Settings(BaseSettings):
     # ASR on a cold model is slow (the demo console allows 120s); render does
     # one MT + one TTS pass per target language.
     AI_TRANSCRIBE_TIMEOUT_S: float = 120.0
+    # The ASR's decode time grows with the note's length, so 120 s fits one length only: a 33.5 s
+    # Telugu note took 67-130 s for the ASR call alone, one of five runs past 120 s (GATE_WEEK8.md).
+    # A note gets this many seconds of decode per second of AUDIO (observed worst ~3.9, so 6 leaves
+    # about 1.5x), never less than AI_TRANSCRIBE_TIMEOUT_S above and never more than the cap. 0 turns
+    # the scaling off. The length is what the client declared, hence the cap. The price of a longer
+    # timeout is a longer wait when a call is really stuck, and the job worker is a single loop:
+    # a stuck 33 s note holds it ~200 s per attempt instead of 120 s.
+    AI_TRANSCRIBE_TIMEOUT_PER_AUDIO_S: float = 6.0
+    AI_TRANSCRIBE_TIMEOUT_MAX_S: float = 600.0
     AI_PIVOT_TIMEOUT_S: float = 90.0
     AI_MODERATION_TIMEOUT_S: float = 30.0
     AI_RENDER_TIMEOUT_S: float = 180.0
@@ -171,6 +198,10 @@ class Settings(BaseSettings):
     # action -> status mapping open; this assumes a nudge records a notice and
     # still delivers. Set false to hold nudged messages for a human instead.
     PIPELINE_NUDGE_DELIVERS: bool = True
+    # One more ASR try with the author's stored language when the speech service answers
+    # UNSUPPORTED_LANGUAGE for an UNDECLARED voice note (its auto-detect guessed outside en/hi/te)
+    # instead of holding the note. See app/pipeline.py `_asr_language_fallback` for the risk.
+    PIPELINE_ASR_LANGUAGE_FALLBACK: bool = True
     # The script guard (app/script_check.py; the Week 8 gate's finding): hold a voice note whose
     # transcript is mostly NOT written in the script of its language (ASR labelled `te`, returned
     # Devanagari) for a person, instead of translating and delivering nonsense. OFF by default: it
@@ -213,6 +244,28 @@ class Settings(BaseSettings):
     # tests/conftest.py disables it so a TestClient's lifespan doesn't scan
     # the test database.
     STARTUP_RECOVERY_ENABLED: bool = True
+
+    # Bhajan rooms (app/rooms.py, app/livekit.py): the audio runs on LiveKit, the gateway decides
+    # who may speak. All four unset = rooms work without audio (the token route answers 503).
+    # The key and secret are LiveKit's API pair (the same as its own `keys:` setting); the secret
+    # is never logged or returned. PUBLIC_URL is what the APP connects to (wss://..., normally
+    # through Caddy's /livekit path); INTERNAL_URL is how the GATEWAY reaches LiveKit's admin API
+    # on the compose network (http://livekit:7880).
+    LIVEKIT_API_KEY: str | None = None
+    LIVEKIT_API_SECRET: str | None = None
+    LIVEKIT_PUBLIC_URL: str | None = None
+    LIVEKIT_INTERNAL_URL: str | None = None
+
+    # Satsang broadcast (app/satsang.py). The RTMP server calls the gateway's ingest hooks; they are
+    # not a user route, so the caller is authenticated by a shared secret instead of a token. UNSET
+    # means the hooks refuse everything (503), so nobody can go live until it is configured.
+    SATSANG_HOOK_SECRET: str | None = None
+    # The RTMP address a speaker's app publishes to, without the key (the key is appended).
+    SATSANG_INGEST_BASE_URL: str = "rtmp://localhost:1935/live"
+    # Where the HLS playlists are served; an elder's player is given {this}/{session id}.m3u8.
+    SATSANG_HLS_PATH: str = "/hls"
+    # How early before its start a satsang may go live. There is deliberately no late limit.
+    SATSANG_GO_LIVE_EARLY_MINUTES: int = 60
 
 
 @lru_cache

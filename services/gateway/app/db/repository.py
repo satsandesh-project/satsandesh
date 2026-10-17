@@ -413,7 +413,13 @@ def count_circle_deliveries(session: Session, *, message_id: uuid.UUID) -> int:
 
 
 def get_or_create_user(
-    session: Session, *, user_id: uuid.UUID, name: str, preferred_language: str, role: str
+    session: Session,
+    *,
+    user_id: uuid.UUID,
+    name: str,
+    preferred_language: str,
+    role: str,
+    commit_new: bool = False,
 ) -> User:
     """Provisions a `users` row for a token-derived id if one doesn't exist
     yet. app/auth.py's user_from_token stub (its "Week 3 Phase 7 widening")
@@ -447,6 +453,19 @@ def get_or_create_user(
             raise
         session.expunge(user)
         user = session.execute(select(User).where(User.id == user_id)).scalar_one()
+    else:
+        if commit_new:
+            # The authentication path asks for this (app/auth.py). Left uncommitted until the
+            # request ends, a second request for the same brand-new token does not hit the
+            # IntegrityError above: its INSERT WAITS on this uncommitted row. get_current_user and
+            # the WebSocket route are `async def` and run this blocking call on the event loop, and
+            # finishing this request's transaction needs that same loop, so the waiting INSERT
+            # blocks the very thing it waits for. Only Postgres's statement timeout (15 s) ended
+            # it, and a new browser sends a dozen requests at once: staging froze for minutes on
+            # 2026-10-12. Committed, the second request simply finds the row. Not the default:
+            # _create_message_impl provisions a DM's target in the middle of creating a message,
+            # which must stay one transaction.
+            session.commit()
     return user
 
 
@@ -787,8 +806,24 @@ def compute_backoff_seconds(attempts: int, *, base: float = 5.0, cap: float = 30
     return min(base * (2 ** (attempts - 1)), cap)
 
 
-def enqueue_job(session: Session, *, job_type: str, payload: dict, max_attempts: int = 5) -> Job:
+def enqueue_job(
+    session: Session,
+    *,
+    job_type: str,
+    payload: dict,
+    max_attempts: int = 5,
+    next_attempt_at: datetime | None = None,
+) -> Job:
+    """Add a queued job. `next_attempt_at` is when it first becomes due: claim_next_job claims a
+    queued job only once that time has passed. Left None (what every caller before this argument
+    does), it is not set here at all and the column's server default, now(), applies, so the job is
+    due immediately exactly as before. It must carry a timezone: a naive datetime would be read in
+    the database session's zone, so it is refused rather than guessed."""
+    if next_attempt_at is not None and next_attempt_at.tzinfo is None:
+        raise ValueError("next_attempt_at needs a timezone (use an aware datetime, e.g. UTC)")
     job = Job(job_type=job_type, payload=payload, max_attempts=max_attempts)
+    if next_attempt_at is not None:
+        job.next_attempt_at = next_attempt_at
     session.add(job)
     session.flush()
     return job

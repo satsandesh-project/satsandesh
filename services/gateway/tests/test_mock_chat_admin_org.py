@@ -19,6 +19,7 @@ from contracts.chat.admin_org import (
 )
 from contracts.chat.mock import admin_org as mock_admin
 from contracts.chat.mock import app as mock_app
+from contracts.chat.mock import claims as mock_claims
 from fastapi.testclient import TestClient
 
 ADMIN = {"X-Mock-Role": "admin", "X-Mock-User-Id": "admin-1"}
@@ -31,6 +32,7 @@ def client():
     mock_admin._users.clear()
     mock_admin._actions.clear()
     mock_admin._published.clear()
+    mock_claims.reset()
     mock_app._circles.clear()
     mock_app._memberships.clear()
     mock_app._messages.clear()
@@ -61,6 +63,7 @@ def test_every_route_refuses_a_non_admin(client, role) -> None:
         ("post", "/admin/users", {"name": "A"}),
         ("patch", f"/admin/users/{someone}/role", {"role": "admin"}),
         ("post", f"/admin/users/{someone}/token", None),
+        ("post", f"/admin/users/{someone}/claim", None),
         ("get", "/admin/circles", None),
         ("post", "/admin/circles", {"name": "A"}),
         ("patch", f"/admin/circles/{someone}", {"name": "B"}),

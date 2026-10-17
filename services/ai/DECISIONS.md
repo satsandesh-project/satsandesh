@@ -143,3 +143,72 @@ IIT Madras attribution for both `rohan` (Hindi) and `maya` (Telugu, same
 IndicTTS source, which was missing the same notice until this change).
 
 `hi_IN-pratham-medium` is no longer used anywhere in this service.
+
+## 13. ASR hardening: no-speech guard (IndicConformer), optional RNNoise denoise, Whisper VAD
+
+**Evidence (Part A, IndicConformer 600M, run offline from the cached weights):** on 3 s of
+digital silence and 3 s of white noise the model returns non-empty text in CTC mode
+(silence: te `అ`, hi `అ है`; noise: te `అ`); RNNT mode and a 2 s 440 Hz tone returned empty
+text. CTC has no "no speech" output, so silence/noise can decode to a stray token. The
+full table is in the PR description.
+
+**Decisions:**
+- **IndicConformer gets a pre-inference no-speech guard**
+  (`speech_indicconformer/no_speech.py`): whole-clip RMS < 0.003, or averaged spectral
+  flatness > 0.5, returns `text=""` with `detected_language` set to the caller's hint
+  (empty text is valid in `TranscribeResponse`; the language is still required). Pure
+  numpy, no new dependency, no model. Deliberately conservative: it only catches input that
+  cannot be speech. Checked against the 15 local bake-off recordings: only one was gated, a
+  loud broadband noise file (flatness 0.65). `ASR_NO_SPEECH_GUARD=off` disables it; thresholds are `ASR_NO_SPEECH_MIN_RMS` / `ASR_NO_SPEECH_MAX_FLATNESS`, and each gated clip is logged. A
+  Silero/VAD-based gate would be stronger on noisy speech-free audio; not added, because it
+  means a new dependency for a case no one has measured yet.
+- **Denoise is optional and off by default** (`ASR_DENOISE=off|rnnoise`), shared by both
+  services via `speech/denoise.py` (IndicConformer re-exports it, as it does the decode
+  helpers). RNNoise only runs at 48 kHz, so audio goes 16k → 48k → RNNoise → 16k with a
+  small numpy FIR resampler (no scipy/soxr). `pyrnnoise` is the optional `denoise` extra,
+  imported lazily; an enabled-but-missing extra fails at startup, not per request. A denoise
+  error at request time falls back to the original audio. Pipeline order:
+  **denoise → no-speech guard → ASR**. When denoise runs, the response gets an extra
+  `denoise` stage timing (absent when off, so existing consumers see no change).
+  Off by default because denoisers can hurt ASR on clean audio; `tools/denoise_ab.py`
+  exists to measure that per recording before anyone turns it on.
+- **faster-whisper** now transcribes with `vad_filter=True` and
+  `condition_on_previous_text=False`, and drops segments with `no_speech_prob >
+  ASR_NO_SPEECH_THRESHOLD` (0.6) **and** `avg_logprob < -1.0` (both, as in Whisper's own
+  skip rule). `ASR_VAD_FILTER=false` restores the old behaviour.
+
+**Not decided:** whether `rnnoise` should become the default. That needs a Telugu/Hindi
+A/B on real noisy recordings, which this change does not have.
+
+
+## 14. ASR language: auto-detect restricted to en/hi/te; hint override ships off
+
+**Problem (#134):** with no `language_hint`, faster-whisper auto-detected any of its ~99
+languages and picked `nn`/`si`/`ur` for Indian-accented speech. The app then answered
+`UNSUPPORTED_LANGUAGE` and the gateway held the note.
+
+**Decisions:**
+- **No hint:** the engine calls `WhisperModel.detect_language` (faster-whisper 1.2.1 returns
+  `(best_language, best_prob, [(code, prob), ...])`, codes already stripped of `<|..|>`),
+  keeps only `en`/`hi`/`te`, takes the highest-probability one, and transcribes with that
+  language passed explicitly. Detection alone can no longer produce `UNSUPPORTED_LANGUAGE`.
+  Probabilities are not renormalised over the three; the full top-3 and the supported three
+  are logged at INFO for staging debugging.
+- **A hint outside en/hi/te** is still `UNSUPPORTED_LANGUAGE`: that is the caller's error,
+  not something to guess around.
+- **`detected_language` stays truthful:** the hint when it was forced, otherwise the language
+  actually decoded.
+- **`ASR_HINT_MODE=force|tiebreak`, default `force`.** `force` is today's behaviour (no
+  detection pass, so no extra latency). `tiebreak` decodes the declared language unless
+  another of the three is more probable by more than `ASR_HINT_OVERRIDE_MARGIN` (default
+  0.5, a probability gap in [0, 1], validated at startup). It costs one extra encoder pass.
+
+**Why `tiebreak` ships off:** a forced hint decodes English speech as invented Hindi words
+(Kshitiz's second run on #134), so `force` is demonstrably wrong for a mislabelled clip.
+But the default stays `force` until there are measurements: how often Whisper-small
+mis-detects real Telugu/Hindi (it can rank `en` above the true language on accented or noisy
+speech, so `tiebreak` could override a correct hint), what margin separates the cases, and
+the latency of the extra pass. 0.5 is a conservative guess, not a measured value. Changing
+the default needs a labelled en/hi/te set run through both modes.
+
+**Out of scope:** `speech_indicconformer` needs a hint and cannot detect; it is unchanged.

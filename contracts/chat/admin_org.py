@@ -51,6 +51,7 @@ class AdminActionKind(str, Enum):
     USER_CREATE = "user.create"
     USER_SET_ROLE = "user.set_role"
     USER_REISSUE_TOKEN = "user.reissue_token"
+    USER_ISSUE_CLAIM = "user.issue_claim"
     CIRCLE_CREATE = "circle.create"
     CIRCLE_RENAME = "circle.rename"
     MEMBER_ADD = "member.add"
@@ -114,6 +115,23 @@ class AdminTokenOut(VersionedModel):
 
     user_id: str
     access_token: str
+
+
+class AdminClaimOut(VersionedModel):
+    """Response for `POST /admin/users/{id}/claim` (201): a single-use code that
+    lets that person's device sign in once (`POST /onboarding/claim`,
+    contracts/chat/claims.py). Shown to the admin as a QR of
+    `<elder app origin>/#claim=<claim_code>` and never stored by the console.
+
+    Unlike `AdminUserCreated.access_token` it is not a credential for the account:
+    it is worth nothing after the first redemption or after `expires_at`, and
+    issuing another claim for the same person voids an unredeemed earlier one.
+    The code appears here and nowhere else -- it is never written to the audit
+    log, and the gateway keeps only a hash of it."""
+
+    user_id: str
+    claim_code: str
+    expires_at: datetime
 
 
 class AdminUserList(VersionedModel):

@@ -74,7 +74,51 @@
 	#     handle /push* { reverse_proxy gateway:8000 }
 	# here AND the matching check in infra/caddy/tls_check.py (which today asserts
 	# it is NOT routed, so that a later change has to be deliberate).
-	# /moderation* is not routed either, on purpose (OPEN_QUESTIONS #23).
+	# The moderator console's routes (services/gateway/app/moderation.py: queue, a message's event
+	# trail, release, block). They were deliberately unrouted while the gateway's identity was a
+	# stub (OPEN_QUESTIONS #23): any bare UUID was "that user", so a moderator's id alone read the
+	# queue and a held message's text (shown on a real stack, AUTH_MODE=legacy). That is closed AT
+	# THE GATEWAY, not here: Caddy cannot know the gateway's AUTH_MODE, so every /moderation* route
+	# accepts ONLY a signed token (401 for none, a bare UUID or a bad one; 403 for a valid
+	# non-moderator, whose role is read from users.role on every request). With that, routing is safe
+	# in every mode. Routing is necessary, not sufficient: nothing serves the console itself yet
+	# (clients/admin-console/ is in no compose file), so there is still no console to open here.
+	handle /moderation* {
+		reverse_proxy gateway:8000
+	}
+	# Bhajan rooms (services/gateway/app/rooms.py): the gateway decides who may speak.
+	handle /rooms* {
+		reverse_proxy gateway:8000
+	}
+	# LiveKit's signalling (docker-compose.livekit.yml): the app connects to wss://<host>/livekit
+	# and LiveKit sees /rtc, so the prefix is stripped. WebSockets pass through reverse_proxy
+	# as they are. Only SIGNALLING comes this way; the audio itself goes straight to the host on
+	# 7882/udp (or 7881/tcp), which Caddy does not carry. With no LiveKit running, only this path
+	# answers 502; nothing else is affected.
+	handle_path /livekit/* {
+		reverse_proxy livekit:7880
+	}
+	# Satsang broadcast listening (docker-compose.satsang.yml): the HLS playlist and segments the
+	# media server cuts from the speaker's RTMP stream, e.g. /hls/<session id>.m3u8. `handle`, not
+	# handle_path: the media server serves them under /hls/ too, so the path stays as it is. Only
+	# LISTENING comes this way. The speaker publishes to the media server's own port 1935, and the
+	# media server's callbacks to the gateway do not come through here (see /sessions/ingest below).
+	# With no media server running, only this path answers 502.
+	handle /hls* {
+		reverse_proxy satsang:8080
+	}
+	# Satsang scheduling and listing (services/gateway/app/satsang.py): the admin page and, later,
+	# the elder app's upcoming list. The gateway decides who may do what.
+	# The two hooks the RTMP server calls (/sessions/ingest/publish and /done) are the exception:
+	# they are guarded by a shared secret, and nothing outside the compose network has any reason
+	# to call them, so they are refused HERE, first. Caddy picks the longest path first, so this
+	# block wins over /sessions* below; tls_check.py tries ten spellings of the path to prove it.
+	handle /sessions/ingest* {
+		respond 404
+	}
+	handle /sessions* {
+		reverse_proxy gateway:8000
+	}
 
 	# Everything else -- both the elder-app frontend itself (compiled
 	# pages, JS bundles) AND Reflex's own internal backend paths (/ping,

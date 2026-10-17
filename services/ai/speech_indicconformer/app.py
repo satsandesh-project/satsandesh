@@ -26,14 +26,23 @@ from contracts.ai.language import LanguageCode
 from contracts.ai.transcribe import TranscribeRequest, TranscribeResponse
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from services.ai.speech_indicconformer.denoise import Denoiser, get_denoiser
 from services.ai.speech_indicconformer.engine import (
+    SUPPORTED_LANGUAGES,
     FfmpegDecodeError,
     FfmpegNotFoundError,
     IndicConformerEngine,
+    TranscriptionResult,
     UnsupportedLanguageError,
     UnsupportedWavError,
     decode_via_ffmpeg,
     decode_wav_pcm16,
+)
+from services.ai.speech_indicconformer.no_speech import (
+    DEFAULT_MAX_FLATNESS,
+    DEFAULT_MIN_RMS,
+    is_no_speech,
+    measure,
 )
 from services.ai.speech_indicconformer.settings import Settings
 
@@ -44,6 +53,10 @@ _WARMUP_AUDIO_PATH = Path(__file__).resolve().parents[1] / "tests" / "fixtures" 
 # Built during startup (Settings.from_env() fails fast there if HF_TOKEN is missing),
 # not at import, so unit tests can import this module and inject a stub engine.
 engine: Any = None
+denoiser: Denoiser | None = None  # ASR_DENOISE=rnnoise -> RNNoise; None = off
+no_speech_guard = True
+no_speech_min_rms = DEFAULT_MIN_RMS
+no_speech_max_flatness = DEFAULT_MAX_FLATNESS
 _ready = False
 
 
@@ -70,7 +83,7 @@ def _pipeline_error(
 
 
 async def _startup() -> None:
-    global engine, _ready
+    global engine, denoiser, no_speech_guard, no_speech_min_rms, no_speech_max_flatness, _ready
     settings = Settings.from_env()
     engine = IndicConformerEngine(
         model_name=settings.model_name,
@@ -79,6 +92,10 @@ async def _startup() -> None:
     )
     engine.load()
     engine.warm_up(decode_wav_pcm16(_WARMUP_AUDIO_PATH))
+    denoiser = get_denoiser(settings.denoise_mode)
+    no_speech_guard = settings.no_speech_guard
+    no_speech_min_rms = settings.no_speech_min_rms
+    no_speech_max_flatness = settings.no_speech_max_flatness
     _ready = True
 
 
@@ -161,9 +178,44 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse | JSONRes
         )
     decode_duration_ms = (time.perf_counter() - decode_start) * 1000
 
+    # Order: denoise -> no-speech guard -> ASR.
+    denoise_duration_ms: float | None = None
+    if denoiser is not None:
+        denoise_start = time.perf_counter()
+        try:
+            audio = denoiser(audio)
+        except Exception:
+            # Denoising is an enhancement: on failure transcribe the original audio.
+            logger.exception("denoise failed; transcribing the un-denoised audio")
+        denoise_duration_ms = (time.perf_counter() - denoise_start) * 1000
+
     language_hint = request.language_hint.value if request.language_hint else None
     try:
-        result = engine.transcribe(audio, language_hint)
+        if (
+            no_speech_guard
+            and language_hint in SUPPORTED_LANGUAGES
+            and is_no_speech(audio, no_speech_min_rms, no_speech_max_flatness)
+        ):
+            rms, flatness = measure(audio)
+            logger.warning(
+                "no-speech gate: skipped inference for %r (rms=%.4f < %.4f or flatness=%.3f > %.3f)",
+                request.audio.uri,
+                rms,
+                no_speech_min_rms,
+                flatness,
+                no_speech_max_flatness,
+            )
+            # The model hallucinates text on silence/noise (see no_speech.py). Empty text
+            # is valid; detected_language is still the caller's hint.
+            result = TranscriptionResult(
+                text="",
+                language=language_hint,
+                decode_mode=engine.decode_mode,
+                inference_duration_ms=0.0,
+                postprocess_duration_ms=0.0,
+            )
+        else:
+            result = engine.transcribe(audio, language_hint)
     except UnsupportedLanguageError as exc:
         return _pipeline_error(
             ErrorCode.UNSUPPORTED_LANGUAGE,
@@ -174,17 +226,25 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse | JSONRes
         )
 
     total_duration_ms = (
-        decode_duration_ms + result.inference_duration_ms + result.postprocess_duration_ms
+        decode_duration_ms
+        + (denoise_duration_ms or 0.0)
+        + result.inference_duration_ms
+        + result.postprocess_duration_ms
     )
+    stage_timings = [StageTiming(stage="decode", duration_ms=round(decode_duration_ms, 3))]
+    if denoise_duration_ms is not None:
+        stage_timings.append(
+            StageTiming(stage="denoise", duration_ms=round(denoise_duration_ms, 3))
+        )
+    stage_timings += [
+        StageTiming(stage="inference", duration_ms=round(result.inference_duration_ms, 3)),
+        StageTiming(stage="postprocess", duration_ms=round(result.postprocess_duration_ms, 3)),
+    ]
     return TranscribeResponse(
         text=result.text,
         detected_language=LanguageCode(result.language),
         model_version=engine.model_version,
         duration_ms=total_duration_ms,
-        stage_timings=[
-            StageTiming(stage="decode", duration_ms=round(decode_duration_ms, 3)),
-            StageTiming(stage="inference", duration_ms=round(result.inference_duration_ms, 3)),
-            StageTiming(stage="postprocess", duration_ms=round(result.postprocess_duration_ms, 3)),
-        ],
+        stage_timings=stage_timings,
         degraded=DegradedMode.ok(),
     )

@@ -24,8 +24,9 @@ the public.
 ## Plain HTTP (what staging runs today)
 
 `docker-compose.yml` publishes the container's 80 on `CADDY_HOST_PORT` (staging: 8095). Routes
-are in `Caddyfile`; **`/moderation*` is deliberately not routed** while the gateway's identity is
-a stub (see `services/gateway/OPEN_QUESTIONS.md` #23). Browsers allow the **microphone** only on
+are in `Caddyfile`. **`/moderation*` is routed to the gateway, which accepts only a signed token
+there** (401 without one, 403 for a non-moderator; see `services/gateway/OPEN_QUESTIONS.md` #23). The
+console itself is not served from this stack yet. Browsers allow the **microphone** only on
 HTTPS or `localhost`, so real browser voice notes cannot be recorded from `http://<ip>:<port>`.
 
 ## Opt-in HTTPS (`docker-compose.tls.yml`)
@@ -38,7 +39,7 @@ TLS_HOST=10.110.11.31 docker compose -f docker-compose.yml -f docker-compose.tls
 What the mode does (`tls-internal-entrypoint.sh` derives all of it from the existing Caddyfile, so
 every route and comment reaches the HTTPS site unchanged and there is no second copy to drift):
 
-- the HTTPS site serves the same routes with the same precedence; `/moderation*` stays unrouted;
+- the HTTPS site serves the same routes with the same precedence; `/moderation*` reaches the gateway too;
 - plain HTTP on the container's `:80` **redirects** (302) to `https://<TLS_HOST>:<port>/...`,
   keeping path and query. 302 on purpose: browsers cache permanent redirects, and a tester may not
   have installed the root yet;
@@ -117,7 +118,7 @@ Observed from the running endpoint (2026-10-06): the **leaf** certificate is val
 upstreams, its own docker network, no host ports. Cases: an IP, a hostname, and a certificate name
 that is **not** the container's own address (as with docker port publishing). Checks: an
 untrusting client is refused; a trusting one gets TLS 1.3; the certificate is valid for the
-address; routing is identical (`/moderation` still unrouted); HTTP redirects to the published
+address; routing is identical (`/moderation` reaches the gateway); HTTP redirects to the published
 port with path and query; the security headers are present and **HSTS and `Alt-Svc` are absent**;
 a client that sends **no SNI** still gets the certificate; and a Caddyfile with no `:80 {` line is
 refused (exit 3). Each rule has a sabotage check (a mutation that breaks it and must fail the

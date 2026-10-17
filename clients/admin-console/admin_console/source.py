@@ -225,12 +225,11 @@ class GatewayQueueSource:
     base URL and timeout -- `base_url` and `timeout_s` here apply only when
     this class makes the requests itself.
 
-    Reaching the real gateway: `/moderation*` is deliberately NOT routed
-    through Caddy. The identity behind it is still the stub in legacy auth
-    mode -- any UUID bearer *is* that user -- so a routed moderation surface
-    would let anyone holding a moderator's UUID release and block. Until
-    signed tokens are required for the moderator role (issue #32), the
-    console must reach the gateway directly, inside the network.
+    Reaching the real gateway: `/moderation*` is routed through Caddy and the
+    gateway accepts only a SIGNED token there, in every auth mode (PR #125) --
+    in legacy mode a bare UUID bearer *is* that user, so it is refused (401)
+    before anything runs. `token` must therefore be signed
+    (`python -m app.tokens <user-uuid>`) and belong to a moderator or admin.
     """
 
     def __init__(
@@ -278,7 +277,8 @@ class GatewayQueueSource:
             raise ReviewConflict(_detail(response))
         if response.status_code == 401:
             raise SourceError(
-                "The gateway did not accept this console's token (401). It may be wrong or expired."
+                "The gateway did not accept this console's token (401). It may be wrong, expired, "
+                "or not a signed token."
             )
         if response.status_code == 403:
             raise SourceError(

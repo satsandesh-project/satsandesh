@@ -246,10 +246,10 @@ was checked against the live stack (distinct values) before it was used again. A
 audit also counted earlier notes in the shared circle as "unexpected".
 
 ### What this does NOT show
-- **A 30-second note.** M3's p90 is for a 30 s note; these are 5 s. Telugu took 6 to 60 s for
-  5 s of audio, and `AI_TRANSCRIBE_TIMEOUT_S` is **120 s**. If the cost grows with length, a 30 s
-  Telugu note could hit the timeout (a retryable error: it would be retried with backoff). Not
-  measured.
+- **A 30-second note.** (Measured since, in `GATE_WEEK8.md` "The p90" and its 2026-10-08 follow-up: a
+  33.5 s Telugu note's ASR call took 67 to 130 s, 2 of 8 over the 120 s timeout, so the transcribe
+  timeout now scales with the audio's length.) These load runs used 5 s notes: Telugu took 6 to 60 s
+  for 5 s of audio against a fixed 120 s timeout.
 - **Why the same Telugu note took 7 s in one run and 30 to 60 s in another.** Piper re-synthesizes the
   sample every run and run 2's file was not kept (hashes are printed from run 3 on); within one run,
   identical audio gave 41 different transcripts across 55 Telugu notes, which looks like Whisper's
