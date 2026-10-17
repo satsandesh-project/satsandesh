@@ -588,3 +588,30 @@ against the chat mock in-process.
 test fails with the original bug put back.
 
 **Where it ran:** local.
+
+## 2026-10-17 — Satsang actions in the admin audit log (Week 9 · contract 0.11.0)
+
+**Asked for:** the contract half of what my #157 review promised: `session.create`, `session.cancel`,
+`session.rotate_key`, `session.end` and a "session" target type in `admin_actions`.
+
+**Produced:** the four `AdminActionKind` values and "session" documented as a target type
+(CONTRACTS_VERSION 0.10.0 -> 0.11.0; golden fixtures change only their stamp); the satsang mock
+writes one audit row per create/cancel/rotate/end, never the key or ingest URL, and not for the RTMP
+server's own hooks; the gateway's `ADMIN_ACTIONS`/`TARGET_TYPES` and migration `8e3234dc9fc8`
+(after `bc32cd718b80`) widening both CHECKs. Four mock tests; the store test now inserts a
+"session" row.
+
+**Corrected:** the plan was "contract PR, then the migration". But the gateway asserts its action
+list equals the contract's, and #141 did exactly that split: `gateway-tests` stayed red on main
+until #147 two days later. So contract, gateway lists and migration land together here.
+
+**Decided differently:** a speaker re-keying their own satsang is audited too (`details.by =
+"speaker"`), so `admin_id` there is "who did it", not an admin. The real routes calling
+`record_admin_action` stay Veerendra's (his #157 routes).
+
+**Verified by:** 291 contract + mock tests and the console suite on a clean Python 3.11; the
+list-equality test; 3 of the 4 new mock tests fail with the mock change removed (the fourth, "no
+key in the log", passes vacuously then); `alembic heads` is one; the offline SQL for upgrade and
+downgrade checked by eye. **Not verified:** against a real Postgres -- CI's gateway-tests does that.
+
+**Where it ran:** local.
