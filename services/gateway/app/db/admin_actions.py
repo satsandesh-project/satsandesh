@@ -39,8 +39,12 @@ ADMIN_ACTIONS = (
     "member.remove",
     "announcement.publish",
     "admin.promote",
+    "session.create",
+    "session.cancel",
+    "session.rotate_key",
+    "session.end",
 )
-TARGET_TYPES = ("user", "circle", "all_circles")
+TARGET_TYPES = ("user", "circle", "all_circles", "session")
 
 
 def _in_list(values: tuple[str, ...]) -> str:

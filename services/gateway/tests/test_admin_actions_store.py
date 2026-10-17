@@ -167,7 +167,12 @@ def test_every_action_name_the_code_allows_is_accepted_by_the_database(db_sessio
     fails on INSERT. `user.issue_claim` (contracts 0.8.0, #141) did exactly that."""
     admin = _admin(db_session)
     for name in ADMIN_ACTIONS:
-        target_type = "all_circles" if name == "announcement.publish" else "user"
+        if name == "announcement.publish":
+            target_type = "all_circles"
+        elif name.startswith("session."):
+            target_type = "session"  # contracts 0.11.0: the target_type CHECK must take it too
+        else:
+            target_type = "user"
         row = AdminAction(
             admin_id=admin.id,
             action=name,
