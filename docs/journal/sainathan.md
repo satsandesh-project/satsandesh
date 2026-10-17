@@ -588,3 +588,23 @@ against the chat mock in-process.
 test fails with the original bug put back.
 
 **Where it ran:** local.
+
+## 2026-10-17 — Review queue on a phone (Week 9 · follow-up to #132)
+
+**Asked for:** the review-queue page fixed at phone width, as promised in a #132 comment.
+
+**Produced:** below 768px the queue and the review take turns on the screen (a "Back to the queue"
+button returns), the original and the English pivot stack instead of two 50% columns, and the
+header wraps. Desktop unchanged. One state action (`back_to_queue`), one test.
+
+**Corrected:** my first version passed Radix-style `{"initial", "sm"}` values to `display`, which
+Reflex emits as plain CSS (invalid); and a breakpoint value cannot depend on state. Each pane now
+carries `data-open` and a phone-only CSS rule reads it.
+
+**Decided differently:** the "Original ()" label (the chat mock sends no original language) is left
+alone; not this change.
+
+**Verified by:** 37 console tests; ruff clean on the two files; Playwright with the local Chrome at
+375px (2x, touch) and 1440px: no sideways scroll, list/review/back behave as described at each width.
+
+**Where it ran:** local.

@@ -302,3 +302,24 @@ def test_a_successful_decision_followed_by_a_failed_refresh_shows_both() -> None
     assert "Released" in state.banner
     assert "Could not refresh the queue" in state.banner
     assert state.banner_is_error
+
+
+def test_back_to_the_queue_closes_the_message_but_keeps_the_banner() -> None:
+    """On a phone the queue and the review take turns; this is the way back. A
+    banner may be reporting a decision, so leaving the message must not clear it."""
+    from admin_console import admin_console as console
+
+    console.set_source(FixtureQueueSource())
+    state = console.State()
+    state.load_queue()
+    state.select(state.rows[0].message_id)
+    state.note = "half-written"
+    state.banner = "Released."
+
+    state.back_to_queue()
+
+    assert state.selected_id == ""
+    assert state.trail == []
+    assert state.note == ""
+    assert state.banner == "Released."
+    assert len(state.rows) == 3, "the queue itself is untouched"
