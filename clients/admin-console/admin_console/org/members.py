@@ -1,10 +1,16 @@
-"""The Members page: add a person, see everyone, change a role, get someone's
-sign-in code again. Route `/members`.
+"""The Members page: add a person, see everyone, change a role. Route `/members`.
 
 "Add a person" is the whole point of this feature -- an admin onboards a new
-member from here, never from the database. It creates the person, puts them in
-the circles ticked, and shows their sign-in code (a QR and the text) to hand
-over. The code is shown on screen only, never stored by the console.
+member from here, never from the database. It creates the person and puts them
+in the circles ticked.
+
+It does NOT show a sign-in code, yet. The only one the gateway can issue today is
+the 30-day, unrevocable session token (`access_token` on `POST /admin/users`,
+`POST /admin/users/{id}/token`): a QR of it is a paper password, and the elder
+app cannot accept it anyway. So the console drops the token it is handed and
+offers no way to issue another. The single-use claim (`POST
+/admin/users/{id}/claim`, contracts/chat/claims.py) is what this page will show,
+as a QR of `<app>/#claim=<code>`, once the gateway has it.
 """
 
 from __future__ import annotations
@@ -20,6 +26,10 @@ from admin_console.source import SourceError
 from contracts.chat.admin_org import AdminUserCreate, SiteRole
 
 MEMBERS_ROUTE = "/members"
+SIGN_IN_LATER = (
+    "Signing in on their phone is not ready in this console yet: it comes with "
+    "one-time sign-in codes."
+)
 ROLES = [role.value for role in SiteRole]
 
 
@@ -50,11 +60,6 @@ class MembersState(rx.State):
     form_name: str = ""
     form_language: str = "te"
     form_role: str = "elder"
-
-    # The sign-in code just issued, shown until dismissed. Never persisted.
-    issued_name: str = ""
-    issued_token: str = ""
-    issued_qr: str = ""
 
     def _say(self, message: str, *, error: bool = False) -> None:
         self.banner = message
@@ -122,10 +127,10 @@ class MembersState(rx.State):
             # the form is kept so the admin can simply try again.
             self._say(f"{name} was not added — {exc}", error=True)
             return
-        self._show_code(created.user.name, created.access_token)
+        # `created.access_token` is deliberately not kept: see this module's docstring.
         self.form_name = ""
         self.circles = [dataclasses.replace(c, ticked=False) for c in self.circles]
-        self._say(f"{created.user.name} has been added. Their sign-in code is below.")
+        self._say(f"{created.user.name} has been added. {SIGN_IN_LATER}")
         self.load()
 
     # -- people already here ----------------------------------------------------
@@ -139,26 +144,6 @@ class MembersState(rx.State):
             return
         self._say(f"{updated.name} is now {updated.role.value}.")
         self.load()
-
-    def show_signin(self, user_id: str) -> None:
-        try:
-            issued = get_source().reissue_token(user_id)
-        except SourceError as exc:
-            self._say(f"A new sign-in code could not be made — {exc}", error=True)
-            return
-        name = next((u.name for u in self.users if u.id == user_id), "this person")
-        self._show_code(name, issued.access_token)
-        self._say(f"A fresh sign-in code for {name} is below.")
-
-    def _show_code(self, name: str, token: str) -> None:
-        self.issued_name = name
-        self.issued_token = token
-        self.issued_qr = ui.qr_data_uri(token)
-
-    def dismiss_code(self) -> None:
-        self.issued_name = ""
-        self.issued_token = ""
-        self.issued_qr = ""
 
 
 # --- the page --------------------------------------------------------------------------------
@@ -215,44 +200,7 @@ def _add_form() -> rx.Component:
             style={"color": COLOR["muted"], "margin_top": "6px"},
         ),
         rx.box(ui.big_button("Add this person", MembersState.create_member), margin_top="20px"),
-    )
-
-
-def _code_card() -> rx.Component:
-    return rx.cond(
-        MembersState.issued_token != "",
-        ui.card(
-            rx.heading("Sign-in code for", size="5"),
-            rx.heading(MembersState.issued_name, size="6", style={"color": COLOR["green"]}),
-            rx.text(
-                "Show or send this to them. Anyone who has it can sign in as them, "
-                "so keep it private. It is not saved here — close this and it is gone; "
-                "you can always make a fresh one.",
-                style={"color": COLOR["muted"], "margin": "8px 0 12px"},
-            ),
-            rx.cond(
-                MembersState.issued_qr != "",
-                rx.image(
-                    src=MembersState.issued_qr,
-                    alt="QR code of the sign-in code below, for " + MembersState.issued_name,
-                    width="240px",
-                    height="240px",
-                ),
-                rx.fragment(),
-            ),
-            rx.text_area(
-                value=MembersState.issued_token,
-                read_only=True,
-                aria_label="Sign-in code, as text",
-                style={**ui.FIELD_STYLE, "min_height": "110px", "font_size": "14px"},
-            ),
-            rx.box(
-                ui.big_button("Done — hide this", MembersState.dismiss_code, primary=False),
-                margin_top="12px",
-            ),
-            style={"border": f"2px solid {COLOR['green']}"},
-        ),
-        rx.fragment(),
+        rx.text(SIGN_IN_LATER, style={"color": COLOR["muted"], "margin_top": "12px"}),
     )
 
 
@@ -274,12 +222,6 @@ def _person_row(row: UserRow) -> rx.Component:
             lambda role: MembersState.change_role(row.id, role),
             "Role of " + row.name,
         ),
-        ui.big_button(
-            "Sign-in code",
-            MembersState.show_signin(row.id),
-            primary=False,
-            aria_label="Sign-in code for " + row.name,
-        ),
         gap="12px",
         align="center",
         wrap="wrap",
@@ -292,7 +234,6 @@ def members_page() -> rx.Component:
         MEMBERS_ROUTE,
         ui.heading("Members", "Everyone in the community. Add a new person here."),
         ui.banner(MembersState.banner, MembersState.banner_is_error),
-        _code_card(),
         _add_form(),
         ui.card(
             rx.heading("Everyone", size="5"),

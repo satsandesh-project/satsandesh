@@ -9,8 +9,7 @@ layout test cannot see it, so it is checked on the rendered component tree:
   just "Remove" six times);
 - a button that is one of a set of choices says whether it is the selected one;
 - messages land in a live region that is on the page before the message is, so a
-  screen reader announces them;
-- the QR image has a text alternative.
+  screen reader announces them.
 
 What this cannot replace is using the pages with a screen reader. It stops the
 easy regressions: a field added with no name, a drop-down whose label never
@@ -83,7 +82,6 @@ def test_no_dropdown_carries_its_name_only_on_the_root(page) -> None:
 def test_the_buttons_repeated_down_a_list_say_whose_they_are() -> None:
     _, members_page = _render(members.members_page)
     _, circles_page = _render(circles.circles_page)
-    assert '"Sign-in code for "' in members_page
     assert '"Role of "' in members_page
     assert '"Open "' in circles_page
     assert '"Remove "' in circles_page
@@ -111,11 +109,6 @@ def test_messages_land_in_a_live_region_that_is_always_on_the_page(page) -> None
     assert any('role:"status"' in p or '"role":"status"' in p for p in region[0]["props"])
     # The region itself is not conditional: the message inside it is.
     assert region[0]["name"] == "RadixThemesBox"
-
-
-def test_the_qr_image_has_a_text_alternative() -> None:
-    _, text = _render(members.members_page)
-    assert "QR code of the sign-in code below, for " in text
 
 
 # --- found by opening the pages in a browser and measuring (not visible to the tests above) ----

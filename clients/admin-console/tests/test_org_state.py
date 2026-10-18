@@ -4,8 +4,8 @@ The organisation pages' state: what an admin sees and what a click does.
 Same arrangement as test_console_state.py -- Reflex allows State instantiation
 under pytest, so handlers are called directly -- over FixtureOrgSource, whose
 rules are held to the real routes' by test_org_source.py. What is asserted is
-behaviour that matters to the person at the screen: the person is added and
-their code is shown (the feature's "done when"), a refused action says why and
+behaviour that matters to the person at the screen: the person is added (the
+feature's "done when") and no 30-day session token is kept or shown, a refused action says why and
 keeps what was typed, a dangerous step asks twice, and an announcement cannot
 be sent without being read back first.
 """
@@ -33,7 +33,18 @@ def _state(cls, source):
 
 
 # --- Members ---------------------------------------------------------------------------------
-def test_an_admin_adds_a_person_and_is_shown_their_code(source) -> None:
+def test_an_admin_adds_a_person_and_the_session_token_is_not_kept(source, monkeypatch) -> None:
+    """The gateway hands back a 30-day, unrevocable session token when it creates a person. Until
+    the single-use claim exists the console must drop it: not shown, not in state, not as a QR."""
+    handed_back = []
+    real_create = source.create_user
+
+    def create_and_record(body):
+        created = real_create(body)
+        handed_back.append(created.access_token)
+        return created
+
+    monkeypatch.setattr(source, "create_user", create_and_record)
     state = _state(members.MembersState, source)
     notices = next(c for c in state.circles if c.kind == "announcement")
     state.set_form_name("  Meera Joshi ")
@@ -43,8 +54,10 @@ def test_an_admin_adds_a_person_and_is_shown_their_code(source) -> None:
     state.create_member()
 
     assert state.banner_is_error is False and "Meera Joshi has been added" in state.banner
+    assert members.SIGN_IN_LATER in state.banner, "says plainly that phone sign-in is not here yet"
     assert any(u.name == "Meera Joshi" for u in state.users)
-    assert state.issued_name == "Meera Joshi" and state.issued_token
+    assert handed_back and handed_back[0], "the source did return a token"
+    assert handed_back[0] not in str(state.dict()), "and the page kept none of it"
     assert state.form_name == "" and not any(c.ticked for c in state.circles), "form is cleared"
     assert any(m.name == "Meera Joshi" for m in source.list_members(notices.id))
 
@@ -55,7 +68,7 @@ def test_adding_without_a_name_asks_for_one_and_creates_nothing(source) -> None:
     state.set_form_name("   ")
     state.create_member()
     assert state.banner_is_error and "name" in state.banner
-    assert len(source.list_users()) == before and state.issued_token == ""
+    assert len(source.list_users()) == before
 
 
 def test_a_refused_add_says_why_and_keeps_what_was_typed(source, monkeypatch) -> None:
@@ -73,12 +86,22 @@ def test_a_refused_add_says_why_and_keeps_what_was_typed(source, monkeypatch) ->
     assert state.form_name == "Meera", "nothing typed is lost"
 
 
-def test_the_code_is_shown_until_dismissed_and_then_gone(source) -> None:
+def test_the_page_cannot_issue_a_session_token(source, monkeypatch) -> None:
+    """Re-issuing makes a NEW 30-day credential (and logs `user.reissue_token`), so hiding what it
+    shows is not enough: nothing on the page may call it."""
+
+    def refuse(user_id):
+        raise AssertionError("the Members page asked the gateway for a session token")
+
+    monkeypatch.setattr(source, "reissue_token", refuse)
     state = _state(members.MembersState, source)
-    state.show_signin(state.users[0].id)
-    assert state.issued_token and state.issued_name == state.users[0].name
-    state.dismiss_code()
-    assert state.issued_token == "" and state.issued_qr == "" and state.issued_name == ""
+    state.set_form_name("Asha")
+    state.create_member()
+    state.change_role(state.users[-1].id, "moderator")
+    handlers = [n for n in vars(members.MembersState) if not n.startswith("_")]
+    assert not any("signin" in n or "code" in n or "token" in n for n in handlers), handlers
+    rendered = str(members.members_page().render())
+    assert "Sign-in code" not in rendered and "QR code" not in rendered
 
 
 def test_changing_a_role_works_and_a_refusal_resets_the_dropdown(source) -> None:

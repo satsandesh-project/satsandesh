@@ -308,6 +308,7 @@ def language_picker(value: rx.Var, on_pick) -> rx.Component:
     )
 
 
+# Unused until the single-use claim: the Members page will show `<app>/#claim=<code>` with it.
 def qr_data_uri(text: str) -> str:
     """An SVG data URI of `text` as a QR code, or "" if the optional `segno`
     package is not installed (the page then shows the code as text only)."""
