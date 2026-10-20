@@ -66,6 +66,18 @@ def _name(user_id: str) -> str:
     return user.name if user else user_id
 
 
+def _audit(actor_id: str, action: str, row: dict, **details) -> None:
+    """One `admin_actions` row, in the admin mock's log, as the real routes write one in the same
+    transaction as the change. Never the stream key or the ingest URL: the log is readable by every
+    admin, and the key is shown once."""
+    from contracts.chat.admin_org import AdminActionKind
+    from contracts.chat.mock import admin_org as mock_admin
+
+    mock_admin._log(
+        actor_id, AdminActionKind(action), "session", row["id"], title=row["title"], **details
+    )
+
+
 def _require_moderator(site_role: str | None) -> None:
     if (site_role or "").lower() not in _MOD_ROLES:
         raise HTTPException(status_code=403, detail="Insufficient role")
@@ -136,7 +148,15 @@ def schedule_session(
         "created_by": x_mock_user_id,
         "created_at": datetime.now(timezone.utc),
     }
-    return _created(_sessions[session_id])
+    row = _sessions[session_id]
+    _audit(
+        x_mock_user_id,
+        "session.create",
+        row,
+        speaker_user_id=row["speaker_user_id"],
+        scheduled_start_at=row["scheduled_start_at"].isoformat(),
+    )
+    return _created(row)
 
 
 @router.get("", response_model=SatsangSessionList)
@@ -160,6 +180,7 @@ def list_sessions_for_console(
 @router.post("/{session_id}/cancel", response_model=SatsangSessionOut)
 def cancel_session(
     session_id: str,
+    x_mock_user_id: str = Header(default="mock-user-1"),
     x_mock_role: str | None = Header(default=None),
 ) -> SatsangSessionOut:
     """Only from `scheduled`. A live satsang is ended, not cancelled."""
@@ -170,12 +191,16 @@ def cancel_session(
             status_code=409, detail=f"a {row['status'].value} satsang cannot be cancelled"
         )
     row["status"] = SatsangStatus.CANCELLED
+    # Whether a reminder had gone out: the difference between "nobody noticed" and "people were
+    # told to come".
+    _audit(x_mock_user_id, "session.cancel", row, reminder_sent=row["reminder_sent_at"] is not None)
     return _admin_view(row)
 
 
 @router.post("/{session_id}/end", response_model=SatsangSessionOut)
 def end_session(
     session_id: str,
+    x_mock_user_id: str = Header(default="mock-user-1"),
     x_mock_role: str | None = Header(default=None),
 ) -> SatsangSessionOut:
     """A moderator ends a live satsang by hand: the speaker's phone died and the end-of-stream hook
@@ -189,6 +214,8 @@ def end_session(
         )
     row["status"] = SatsangStatus.ENDED
     row["ended_at"] = datetime.now(timezone.utc)
+    # Only a person ending it is audited; the RTMP server's own end-of-stream hook below is not.
+    _audit(x_mock_user_id, "session.end", row)
     return _admin_view(row)
 
 
@@ -212,6 +239,12 @@ def rotate_stream_key(
             status_code=409, detail=f"a {row['status'].value} satsang cannot be re-keyed"
         )
     row["stream_key"] = secrets.token_urlsafe(STREAM_KEY_BYTES)
+    _audit(
+        x_mock_user_id,
+        "session.rotate_key",
+        row,
+        by="moderator" if is_moderator else "speaker",
+    )
     return _created(row)
 
 

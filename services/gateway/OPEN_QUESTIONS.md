@@ -809,3 +809,25 @@ format of `contracts/chat/OPEN_QUESTIONS.md` and
     while a satsang whose done-hook never arrives stays live until a moderator ends it by hand
     (`POST /sessions/{id}/end`); a grace period and a watchdog are one design. #37 and #38 are
     what the real media server showed about (d). **Owner:** M2, Week 10.
+53. **Week 10 close-out ledger, 2026-10-16: which satsang questions the week closed, which are open, and who has them.**
+    Written as one entry, not as edits to #37-#50, because six unmerged PRs each rewrite some of those entries and
+    this keeps the merges apart. Numbers are `main`'s (the stream-key entry is #50 here and #36 in the PRs that
+    predate #173). **Verdict of the week's gate: FAIL** (`infra/satsang/GATE_WEEK10.md`): nothing runs on staging and
+    no person has used any of it. *Closed by the week, in code, on throwaway stacks:* #37 (a publish for a live
+    satsang is refused; on main); #38 (a silent publisher dropped after 30 s; on main); #41 the reminder job (PRs
+    #170, #171, #177, not merged); #42 the listener screens (#172, not merged); #40 decided, kept as a capability URL,
+    with a tripwire test and reopen conditions (#177); #44 decided, with the same tripwire (#177); #49 fixed, the
+    reminder no longer holds a lock through its pushes (#177). *Open, owner and date:* #43 the dropped speaker:
+    **deferred to Week 16 by decision on 2026-10-16**, workaround in REHEARSAL.md (PR #178), reopens if rehearsal step 10
+    shows an ordinary drop ends the satsang, M2; #50 the stream key in clear, waits on the domain and certificate
+    decision, M2 and the user; #39 what a listener sees at the end, and whether a phone's browser plays the declared
+    but empty H.264 track, M2, rehearsal steps 7 and 8; #45 recording and replay, nobody, out of scope; #46 late
+    joiners, M2, step 9; #47 the admin page's first-cut limits, M2, and #32 (an administrator's sign-in) for M1.
+    *Broken or found by the rehearsal preparation and the measurements, all in PRs not yet merged:* #51 the reminder
+    reaches no phone and nothing plays its audio (M1's files: a service worker, a subscribe call, `/push*` routed);
+    #52 the listener's screen cuts off the last 10 to 15 s of a discourse (M2, #175); #48 the elder app can ask for
+    the list but not for one satsang, so "ended" is inferred (M2, #172); the deploy order has three migrations and an
+    old gateway image cannot start once they are applied (`DEPLOY.md`, #176). *What the week did not do:* put anything
+    on staging (needs M1's written go), run a rehearsal with a phone (`REHEARSAL.md`), have a native speaker read the
+    Telugu reminder, or measure the glass-to-glass delay (predicted about 15 s). **Owner:** M2 for all of it except
+    the items named for M1; **date:** 2026-10-16; the next review is after the rehearsal.

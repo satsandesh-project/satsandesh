@@ -3,7 +3,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
 
-CONTRACTS_VERSION = "0.10.0"
+CONTRACTS_VERSION = "0.11.0"
 """
 Schema-shape version for everything in contracts/chat/. Mirrors
 contracts/ai/common.CONTRACTS_VERSION in purpose — bump when any field is
@@ -12,6 +12,11 @@ consumer can tell which shape it is looking at. The two version strings are
 independent counters: contracts/ai/ and contracts/chat/ are owned and
 evolved on different schedules by different people, so pinning them to one
 number would force one package's churn onto the other for no shared benefit.
+
+0.10.0 -> 0.11.0 (Week 9): four new `AdminActionKind` values for the satsang
+broadcast -- `session.create`, `session.cancel`, `session.rotate_key`,
+`session.end` -- and "session" as an `AdminActionOut.target_type`. No existing
+payload changed.
 
 0.9.0 -> 0.10.0 (Week 9): new payloads for the scheduled satsang broadcast
 (contracts/chat/satsang.py, `/sessions*`). No existing payload changed.
