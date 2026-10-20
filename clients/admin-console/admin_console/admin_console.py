@@ -180,6 +180,13 @@ class State(rx.State):
             for e in out.events
         ]
 
+    def back_to_queue(self) -> None:
+        """On a phone the queue and the review take turns on the screen; this
+        is the way back. The banner stays: it may be reporting a decision."""
+        self.selected_id = ""
+        self.trail = []
+        self.note = ""
+
     def set_note(self, value: str) -> None:
         self.note = value
 
@@ -233,6 +240,15 @@ class State(rx.State):
         self._review(release=False)
 
 
+# Below 768px (the `sm` breakpoint of both Reflex and Radix) is a phone: one column,
+# and the queue and the review take turns on the screen instead of sharing it. Which
+# one shows depends on state, and a breakpoint value cannot, so each pane carries
+# `data-open` and these rules read it.
+PHONE = "@media (max-width: 767px)"
+WIDE = "@media (min-width: 768px)"
+OPEN = rx.cond(State.selected_id != "", "true", "false")
+
+
 def _pill(text: rx.Var | str, color: str) -> rx.Component:
     return rx.text(
         text,
@@ -280,8 +296,9 @@ def queue_row(row: Row) -> rx.Component:
 
 
 def side_by_side(row: Row) -> rx.Component:
-    """Requirement, not layout preference -- see this module's docstring."""
-    return rx.hstack(
+    """Requirement, not layout preference -- see this module's docstring. On a
+    phone the two are stacked, original first: still both on screen together."""
+    return rx.flex(
         rx.vstack(
             rx.text(
                 f"Original ({row.original_language})",
@@ -296,7 +313,7 @@ def side_by_side(row: Row) -> rx.Component:
                 ),
             ),
             align_items="flex-start",
-            width="50%",
+            style={"width": "100%", WIDE: {"width": "50%"}},
         ),
         rx.vstack(
             rx.text(
@@ -313,16 +330,21 @@ def side_by_side(row: Row) -> rx.Component:
                 ),
             ),
             align_items="flex-start",
-            width="50%",
+            style={"width": "100%", WIDE: {"width": "50%"}},
         ),
+        direction={"initial": "column", "sm": "row"},
         align_items="flex-start",
-        spacing="4",
+        gap="16px",
         width="100%",
     )
 
 
 def detail(row: Row) -> rx.Component:
     return rx.vstack(
+        rx.box(
+            rx.button("← Back to the queue", on_click=State.back_to_queue, variant="soft"),
+            style={WIDE: {"display": "none"}},
+        ),
         rx.heading(row.author, size="5"),
         side_by_side(row),
         rx.divider(),
@@ -402,8 +424,13 @@ def index() -> rx.Component:
             rx.spacer(),
             rx.text(
                 State.source_label,
-                style={"font_size": "0.8rem", "color": COLOR["muted"]},
+                style={
+                    "font_size": "0.8rem",
+                    "color": COLOR["muted"],
+                    "overflow_wrap": "anywhere",
+                },
             ),
+            wrap="wrap",
             width="100%",
             style={"padding": "14px 20px", "border_bottom": f"1px solid {COLOR['line']}"},
         ),
@@ -416,7 +443,7 @@ def index() -> rx.Component:
             ),
             rx.fragment(),
         ),
-        rx.hstack(
+        rx.flex(
             rx.box(
                 rx.cond(
                     State.rows.length() > 0,
@@ -426,11 +453,13 @@ def index() -> rx.Component:
                         style={"padding": "20px", "color": COLOR["muted"]},
                     ),
                 ),
+                custom_attrs={"data-open": OPEN},
                 style={
-                    "width": "360px",
-                    "border_right": f"1px solid {COLOR['line']}",
+                    "width": "100%",
                     "height": "100%",
                     "overflow_y": "auto",
+                    PHONE: {"&[data-open='true']": {"display": "none"}},
+                    WIDE: {"width": "360px", "border_right": f"1px solid {COLOR['line']}"},
                 },
             ),
             rx.box(
@@ -447,10 +476,16 @@ def index() -> rx.Component:
                         style={"padding": "20px", "color": COLOR["muted"]},
                     ),
                 ),
-                style={"flex": "1", "height": "100%", "overflow_y": "auto"},
+                custom_attrs={"data-open": OPEN},
+                # "Select a message" is only worth the space beside the list.
+                style={
+                    "flex": "1",
+                    "height": "100%",
+                    "overflow_y": "auto",
+                    PHONE: {"&[data-open='false']": {"display": "none"}},
+                },
             ),
             align_items="stretch",
-            spacing="0",
             width="100%",
             style={"flex": "1", "min_height": "0"},
         ),
