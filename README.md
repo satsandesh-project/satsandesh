@@ -6,7 +6,9 @@ Open source, self-hosted, built as seva. No advertising, no engagement traps, no
 
 Licensed under the [Apache License 2.0](LICENSE).
 
-> **Status: early development.** Month 1 of a 3-month build. Nothing here is usable yet.
+> **Status: in development, not yet piloted.** Month 3 of a 3-month build. On `main`: text and voice
+> messages with translation and moderation, bhajan rooms and satsang sessions. The admin console is
+> not deployed yet.
 
 ---
 
@@ -119,13 +121,25 @@ satsandesh/
 
 ## Status
 
-Month 1 — foundations. Backbone architecture spike (Matrix/Conduit vs custom-lite)
-resolved to **Option B, custom-lite on Postgres** — `services/gateway/` (M3's), the
-gateway that is actually deployed. This reverses an earlier acceptance of Option A
-(Matrix/Tuwunel); see `docs/adr/0002-chat-backbone.md`'s "Reversal (2026-09-08)"
-section for the reasoning. Member 2's platform deliverables (Docker Compose skeleton,
-backbone spikes, deployment, Week 1-4) are complete — see `docs/prompt-journal.md`
-for the full history.
+Month 3 of 3 (started 2026-08-17). Not yet piloted. On `main` today:
+
+- **Messaging** — text and voice through `services/gateway/`, with HTTPS via Caddy and
+  signed session tokens behind `AUTH_MODE`.
+- **Language bridge** — `services/ai/`: IndicConformer ASR with language detection and
+  denoising, translation through an English pivot, and speech for the receiver.
+- **Stewardship** — every message is screened; holds go to the moderator queue in
+  `clients/admin-console/` (release/block, audit trail). The gateway's `/admin/*` routes
+  for members, circles and announcements are merged; their console pages are in review.
+- **Sessions** — bhajan rooms (single-lead floor, LiveKit) and satsang sessions.
+- **Elder app** — `clients/elder-app/`: language choice, held-message notices, the original
+  voice and text shown alongside translations.
+
+Not done yet: the admin console is not deployed, appeals, single-use sign-in links, and
+the pilot. What ships each sprint and who is blocked on whom: `docs/work-breakdown.md`.
+
+The backbone is **Option B, custom-lite on Postgres** (`services/gateway/`), reversing an
+earlier acceptance of Option A (Matrix/Tuwunel); see `docs/adr/0002-chat-backbone.md`'s
+"Reversal (2026-09-08)" section. Full history: `docs/prompt-journal.md`.
 
 ## How to run locally
 
